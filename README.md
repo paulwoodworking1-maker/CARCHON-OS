@@ -1,0 +1,56 @@
+# Carchon OS
+
+Le logiciel de l'atelier, construit d'après les maquettes « Carchon OS · version retenue ».
+
+- **Patron (ordinateur)** : Aujourd'hui (à décider, projets, atelier du jour, signalements), Projets (frise automatique, fiche projet, plans, journal photo, documents), Carnets de fabrication, Portails clients, Planning par personne, Livraisons et poses (avec PV signé au doigt), Stock en 3 états, Achats (à commander, commandes en cours, fournisseurs), Pilotage (heures réelles vs chiffrées par geste, export CSV), Réglages équipe.
+- **Atelier (iPad)** : chacun choisit son prénom et tape son code à 4 chiffres. Ma prochaine tâche, Mon carnet, l'étape en cours (repères, photo, signaler, « Ça t'a pris combien ? »), Il manque, Stock.
+- **Client (téléphone)** : lien privé pour accepter un devis (vérification de l'e-mail par code à 6 chiffres, signature électronique simple, preuve conservée) puis espace de suivi (avancement, date « prête à poser vers le », photos partagées, documents, PV).
+
+Ce qui est encore **manuel** dans cette première version : le PDF du devis est déposé à la main (export Qonto), l'acompte se note dans la fiche projet, les commandes fournisseurs partent par un e-mail pré-rempli.
+
+## Démarrer
+
+Il faut Node.js 22.13 ou plus récent (la base SQLite est intégrée, rien d'autre à installer).
+
+```bash
+npm install
+```
+
+```bash
+npm start
+```
+
+Ouvrir http://localhost:3000 : au premier lancement, on choisit le mot de passe du patron. Ensuite : Pilotage › Réglages équipe pour créer les codes iPad, Portails clients pour déposer les CGV et les adresses de test.
+
+### Essayer avec les données des maquettes
+
+```bash
+DATA_DIR=./data-demo npm run demo
+```
+
+```bash
+DATA_DIR=./data-demo npm start
+```
+
+Patron : `demo-atelier` · iPad : Lucas `1111`, Nina `2222`, patron `0000` · adresse de test du portail : `test@example.com`.
+
+## Mettre en ligne
+
+Une seule application et un dossier de données (`DATA_DIR`) à garder sur un disque persistant et **à sauvegarder** (il contient la base `carchon.db` et toutes les photos, plans, devis et PV).
+
+- Avec Docker : `docker build -t carchon-os .` puis `docker run -p 3000:3000 -v carchon-data:/data --env-file .env carchon-os`
+- Sur un hébergeur (Render, Railway, Fly.io, un VPS…) : commande de démarrage `npm start`, un disque persistant monté sur `DATA_DIR`, HTTPS activé, et les variables de `.env.example` (au minimum `PUBLIC_URL` et `COOKIE_SECURE=1`).
+
+Pour que les clients reçoivent leur code par e-mail, renseigner `SMTP_*` (l'adresse d'envoi de ta messagerie). Sans SMTP, en **mode test**, le code s'affiche sur la page du client ; en mode réel, il est seulement écrit dans le journal du serveur.
+
+## Portail client : bon à savoir
+
+- Le portail démarre en **mode test** : seules les adresses de test reçoivent un lien et les pages portent la mention « sans valeur contractuelle ». Le passage en réel se fait dans Portails clients, après l'avis de ton juriste.
+- Les liens ne sont montrés qu'une fois (seule leur empreinte est gardée). Un lien perdu se recrée.
+- Le client ne voit jamais de prix de revient, de fournisseur ni de note interne : seulement l'avancement, les photos cochées « Partagée au client » et les documents cochés « Client ».
+
+## Tests
+
+```bash
+npm test
+```
