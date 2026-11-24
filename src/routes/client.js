@@ -133,6 +133,8 @@ const findSpace = (t) => q.get("SELECT * FROM projects WHERE portal_token_hash =
 function renderSpace(p, { token = null, preview = false, tab = 'projet' } = {}) {
   const client = q.get('SELECT * FROM clients WHERE id = ?', p.client_id) || { name: '' };
   const quote = q.get("SELECT * FROM quotes WHERE project_id = ? AND status = 'accepted' ORDER BY id DESC LIMIT 1", p.id);
+  // Devis signé hors portail : pas de devis en attente, l'étape est considérée comme faite.
+  const pendingQuote = quote ? null : q.get("SELECT id FROM quotes WHERE project_id = ? AND status = 'sent'", p.id);
   const fr = L.frise(p);
   const st = (ph) => fr.find((f) => f.phase === ph)?.state;
   const trip = q.get('SELECT * FROM trips WHERE project_id = ? ORDER BY date LIMIT 1', p.id);
@@ -141,11 +143,10 @@ function renderSpace(p, { token = null, preview = false, tab = 'projet' } = {}) 
   const anySteps = q.get('SELECT COUNT(*) n FROM steps WHERE project_id = ?', p.id).n;
   const fabDone = anySteps > 0 && remaining === 0;
   const steps = [
-    ['Devis accepté', quote ? 'd' : 'c'], ['Acompte', !p.deposit_needed || p.deposit_at ? 'd' : quote ? 'c' : 't'],
+    ['Devis accepté', quote || !pendingQuote ? 'd' : 'c'], ['Acompte', !p.deposit_needed || p.deposit_at ? 'd' : 'c'],
     ['Fabrication', fabDone ? 'd' : started ? 'c' : 't'], ['Prêt à poser', fabDone ? (trip?.done_at ? 'd' : 'c') : 't'],
     ['Pose', trip?.done_at ? 'd' : 't'], ['Réception', trip?.pv_signed_at ? 'd' : 't'],
   ];
-  const curIdx = steps.findIndex((s) => s[1] !== 'd');
   const miles = [
     quote && ['Devis accepté', `le ${dayMonth(quote.accepted_at)}`, true],
     p.deposit_at && ['Acompte reçu', `le ${dayMonth(p.deposit_at)}`, true],
@@ -161,9 +162,9 @@ function renderSpace(p, { token = null, preview = false, tab = 'projet' } = {}) 
   const events = q.all('SELECT * FROM events WHERE project_id = ? AND show_client = 1 AND date >= ? ORDER BY date', p.id, today());
   const baseUrl = preview ? `/portails/espace/${p.id}/apercu` : `/p/espace/${token}`;
   const f = (name) => (preview ? `/fichiers/${encodeURIComponent(name)}` : `/p/espace/${token}/f/${encodeURIComponent(name)}`);
-  const todo = !quote ? 'Accepter le devis (lien envoyé par e-mail).' : p.deposit_needed && !p.deposit_at ? 'Régler l’acompte prévu au devis.' : '';
+  const todo = pendingQuote ? 'Accepter le devis (lien envoyé par e-mail).' : p.deposit_needed && !p.deposit_at ? 'Régler l’acompte prévu au devis.' : '';
   const T = ['projet', 'suivi', 'documents'].includes(tab) ? tab : 'projet';
-  const stepsHtml = h`<ol class="vsteps">${steps.map(([l, s], i) => h`<li class="${s === 'd' ? 'd' : i === curIdx ? 'c' : ''}"><span class="mk">${s === 'd' ? '✓' : ''}</span><b>${l}</b><span class="mut">${s === 'd' ? 'Fait' : i === curIdx ? 'En cours' : 'À venir'}</span></li>`)}</ol>`;
+  const stepsHtml = h`<ol class="vsteps">${steps.map(([l, s], i) => h`<li class="${s === 'd' ? 'd' : s === 'c' ? 'c' : ''}"><span class="mk">${s === 'd' ? '✓' : ''}</span><b>${l}</b><span class="mut">${s === 'd' ? 'Fait' : s === 'c' ? 'En cours' : 'À venir'}</span></li>`)}</ol>`;
   const inner = h`<main class="cl">
 ${preview ? h`<div class="testband">Aperçu patron : c’est ce que voit ${client.name}. <a href="/portails">Revenir</a></div>` : ''}
 <div class="mut">${client.name}</div><h1>${p.name}</h1>${quote ? h`<p class="mut">Devis n° ${quote.number} · version ${quote.version}</p>` : ''}
