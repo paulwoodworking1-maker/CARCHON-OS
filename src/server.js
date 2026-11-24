@@ -19,6 +19,8 @@ app.use((req, res, next) => {
   next();
 });
 
+app.get('/sante', (req, res) => res.type('text').send('ok'));
+
 // --- Installation (premier démarrage) et connexion du patron ---
 const loginPage = (title, intro, form, flash) => page(title, h`
 <main class="login"><img src="/static/logo.png" alt="Carchon Les Ateliers" class="login-logo">

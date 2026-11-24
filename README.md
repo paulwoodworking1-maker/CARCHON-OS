@@ -36,6 +36,8 @@ Patron : `demo-atelier` · iPad : Lucas `1111`, Nina `2222`, patron `0000` · ad
 
 ## Mettre en ligne
 
+**En un clic sur Render** (environ 7 $ par mois + disque) : [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/paulwoodworking1-maker/CARCHON-OS). Tout est réglé dans `render.yaml` ; à la fin, ouvre l'adresse donnée par Render et choisis ton mot de passe patron.
+
 Une seule application et un dossier de données (`DATA_DIR`) à garder sur un disque persistant et **à sauvegarder** (il contient la base `carchon.db` et toutes les photos, plans, devis et PV).
 
 - Avec Docker : `docker build -t carchon-os .` puis `docker run -p 3000:3000 -v carchon-data:/data --env-file .env carchon-os`
