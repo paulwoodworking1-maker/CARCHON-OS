@@ -14,8 +14,8 @@ tx(() => {
   setSetting('portal_test_emails', 'test@example.com');
   const pa = q.get("SELECT id FROM people WHERE role = 'patron'").id;
   q.run('UPDATE people SET pin_hash = ? WHERE id = ?', hash('0000'), pa);
-  const lu = q.run("INSERT INTO people (name, ini, color, sub, pin_hash) VALUES ('Lucas', 'LU', '#3D5A73', 'ébéniste', ?)", hash('1111')).lastInsertRowid;
-  const ni = q.run("INSERT INTO people (name, ini, color, sub, pin_hash) VALUES ('Nina', 'NI', '#7A4E00', 'menuisière', ?)", hash('2222')).lastInsertRowid;
+  const lu = q.run("INSERT INTO people (name, ini, color, sub, pin_hash) VALUES ('Lucas', 'LU', '#4A443E', 'ébéniste', ?)", hash('1111')).lastInsertRowid;
+  const ni = q.run("INSERT INTO people (name, ini, color, sub, pin_hash) VALUES ('Nina', 'NI', '#6B635A', 'menuisière', ?)", hash('2222')).lastInsertRowid;
 
   const roche = q.run("INSERT INTO clients (name, kind, email) VALUES ('M. et Mme Roche', 'Particulier', 'roche@example.com')").lastInsertRowid;
   const vasse = q.run("INSERT INTO clients (name, kind, email) VALUES ('Atelier Vasse', 'Architecte', 'vasse@example.com')").lastInsertRowid;

@@ -96,7 +96,7 @@ const QuoteSchema = z.object({
 });
 async function readQuotePdf(pdfBuffer) {
   const system = `Tu lis un devis d'ébénisterie (PDF) et tu en extrais les informations demandées, telles qu'elles sont écrites. N'invente rien : si une information n'apparaît pas, renvoie "".
-- "objet" : nom court du meuble ou de l'ouvrage, 2 à 5 mots, ex. "Table à manger · chêne".
+- "objet" : nom court de la pièce ou de l'ouvrage, 2 à 5 mots, ex. "Table à manger · chêne".
 - "montant_ttc" et "acompte" : tels qu'écrits, avec la devise.
 - "resume" : une phrase sur ce qui est commandé.`;
   return structured({
@@ -114,7 +114,9 @@ async function readQuotePdf(pdfBuffer) {
 const MessageSchema = z.object({ objet: z.string(), message: z.string() });
 async function clientUpdate({ project, clientName, facts }) {
   const system = `Tu écris, au nom de l'atelier Carchon Les Ateliers (ébénisterie), un court message d'avancement à un client.
-Ton : chaleureux, simple, professionnel, vouvoiement. 4 à 7 phrases. Pas de jargon. Pas de prix, pas de fournisseur, pas de problème interne.
+Ton de la marque : sobre, précis, sans effet. Vouvoiement. Phrases courtes, verbes concrets : décrire le bois, le geste, le temps passé.
+Dire « pièce », jamais « meuble » ni « produit ». Aucun mot d'inflation émotionnelle (« magique », « incroyable », « coup de cœur »), aucun emoji, aucun point d'exclamation.
+4 à 7 phrases. Pas de prix, pas de fournisseur, pas de problème interne.
 N'annonce que les faits fournis ; ne promets aucune date qui n'est pas dans les faits. Termine par une formule de politesse et "L'équipe Carchon".`;
   return structured({
     system,

@@ -169,7 +169,7 @@ r.get('/poses/:id/pv/imprimer', (req, res) => {
 <p style="margin-top:18px">Le maître d’ouvrage, après avoir visité l’ouvrage désigné ci-dessus en présence de l’entreprise, déclare :</p>
 <p><span class="box${signed && !t.pv_reserves ? ' on' : ''}"></span> prononcer la réception <b>sans réserve</b></p>
 <p><span class="box${signed && t.pv_reserves ? ' on' : ''}"></span> prononcer la réception <b>avec les réserves</b> suivantes :</p>
-<div style="border:1px solid #DDD7CC;min-height:70px;padding:8px">${t.pv_reserves || ''}</div>
+<div style="border:1px solid #D9D4CC;min-height:70px;padding:8px">${t.pv_reserves || ''}</div>
 ${t.pv_reserves_lifted_at ? h`<p>Réserves levées le ${ddmmyyyy(t.pv_reserves_lifted_at)}.</p>` : ''}
 <p style="margin-top:14px">Fait le ${signed ? ddmmyyyy(t.pv_signed_at) : '____ / ____ / ________'}${signed ? '' : ', à ________________________'}.</p>
 <div class="sign"><div>Le client${signed ? h` : <b>${t.pv_name}</b>` : ''}<br>${signed && t.pv_signature ? h`<img src="/fichiers/${t.pv_signature}" alt="Signature" style="max-height:90px">` : 'Signature'}</div><div>L’entreprise<br>Signature</div></div>`,

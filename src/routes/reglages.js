@@ -51,7 +51,7 @@ r.get('/pilotage/export.csv', (req, res) => {
 // ---------- Équipe ----------
 r.get('/equipe', (req, res) => {
   const people = q.all('SELECT * FROM people ORDER BY active DESC, role = \'patron\' DESC, id');
-  const COLORS = [['#3D5A73', 'Bleu'], ['#7A4E00', 'Ocre'], ['#2F5D3A', 'Vert'], ['#6B4E71', 'Prune'], ['#8A2B1E', 'Brique'], ['#1C1917', 'Noir']];
+  const COLORS = [['#1A1714', 'Noir'], ['#4A443E', 'Brun foncé'], ['#6B635A', 'Pierre'], ['#2E2925', 'Charbon'], ['#5A534B', 'Taupe'], ['#3E3832', 'Bois sombre']];
   const form = (p = {}) => h`<div class="grid2"><label>Prénom <input name="name" value="${p.name || ''}" required></label><label>Initiales <input name="ini" value="${p.ini || ''}" maxlength="3" required></label></div>
 <div class="grid2"><label>Métier <input name="sub" value="${p.sub || ''}" placeholder="ex. ébéniste"></label><label>Couleur <select name="color">${options(COLORS, p.color)}</select></label></div>
 <label>Code iPad (4 chiffres)${p.pin_hash ? ' · laisse vide pour garder l’actuel' : ''} <input name="pin" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" ${p.id ? '' : 'required'}></label>`;
@@ -67,7 +67,7 @@ r.get('/equipe', (req, res) => {
 r.post('/equipe', (req, res) => {
   const b = req.body;
   if (!/^\d{4}$/.test(b.pin || '')) return res.flashTo('/equipe', 'Le code iPad doit faire 4 chiffres.', 'ko');
-  q.run("INSERT INTO people (name, ini, sub, color, role, pin_hash) VALUES (?, ?, ?, ?, 'ouvrier', ?)", str(b.name), str(b.ini).toUpperCase(), str(b.sub), str(b.color) || '#3D5A73', hash(b.pin));
+  q.run("INSERT INTO people (name, ini, sub, color, role, pin_hash) VALUES (?, ?, ?, ?, 'ouvrier', ?)", str(b.name), str(b.ini).toUpperCase(), str(b.sub), str(b.color) || '#4A443E', hash(b.pin));
   res.flashTo('/equipe', `${str(b.name)} est ajouté(e). Son code ouvre « Mon carnet » sur l’iPad.`);
 });
 r.post('/equipe/mot-de-passe', (req, res) => {

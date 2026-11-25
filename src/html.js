@@ -118,7 +118,7 @@ function layout({ title, tab, sub, body, flash, counts = {} }) {
     <details class="menu"><summary class="btn sm">+ Créer</summary><div class="menu-list">
       <a href="/portails?nouveau=1">Envoyer un devis</a><a href="/projets/nouveau">Projet d'atelier</a><a href="/achats#noter">Noter à recommander</a><a href="/planning#ajouter">Barre de planning</a>
     </div></details>
-    <details class="menu"><summary class="av" style="background:#1C1917" aria-label="Compte patron">PA</summary><div class="menu-list right-al">
+    <details class="menu"><summary class="av" style="background:#1A1714" aria-label="Compte patron">PA</summary><div class="menu-list right-al">
       <a href="/equipe">Réglages équipe</a><form method="post" action="/deconnexion"><button type="submit" class="linkbtn">Se déconnecter</button></form>
     </div></details>
   </div>

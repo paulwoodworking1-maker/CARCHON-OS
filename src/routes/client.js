@@ -49,7 +49,7 @@ r.get('/devis/:t', (req, res) => {
   }
   const showCode = x.test && !mail.configured() && req.session.testCode?.[x.id];
   res.send(shell(`Devis ${x.number}`, h`<main class="cl">${flash}
-<h1>Devis n° ${x.number}</h1><p class="mut">Pour ${x.signer_name} · version ${x.version} du ${ddmmyyyy(x.created_at)} · lien valable jusqu’au ${ddmmyyyy(x.valid_until)}</p>
+<div class="cl-eyebrow">Votre devis</div><h1>Devis n° ${x.number}</h1><p class="mut">Pour ${x.signer_name} · version ${x.version} du ${ddmmyyyy(x.created_at)} · lien valable jusqu’au ${ddmmyyyy(x.valid_until)}</p>
 <section class="cl-step"><h2>1. Consultez les documents</h2>
 <a class="btn alt wfull" href="/p/devis/${t}/pdf" target="_blank">Ouvrir le devis (PDF)</a>
 ${x.cgv ? h`<a class="btn alt wfull mt8" href="/p/devis/${t}/cgv" target="_blank">Conditions générales de vente (PDF)</a>` : ''}
@@ -171,7 +171,7 @@ function renderSpace(p, { token = null, preview = false, tab = 'projet' } = {}) 
   const stepsHtml = h`<ol class="vsteps">${steps.map(([l, s], i) => h`<li class="${s === 'd' ? 'd' : s === 'c' ? 'c' : ''}"><span class="mk">${s === 'd' ? '✓' : ''}</span><b>${l}</b><span class="mut">${s === 'd' ? 'Fait' : s === 'c' ? 'En cours' : 'À venir'}</span></li>`)}</ol>`;
   const inner = h`<main class="cl">
 ${preview ? h`<div class="testband">Aperçu patron : c’est ce que voit ${client.name}. <a href="/portails">Revenir</a></div>` : ''}
-<div class="mut">${client.name} · dossier ${p.ref}</div><h1>${p.name}</h1>${quote ? h`<p class="mut">Devis n° ${quote.number} · version ${quote.version}</p>` : ''}
+<div class="cl-eyebrow">${client.name} · dossier ${p.ref}</div><h1>${p.name}</h1>${quote ? h`<p class="mut">Devis n° ${quote.number} · version ${quote.version}</p>` : ''}
 <nav class="cl-tabs">${[['projet', 'Projet'], ['suivi', 'Suivi'], ['documents', 'Documents']].map(([k, l]) => h`<a href="${baseUrl}?tab=${k}" class="${T === k ? 'on' : ''}">${l}</a>`)}</nav>
 ${T === 'projet' ? h`<section class="cl-step"><h2>À faire de votre côté</h2><p>${todo || 'Rien à faire pour le moment : nous vous tenons informé(e) de l’avancement.'}</p></section>
 <section class="cl-step"><h2>Où en est votre pièce</h2>${stepsHtml}

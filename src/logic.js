@@ -61,16 +61,16 @@ function workdays(from, to) {
 }
 // Marge : jours ouvrés restants avant l'échéance moins les jours de travail encore prévus.
 function slack(project) {
-  if (!project.due_date) return { text: 'à fixer', color: '#7A4E00' };
+  if (!project.due_date) return { text: 'à fixer', color: '#6B635A' };
   const left = q.get("SELECT COALESCE(SUM(est_hours), 0) h, COUNT(*) n FROM steps WHERE project_id = ? AND status != 'done'", project.id);
   const avail = workdays(today(), project.due_date);
-  if (avail === null) return { text: '', color: '#5F5A52' };
+  if (avail === null) return { text: '', color: '#6B635A' };
   const need = Math.ceil(left.h / 8);
   const m = avail - need;
-  if (avail <= 0 && left.n) return { text: 'en retard', color: '#8A2B1E' };
-  if (m < 0) return { text: 'en retard', color: '#8A2B1E' };
-  if (m <= 2) return { text: 'tendu', color: '#8A2B1E' };
-  return { text: `${m} j de marge`, color: '#2F5D3A' };
+  if (avail <= 0 && left.n) return { text: 'en retard', color: '#A20212' };
+  if (m < 0) return { text: 'en retard', color: '#A20212' };
+  if (m <= 2) return { text: 'tendu', color: '#A20212' };
+  return { text: `${m} j de marge`, color: '#1A1714' };
 }
 
 function projectSummary(p) {
@@ -134,7 +134,7 @@ function stepsFor(personId) {
 }
 
 // Couleur stable par projet (pastilles de l'iPad).
-const PCOLORS = ['#5B4636', '#3D5A73', '#B7791F', '#2F5D3A', '#6B4E71', '#8A2B1E'];
+const PCOLORS = ['#1A1714', '#6B635A', '#4A443E', '#8C8279', '#2E2925', '#5A534B'];
 const projectColor = (id) => PCOLORS[id % PCOLORS.length];
 
 module.exports = { people, peopleMap, patron, personName, frise, currentPhase, slack, workdays, projectSummary, toDecide, projectFromQuote, stepsFor, projectColor, relDays, iso, addDays };

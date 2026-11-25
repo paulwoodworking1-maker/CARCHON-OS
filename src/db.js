@@ -21,7 +21,7 @@ db.exec(`
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);
 
 CREATE TABLE IF NOT EXISTS people (
-  id INTEGER PRIMARY KEY, name TEXT NOT NULL, ini TEXT NOT NULL, color TEXT NOT NULL DEFAULT '#3D5A73',
+  id INTEGER PRIMARY KEY, name TEXT NOT NULL, ini TEXT NOT NULL, color TEXT NOT NULL DEFAULT '#4A443E',
   sub TEXT DEFAULT '', role TEXT NOT NULL DEFAULT 'ouvrier', pin_hash TEXT, active INTEGER NOT NULL DEFAULT 1
 );
 
@@ -179,6 +179,13 @@ function logActivity(projectId, personId, text, who = '') {
   db.prepare('INSERT INTO activity (project_id, person_id, who, text) VALUES (?, ?, ?, ?)').run(projectId, personId || null, who, String(text).slice(0, 300));
 }
 
+// DA Carchon : les pastilles de l'équipe passent en tons neutres (une fois).
+if (db.prepare("SELECT value FROM settings WHERE key = 'da_colors'").get() === undefined) {
+  const map = { '#3D5A73': '#4A443E', '#7A4E00': '#6B635A', '#2F5D3A': '#2E2925', '#6B4E71': '#5A534B', '#8A2B1E': '#3E3832', '#1C1917': '#1A1714' };
+  for (const [a, b] of Object.entries(map)) db.prepare('UPDATE people SET color = ? WHERE upper(color) = ?').run(b, a);
+  db.prepare("INSERT INTO settings (key, value) VALUES ('da_colors', '1')").run();
+}
+
 // --- petits utilitaires ---
 const q = {
   get: (sql, ...a) => db.prepare(sql).get(...a),
@@ -202,7 +209,7 @@ function tx(fn) {
 // Premier démarrage : le patron et une liste de stock de départ (à adapter).
 function bootstrap() {
   if (!q.get('SELECT id FROM people WHERE role = ?', 'patron')) {
-    q.run("INSERT INTO people (name, ini, color, sub, role) VALUES ('Toi', 'PA', '#1C1917', 'conception, rendez-vous', 'patron')");
+    q.run("INSERT INTO people (name, ini, color, sub, role) VALUES ('Toi', 'PA', '#1A1714', 'conception, rendez-vous', 'patron')");
   }
   if (!q.get('SELECT id FROM stock_items LIMIT 1') && setting('stock_seeded') !== '1') {
     const base = {
