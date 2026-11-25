@@ -1,7 +1,7 @@
 'use strict';
 // Pilotage (heures réelles vs chiffrées, par geste) et réglages de l'équipe.
 const express = require('express');
-const { q, setting, setSetting } = require('../db');
+const { q, setting, setSetting, COMPANY_FIELDS } = require('../db');
 const { h, layout, pill, avatar, options, hoursLabel } = require('../html');
 const { hash, verify } = require('../auth');
 const L = require('../logic');
@@ -84,6 +84,20 @@ r.post('/equipe/:id', (req, res) => {
   if (b.pin && !/^\d{4}$/.test(b.pin)) return res.flashTo('/equipe', 'Le code iPad doit faire 4 chiffres.', 'ko');
   q.run('UPDATE people SET name = ?, ini = ?, sub = ?, color = ?, pin_hash = COALESCE(?, pin_hash) WHERE id = ?', str(b.name), str(b.ini).toUpperCase(), str(b.sub), str(b.color), b.pin ? hash(b.pin) : null, p.id);
   res.flashTo('/equipe', 'Enregistré.');
+});
+
+// ---------- Entreprise ----------
+r.get('/entreprise', (req, res) => {
+  const body = h`<div class="eb">Réglages</div><h1>Entreprise</h1>
+<p class="mut mt8 mw680">Tes coordonnées, reprises sur les documents imprimés (carnet, bon de commande, PV) et en bas du portail client.</p>
+<form method="post" action="/entreprise" class="card form mt20 mw680">
+${COMPANY_FIELDS.map(([k, label, def]) => h`<label>${label} <input name="${k}" value="${setting(k, def) || ''}"${k === 'company_name' ? ' required' : ''}></label>`)}
+<button class="btn">Enregistrer</button></form>`;
+  res.send(layout({ title: 'Entreprise', tab: 'pilotage', sub: '/entreprise', body, flash: req.flash }));
+});
+r.post('/entreprise', (req, res) => {
+  for (const [k] of COMPANY_FIELDS) setSetting(k, str(req.body[k]).slice(0, 200));
+  res.flashTo('/entreprise', 'Coordonnées enregistrées.');
 });
 
 module.exports = r;

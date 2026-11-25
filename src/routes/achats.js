@@ -2,7 +2,7 @@
 // Stock (3 états), À commander, Commandes en cours, Fournisseurs.
 const express = require('express');
 const { q, tx, STOCK_CATS } = require('../db');
-const { h, raw, layout, pill, postBtn, options, ddmm, rel, today } = require('../html');
+const { h, raw, layout, pill, postBtn, options, ddmm, ddmmyyyy, rel, today, printPage } = require('../html');
 const L = require('../logic');
 
 const r = express.Router();
@@ -133,12 +133,30 @@ r.post('/achats/commander', (req, res) => {
   const lines = q.all("SELECT * FROM needs WHERE supplier_id = ? AND status = 'todo' AND checked = 1 AND (needs_deposit = 0 OR force = 1)", sid);
   if (!s || !lines.length) return res.redirect('/achats');
   const what = lines.map((l) => l.text).join(', ');
+  let oid;
   tx(() => {
-    const oid = q.run('INSERT INTO orders (supplier_id, what, expected_at) VALUES (?, ?, ?)', sid, what, str(req.body.expected_at) || null).lastInsertRowid;
+    oid = q.run('INSERT INTO orders (supplier_id, what, expected_at) VALUES (?, ?, ?)', sid, what, str(req.body.expected_at) || null).lastInsertRowid;
     lines.forEach((l) => q.run("UPDATE needs SET status = 'ordered', order_id = ?, acknowledged = 1 WHERE id = ?", oid, l.id));
   });
   const mail = s.email ? `mailto:${encodeURIComponent(s.email)}?subject=${encodeURIComponent('Commande Carchon Les Ateliers')}&body=${encodeURIComponent(`Bonjour,\n\nPouvez-vous nous livrer :\n${lines.map((l) => `- ${l.text}`).join('\n')}\n\nMerci,\nCarchon Les Ateliers`)}` : '';
-  res.flashTo('/achats', '', 'ok', { html: `Commande notée chez ${s.name.replace(/[<>&"]/g, '')}. ${mail ? `<a href="${mail.replace(/"/g, '&quot;')}">Écrire le mail de commande</a>` : s.phone ? `Appelle le ${s.phone.replace(/[<>&"]/g, '')}.` : ''}` });
+  res.flashTo('/achats', '', 'ok', { html: `Commande notée chez ${s.name.replace(/[<>&"]/g, '')}. <a href="/commandes/${oid}/bon">Bon de commande</a> · ${mail ? `<a href="${mail.replace(/"/g, '&quot;')}">Écrire le mail de commande</a>` : s.phone ? `Appelle le ${s.phone.replace(/[<>&"]/g, '')}.` : ''}` });
+});
+
+// Bon de commande imprimable (ou à joindre en PDF au fournisseur).
+r.get('/commandes/:id/bon', (req, res) => {
+  const o = q.get('SELECT orders.*, suppliers.name sname, suppliers.contact scontact, suppliers.email semail, suppliers.phone sphone FROM orders LEFT JOIN suppliers ON suppliers.id = orders.supplier_id WHERE orders.id = ?', req.params.id);
+  if (!o) return res.redirect('/commandes');
+  const lines = q.all('SELECT needs.*, projects.ref pref, projects.name pname FROM needs LEFT JOIN projects ON projects.id = needs.project_id WHERE order_id = ? ORDER BY needs.id', o.id);
+  const ref = `BC-${o.ordered_at.slice(0, 4)}-${String(o.id).padStart(4, '0')}`;
+  res.send(printPage('Bon de commande', h`
+<table><tr><td><b>Fournisseur</b><br>${o.sname || '—'}${o.scontact ? h`<br>${o.scontact}` : ''}${o.semail ? h`<br>${o.semail}` : ''}${o.sphone ? h`<br>${o.sphone}` : ''}</td>
+<td><b>Date de commande</b><br>${ddmmyyyy(o.ordered_at)}</td><td><b>Livraison souhaitée</b><br>${o.expected_at ? ddmmyyyy(o.expected_at) : 'dès que possible'}</td></tr></table>
+<h2>Articles</h2>
+<table><thead><tr><th>#</th><th>Désignation</th><th>Pour le dossier</th></tr></thead><tbody>
+${(lines.length ? lines : o.what.split(', ').map((t) => ({ text: t }))).map((l, i) => h`<tr><td>${i + 1}</td><td>${l.text}</td><td>${l.pref ? `${l.pref} · ${l.pname}` : '—'}</td></tr>`)}
+</tbody></table>
+<p class="mut" style="margin-top:16px">Merci de rappeler la référence ${ref} sur le bon de livraison et la facture.</p>
+<div class="sign"><div>Pour ${require('../db').company().name}<br>Date et signature</div><div>Accusé de réception du fournisseur</div></div>`, { ref, date: ddmmyyyy(o.ordered_at) }));
 });
 
 // ---------- Commandes en cours ----------
@@ -148,7 +166,7 @@ r.get('/commandes', (req, res) => {
   const body = h`<div class="eb">Achats</div><h1>Commandes en cours</h1>
 <p class="mut mt8">Deux états seulement : commandé, puis arrivé. Un tap quand le colis est là, et l'article repasse en « OK » dans le stock.</p>
 <section class="card mt20">${rows.map((o, i) => h`<div class="it${i ? '' : ' f'}"><div class="grow"><b>${o.sname || '—'}</b><div>${o.what}</div><div class="mut">Commandé le ${ddmm(o.ordered_at)}${o.expected_at ? ` · attendu le ${ddmm(o.expected_at)}` : ''}${o.arrived_at ? ` · arrivé le ${ddmm(o.arrived_at)}` : ''}</div></div>
-${o.arrived_at ? postBtn(`/commandes/${o.id}/arrivee`, 'Arrivé ✓', 'btn sm done', { undo: 1 }) : postBtn(`/commandes/${o.id}/arrivee`, 'Arrivé', 'btn alt')}</div>`)}
+<a class="btn alt sm" href="/commandes/${o.id}/bon">Bon de commande</a>${o.arrived_at ? postBtn(`/commandes/${o.id}/arrivee`, 'Arrivé ✓', 'btn sm done', { undo: 1 }) : postBtn(`/commandes/${o.id}/arrivee`, 'Arrivé', 'btn alt')}</div>`)}
 ${rows.length ? '' : h`<p class="mut">Aucune commande en cours.</p>`}</section>
 ${waiting.map((w) => h`<p class="mut mt12">${w.text} (${w.name}) n'est pas encore commandé : il attend l'acompte, dans <a href="/achats">« À commander »</a>.</p>`)}`;
   res.send(layout({ title: 'Commandes', tab: 'achats', sub: '/commandes', body, flash: req.flash, counts: counts() }));

@@ -3,7 +3,7 @@
 const express = require('express');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
-const { q, tx, setting } = require('../db');
+const { q, tx, setting, logActivity, company } = require('../db');
 const { h, page, ddmm, ddmmyyyy, dayMonth, today, hhmm } = require('../html');
 const { sha256, verify, hash } = require('../auth');
 const { filePath, isImage } = require('../uploads');
@@ -14,11 +14,13 @@ const r = express.Router();
 const str = (v) => String(v ?? '').trim();
 r.use((req, res, next) => { res.set('X-Robots-Tag', 'noindex, nofollow'); res.set('Cache-Control', 'no-store'); next(); });
 
-const shell = (title, inner, test) => page(title, h`<div class="phone">
-<header class="cl-head"><a href="https://www.carchon.com" target="_blank" rel="noopener" aria-label="Carchon Les Ateliers, site web"><img src="/static/logo.png" alt="Carchon Les Ateliers"></a></header>
+const siteUrl = (s) => (/^https?:\/\//.test(s) ? s : `https://${s}`);
+const shell = (title, inner, test, c = company()) => page(title, h`<div class="phone">
+<header class="cl-head"><a href="${siteUrl(c.site)}" target="_blank" rel="noopener" aria-label="${c.name}, site web"><img src="/static/logo.png" alt="Carchon Les Ateliers"></a></header>
 ${test ? h`<div class="testband">Page de test — sans valeur contractuelle.</div>` : ''}
 ${inner}
-<p class="cl-foot">Ce lien est personnel : ne le transférez pas. Vos données servent uniquement au suivi de votre projet.<br><a class="cl-site" href="https://www.carchon.com" target="_blank" rel="noopener">www.carchon.com</a></p></div>`, { bodyClass: 'client' });
+<p class="cl-foot">Ce lien est personnel : ne le transférez pas. Vos données servent uniquement au suivi de votre projet.<br><span class="cl-co">${c.name}${c.phone ? ` · ${c.phone}` : ''}${c.email ? ` · ${c.email}` : ''}</span>
+<br><a class="cl-site" href="${siteUrl(c.site)}" target="_blank" rel="noopener">${c.site}</a></p></div>`, { bodyClass: 'client' });
 
 // ---------- Devis à accepter ----------
 function findQuote(req) {
@@ -115,7 +117,8 @@ r.post('/devis/:t/accepter', (req, res) => {
   tx(() => {
     q.run("UPDATE quotes SET status = 'accepted', accepted_at = datetime('now'), accept_name = ?, accept_quality = ?, accept_text = ?, accept_ip = ?, accept_ua = ?, accept_ref = ?, treated = 0 WHERE id = ?",
       str(req.body.name), str(req.body.quality) || 'Particulier', acceptText(x), req.ip, String(req.get('user-agent') || '').slice(0, 300), ref, x.id);
-    L.projectFromQuote(q.get('SELECT * FROM quotes WHERE id = ?', x.id));
+    const pid = L.projectFromQuote(q.get('SELECT * FROM quotes WHERE id = ?', x.id));
+    logActivity(pid, null, `Devis ${x.number} v${x.version} accepté en ligne par ${str(req.body.name)} (réf. ${ref})`, 'Client');
   });
   res.redirect(back);
 });
@@ -123,6 +126,7 @@ r.post('/devis/:t/repondre', (req, res) => {
   const x = findQuote(req);
   if (x && x.status === 'sent' && str(req.body.text)) {
     q.run("UPDATE quotes SET status = ?, response_text = ?, responded_at = datetime('now'), treated = 0 WHERE id = ?", req.body.kind === 'refused' ? 'refused' : 'modif', str(req.body.text).slice(0, 2000), x.id);
+    logActivity(x.project_id, null, `${req.body.kind === 'refused' ? 'Devis refusé' : 'Modification demandée'} par le client : « ${str(req.body.text).slice(0, 200)} »`, 'Client');
   }
   res.redirect(`/p/devis/${req.params.t}`);
 });
@@ -167,7 +171,7 @@ function renderSpace(p, { token = null, preview = false, tab = 'projet' } = {}) 
   const stepsHtml = h`<ol class="vsteps">${steps.map(([l, s], i) => h`<li class="${s === 'd' ? 'd' : s === 'c' ? 'c' : ''}"><span class="mk">${s === 'd' ? '✓' : ''}</span><b>${l}</b><span class="mut">${s === 'd' ? 'Fait' : s === 'c' ? 'En cours' : 'À venir'}</span></li>`)}</ol>`;
   const inner = h`<main class="cl">
 ${preview ? h`<div class="testband">Aperçu patron : c’est ce que voit ${client.name}. <a href="/portails">Revenir</a></div>` : ''}
-<div class="mut">${client.name}</div><h1>${p.name}</h1>${quote ? h`<p class="mut">Devis n° ${quote.number} · version ${quote.version}</p>` : ''}
+<div class="mut">${client.name} · dossier ${p.ref}</div><h1>${p.name}</h1>${quote ? h`<p class="mut">Devis n° ${quote.number} · version ${quote.version}</p>` : ''}
 <nav class="cl-tabs">${[['projet', 'Projet'], ['suivi', 'Suivi'], ['documents', 'Documents']].map(([k, l]) => h`<a href="${baseUrl}?tab=${k}" class="${T === k ? 'on' : ''}">${l}</a>`)}</nav>
 ${T === 'projet' ? h`<section class="cl-step"><h2>À faire de votre côté</h2><p>${todo || 'Rien à faire pour le moment : nous vous tenons informé(e) de l’avancement.'}</p></section>
 <section class="cl-step"><h2>Où en est votre pièce</h2>${stepsHtml}

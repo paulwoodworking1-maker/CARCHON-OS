@@ -2,7 +2,7 @@
 // Portails clients côté patron : envoyer un devis à accepter, ouvrir / couper les espaces clients.
 const express = require('express');
 const fs = require('node:fs');
-const { q, tx, setting, setSetting } = require('../db');
+const { q, tx, setting, setSetting, logActivity } = require('../db');
 const { h, layout, pill, postBtn, options, ddmm, ddmmyyyy, addDays, today } = require('../html');
 const { token, sha256 } = require('../auth');
 const { upload, filePath } = require('../uploads');
@@ -170,6 +170,7 @@ r.post('/portails/espace/:pid/ouvrir', (req, res) => {
   if (!p) return res.redirect('/portails');
   const t = token();
   q.run("UPDATE projects SET portal_token_hash = ?, portal_state = 'open' WHERE id = ?", sha256(t), p.id);
+  logActivity(p.id, null, p.portal_state === 'open' ? 'Nouveau lien d’espace client créé (l’ancien est fermé)' : 'Espace client ouvert', 'Patron');
   q.run('UPDATE quotes SET treated = 1 WHERE project_id = ? AND status = ?', p.id, 'accepted');
   const url = `${base(req)}/p/espace/${t}`;
   req.session.shownLink = { title: `Espace client ouvert pour ${p.cname}`, url, to: p.cname,

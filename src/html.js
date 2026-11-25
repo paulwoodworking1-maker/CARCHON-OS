@@ -56,7 +56,28 @@ function hoursLabel(hr) {
   return `${whole} jour${whole > 1 ? 's' : ''}${half ? ' ½' : ''}`;
 }
 
-// --- composants ---
+// Durée exacte : 7,5 h · 45 min · 1 h 15.
+function hoursExact(hr) {
+  if (hr === null || hr === undefined || hr === '' || Number.isNaN(Number(hr))) return '—';
+  const mins = Math.round(Number(hr) * 60);
+  if (mins === 0) return '0 h';
+  const sign = mins < 0 ? '−' : '', m = Math.abs(mins), hh = Math.floor(m / 60), mm = m % 60;
+  if (!hh) return `${sign}${mm} min`;
+  return `${sign}${hh} h${mm ? ` ${String(mm).padStart(2, '0')}` : ''}`;
+}
+const pct = (x) => `${x > 0 ? '+' : x < 0 ? '−' : ''}${Math.abs(Math.round(x * 100))} %`;
+
+// Document imprimable avec l'en-tête de l'entreprise.
+function printPage(title, body, { ref = '', date = '' } = {}) {
+  const c = require('./db').company();
+  return page(title, h`<div class="doc">
+<div class="noprint doc-bar"><a href="javascript:history.back()" class="btn alt sm">‹ Retour</a><button type="button" class="btn sm" data-print>Imprimer / PDF</button></div>
+<header class="doc-head"><div><img src="/static/logo.png" alt="${c.name}" class="doc-logo"><div class="doc-co"><b>${c.name}</b>${c.address ? h`<br>${c.address}` : ''}${c.siret ? h`<br>SIRET ${c.siret}` : ''}<br>${[c.phone, c.email, c.site].filter(Boolean).join(' · ')}</div></div>
+<div class="doc-meta"><div class="doc-title">${title}</div>${ref ? h`<div>Réf. <b>${ref}</b></div>` : ''}<div>${date || ddmmyyyy(today())}</div></div></header>
+${body}
+<footer class="doc-foot">${c.name}${c.siret ? ` · SIRET ${c.siret}` : ''} · ${c.site}</footer></div>`, { bodyClass: 'printdoc' });
+}
+
 const pill = (cls, text) => h`<span class="pill ${cls}">${text}</span>`;
 const avatar = (p, size) => p ? h`<span class="av" style="background:${p.color}${size ? `;width:${size}px;height:${size}px;font-size:${Math.round(size / 3)}px` : ''}" title="${p.name}" aria-label="${p.name}">${p.ini}</span>` : '';
 const hidden = (fields) => Object.entries(fields).map(([k, v]) => h`<input type="hidden" name="${k}" value="${v}">`);
@@ -76,7 +97,7 @@ const SUBNAV = {
   projets: [['/projets', 'Projets en cours'], ['/carnets', 'Carnets de fabrication'], ['/portails', 'Portails clients'], ['/projets?vue=termines', 'Terminés']],
   planning: [['/planning', 'Par personne'], ['/poses', 'Livraisons et poses']],
   achats: [['/achats', 'À commander'], ['/commandes', 'Commandes en cours'], ['/fournisseurs', 'Fournisseurs']],
-  pilotage: [['/pilotage', 'Heures et chiffrage'], ['/automatisations', 'Automatisations'], ['/equipe', 'Réglages équipe']],
+  pilotage: [['/pilotage', 'Heures et chiffrage'], ['/automatisations', 'Automatisations'], ['/equipe', 'Réglages équipe'], ['/entreprise', 'Entreprise']],
 };
 
 function flashBox(flash) {
@@ -118,5 +139,6 @@ function page(title, body, { bodyClass = '', head = '' } = {}) {
 
 module.exports = {
   h, raw, esc, pill, avatar, hidden, postBtn, options, layout, page, flashBox,
+  hoursExact, pct, printPage,
   parseDate, iso, today, addDays, ddmm, ddmmyyyy, longDate, dayMonth, hhmm, rel, hoursLabel, JOURS_C, MOIS_C, MOIS,
 };

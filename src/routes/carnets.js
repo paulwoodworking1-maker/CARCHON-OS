@@ -1,8 +1,8 @@
 'use strict';
 // Carnets de fabrication : le patron écrit les fiches, les envoie à l'atelier.
 const express = require('express');
-const { q, tx, PHASES, GESTES } = require('../db');
-const { h, layout, pill, avatar, postBtn, options, ddmm, hoursLabel, rel } = require('../html');
+const { q, tx, PHASES, GESTES, logActivity } = require('../db');
+const { h, layout, pill, avatar, postBtn, options, ddmm, ddmmyyyy, hoursLabel, rel, printPage } = require('../html');
 const L = require('../logic');
 const { upload, fileUrl } = require('../uploads');
 const { loadProject } = require('./patron');
@@ -43,8 +43,8 @@ r.get('/carnets/:id', loadProject, (req, res) => {
 
   const body = h`
 <div class="mut"><a href="/projets/${p.id}">${p.name}</a>${client ? ` · ${client.name}` : ''}${p.due_date ? ` · livraison ${ddmm(p.due_date)}` : ''}</div>
-<div class="head mt4"><div><h1 class="m0">Carnet de fabrication</h1><p class="mut mt4">${steps.length} fiche${steps.length > 1 ? 's' : ''} · ${hoursLabel(totalH)} prévus · ${steps.filter((s) => s.status === 'done').length} faite(s)</p></div>
-<div class="push">${pending ? postBtn(`/carnets/${p.id}/envoyer`, `Envoyer à l'atelier · ${pending} fiche${pending > 1 ? 's' : ''}`, 'btn') : pill('ok', 'Tout est sur l’iPad')}</div></div>
+<div class="head mt4"><div><div class="ref">Dossier ${p.ref}</div><h1 class="m0">Carnet de fabrication</h1><p class="mut mt4">${steps.length} fiche${steps.length > 1 ? 's' : ''} · ${hoursLabel(totalH)} prévus · ${steps.filter((s) => s.status === 'done').length} faite(s)</p></div>
+<div class="push line"><a class="btn alt" href="/carnets/${p.id}/imprimer">Imprimer</a>${pending ? postBtn(`/carnets/${p.id}/envoyer`, `Envoyer à l'atelier · ${pending} fiche${pending > 1 ? 's' : ''}`, 'btn') : pill('ok', 'Tout est sur l’iPad')}</div></div>
 
 <div class="cols3 mt20">
 <aside class="card">
@@ -95,6 +95,25 @@ ${msgs.map((m) => h`<div class="msg${m.prole === 'patron' ? ' me' : ''}"><b>${m.
 </section>` : ''}
 </div>`;
   res.send(layout({ title: `Carnet · ${p.name}`, tab: 'projets', sub: '/carnets', body, flash: req.flash }));
+});
+
+// Carnet imprimable : à afficher à l'établi ou à ranger dans le dossier.
+r.get('/carnets/:id/imprimer', loadProject, (req, res) => {
+  const p = req.project;
+  const pm = L.peopleMap();
+  const steps = q.all('SELECT * FROM steps WHERE project_id = ? ORDER BY ord, id', p.id);
+  const plan = q.get("SELECT * FROM plans WHERE project_id = ? AND status = 'validee' ORDER BY id DESC LIMIT 1", p.id);
+  const client = p.client_id ? q.get('SELECT name FROM clients WHERE id = ?', p.client_id) : null;
+  const total = steps.reduce((a, s) => a + (s.est_hours || 0), 0);
+  res.send(printPage('Carnet de fabrication', h`
+<table><tr><td><b>Projet</b><br>${p.name}</td><td><b>Client</b><br>${client ? client.name : 'Hors commande client'}</td><td><b>Livraison</b><br>${p.due_date ? ddmmyyyy(p.due_date) : 'à fixer'}</td><td><b>Plan de référence</b><br>${plan ? `${plan.version}${plan.descr ? ` · ${plan.descr}` : ''}` : '—'}</td></tr></table>
+${p.wood ? h`<p><b>Bois :</b> ${p.wood}</p>` : ''}
+<h2>Fiches · ${steps.length} · ${hoursLabel(total)} prévus</h2>
+<table><thead><tr><th>N°</th><th>Fiche</th><th>Qui</th><th class="nr">Prévu</th><th>Fait</th></tr></thead><tbody>
+${steps.map((s, i) => { const ck = JSON.parse(s.checks); return h`<tr><td>${i + 1}</td><td><b>${s.title}</b>${s.piece ? h` · ${s.piece}` : ''}${s.note ? h`<br><i>« ${s.note} »</i>` : ''}${ck.length ? h`<br>${ck.map((c) => h`<span style="display:inline-block;margin:4px 12px 0 0"><span class="box${c.done ? ' on' : ''}"></span>${c.t}</span>`)}` : ''}</td>
+<td>${pm[s.who_id]?.role === 'patron' ? 'Patron' : pm[s.who_id]?.name || 'À prendre'}</td><td class="nr">${s.est_hours ? hoursLabel(s.est_hours) : '—'}</td><td>${s.status === 'done' ? `${ddmm(s.done_at)} · ${s.declared_label || ''}` : h`<span class="box"></span>`}</td></tr>`; })}
+</tbody></table>
+${p.notes ? h`<h2>Notes</h2><p>${p.notes}</p>` : ''}`, { ref: p.ref }));
 });
 
 r.post('/carnets/:id/fiches', loadProject, (req, res) => {
@@ -164,8 +183,10 @@ r.post('/carnets/:id/ia', loadProject, async (req, res, next) => {
 });
 
 r.post('/carnets/:id/envoyer', loadProject, (req, res) => {
+  const n = q.get('SELECT COUNT(*) n FROM steps WHERE project_id = ? AND (sent = 0 OR changed = 1)', req.project.id).n;
   tx(() => {
     q.run('UPDATE steps SET sent = 1, changed = 0 WHERE project_id = ? AND (sent = 0 OR changed = 1)', req.project.id);
+    logActivity(req.project.id, L.patron().id, `Carnet envoyé à l’atelier (${n} fiche${n > 1 ? 's' : ''} nouvelle${n > 1 ? 's' : ''} ou modifiée${n > 1 ? 's' : ''})`, 'Patron');
     q.run("UPDATE projects SET sent_to_atelier_at = datetime('now') WHERE id = ?", req.project.id);
   });
   res.flashTo(`/carnets/${req.project.id}`, 'Envoyé. L’équipe voit ses fiches dans « Mon carnet ». Une modification ensuite leur est signalée.');

@@ -153,6 +153,31 @@ addColumn('bars', 'auto', 'INTEGER NOT NULL DEFAULT 0');
 addColumn('bars', 'step_id', 'INTEGER');
 addColumn('trips', 'reminder_sent_at', 'TEXT');
 addColumn('steps', 'ai_generated', 'INTEGER NOT NULL DEFAULT 0');
+addColumn('projects', 'ref', 'TEXT');
+
+// Référence de dossier : P2026-001, P2026-002… attribuée à la création.
+db.exec(`
+CREATE TRIGGER IF NOT EXISTS projects_ref AFTER INSERT ON projects WHEN NEW.ref IS NULL BEGIN
+  UPDATE projects SET ref = 'P' || strftime('%Y', 'now') || '-' || printf('%03d',
+    (SELECT COUNT(*) FROM projects WHERE ref LIKE 'P' || strftime('%Y', 'now') || '-%') + 1) WHERE id = NEW.id;
+END;
+CREATE TABLE IF NOT EXISTS activity (
+  id INTEGER PRIMARY KEY, project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE,
+  person_id INTEGER REFERENCES people(id), who TEXT DEFAULT '', text TEXT NOT NULL, created_at TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS activity_project ON activity(project_id, created_at);
+`);
+for (const p of db.prepare('SELECT id, created_at FROM projects WHERE ref IS NULL ORDER BY id').all()) {
+  const y = String(p.created_at || '').slice(0, 4) || String(new Date().getFullYear());
+  const n = db.prepare("SELECT COUNT(*) n FROM projects WHERE ref LIKE ?").get(`P${y}-%`).n + 1;
+  db.prepare('UPDATE projects SET ref = ? WHERE id = ?').run(`P${y}-${String(n).padStart(3, '0')}`, p.id);
+}
+
+// Historique d'un projet : qui a fait quoi, quand.
+function logActivity(projectId, personId, text, who = '') {
+  if (!projectId) return;
+  db.prepare('INSERT INTO activity (project_id, person_id, who, text) VALUES (?, ?, ?, ?)').run(projectId, personId || null, who, String(text).slice(0, 300));
+}
 
 // --- petits utilitaires ---
 const q = {
@@ -193,4 +218,9 @@ function bootstrap() {
 }
 bootstrap();
 
-module.exports = { db, q, tx, setting, setSetting, PHASES, GESTES, STOCK_CATS, DATA_DIR, UPLOAD_DIR };
+// Coordonnées de l'entreprise (documents imprimés, e-mails, portail client).
+const COMPANY_FIELDS = [['company_name', 'Raison sociale', 'Carchon Les Ateliers'], ['company_address', 'Adresse', ''], ['company_siret', 'SIRET', ''],
+  ['company_phone', 'Téléphone', ''], ['company_email', 'E-mail', ''], ['company_site', 'Site web', 'www.carchon.com']];
+const company = () => Object.fromEntries(COMPANY_FIELDS.map(([k, , d]) => [k.replace('company_', ''), setting(k, d) || d]));
+
+module.exports = { db, q, tx, setting, setSetting, logActivity, company, COMPANY_FIELDS, PHASES, GESTES, STOCK_CATS, DATA_DIR, UPLOAD_DIR };

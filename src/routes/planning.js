@@ -3,8 +3,8 @@
 const express = require('express');
 const fs = require('node:fs');
 const crypto = require('node:crypto');
-const { q, tx, UPLOAD_DIR } = require('../db');
-const { h, layout, pill, avatar, postBtn, options, ddmm, today, addDays, parseDate, iso, JOURS_C, MOIS_C } = require('../html');
+const { q, tx, UPLOAD_DIR, logActivity } = require('../db');
+const { h, layout, pill, avatar, postBtn, options, ddmm, ddmmyyyy, today, addDays, parseDate, iso, JOURS_C, MOIS_C, printPage } = require('../html');
 const L = require('../logic');
 const { loadProject } = require('./patron');
 
@@ -114,13 +114,13 @@ r.get('/poses', (req, res) => {
 <dl class="facts"><dt>Quoi</dt><dd>${t.what}</dd><dt>Où</dt><dd>${t.place}</dd><dt>Accès</dt><dd>${t.access}</dd><dt>Contact</dt><dd>${t.contact}</dd><dt>Équipe</dt><dd>${t.team}</dd></dl>
 <div class="h3 mt12">Dans le camion</div><div class="chips">${items.map((it, i) => h`<form method="post" action="/poses/${t.id}/item" class="inline"><input type="hidden" name="i" value="${i}"><button class="chip${it.done ? ' on' : ''}" aria-pressed="${!!it.done}">${it.done ? '✓ ' : ''}${it.t}</button></form>`)}</div>
 <div class="line mt12"><a class="btn alt sm" href="/projets/${t.project_id}">Ouvrir le projet</a>${t.place ? h`<a class="btn alt sm" target="_blank" rel="noopener" href="https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(t.place)}">Itinéraire</a>` : ''}
-<a class="btn sm" href="/poses/${t.id}/pv">PV de réception sur l'iPad</a>
+<a class="btn sm" href="/poses/${t.id}/pv">PV de réception sur l'iPad</a><a class="btn alt sm" href="/poses/${t.id}/pv/imprimer">PV papier</a>
 <details class="menu"><summary class="btn alt sm">Modifier</summary><form method="post" action="/poses/${t.id}" class="menu-list form pad wide">${tripForm(t)}<div class="line"><button class="btn sm">Enregistrer</button><button class="btn alt sm" name="del" value="1">Supprimer</button></div></form></details></div></div></section>`;
   })}
 ${trips.length ? '' : h`<section class="card"><p class="mut">Aucune livraison prévue.</p></section>`}
 <section class="card"><h2>PV signés récemment</h2>
 ${signed.map((t, i) => h`<div class="row${i ? '' : ' f'}"><div class="grow"><b>${t.pname}</b><span class="mut">${ddmm(t.pv_signed_at)} · ${t.pv_reserves ? `réserve : ${t.pv_reserves}${t.pv_reserves_lifted_at ? ` · levée le ${ddmm(t.pv_reserves_lifted_at)}` : ''}` : 'sans réserve'}</span></div>
-<a class="btn alt sm" href="/poses/${t.id}/pv">Voir le PV</a>
+<a class="btn alt sm" href="/poses/${t.id}/pv/imprimer">Voir le PV</a>
 ${t.pv_reserves && !t.pv_reserves_lifted_at ? postBtn(`/poses/${t.id}/lever`, 'Réserve levée', 'btn alt sm') : ''}
 ${t.balance_paid_at ? pill('ok', 'Soldé') : postBtn(`/poses/${t.id}/solde`, 'Solde reçu', 'btn sm')}</div>`)}
 ${signed.length ? '' : h`<p class="mut">Aucun PV signé pour l'instant.</p>`}
@@ -158,6 +158,24 @@ r.post('/poses/:id/item', (req, res) => {
 r.post('/poses/:id/lever', (req, res) => { q.run("UPDATE trips SET pv_reserves_lifted_at = datetime('now') WHERE id = ?", req.params.id); res.redirect('/poses'); });
 r.post('/poses/:id/solde', (req, res) => { q.run("UPDATE trips SET balance_paid_at = datetime('now') WHERE id = ?", req.params.id); res.redirect('/poses'); });
 
+// PV imprimable : signé (copie) ou vierge (à faire signer sur papier).
+r.get('/poses/:id/pv/imprimer', (req, res) => {
+  const t = q.get('SELECT trips.*, projects.name pname, projects.ref pref, clients.name cname, clients.address caddr FROM trips JOIN projects ON projects.id = trips.project_id LEFT JOIN clients ON clients.id = projects.client_id WHERE trips.id = ?', req.params.id);
+  if (!t) return res.redirect('/poses');
+  const quote = q.get("SELECT number, version FROM quotes WHERE project_id = ? AND status = 'accepted' ORDER BY id DESC LIMIT 1", t.project_id);
+  const signed = !!t.pv_signed_at;
+  res.send(printPage('Procès-verbal de réception', h`
+<table><tr><td><b>Maître d’ouvrage (client)</b><br>${t.cname || '—'}${t.caddr ? h`<br>${t.caddr}` : ''}</td><td><b>Ouvrage</b><br>${t.pname}${quote ? h`<br>Devis ${quote.number} v${quote.version}` : ''}</td><td><b>Lieu</b><br>${t.place || '—'}</td></tr></table>
+<p style="margin-top:18px">Le maître d’ouvrage, après avoir visité l’ouvrage désigné ci-dessus en présence de l’entreprise, déclare :</p>
+<p><span class="box${signed && !t.pv_reserves ? ' on' : ''}"></span> prononcer la réception <b>sans réserve</b></p>
+<p><span class="box${signed && t.pv_reserves ? ' on' : ''}"></span> prononcer la réception <b>avec les réserves</b> suivantes :</p>
+<div style="border:1px solid #DDD7CC;min-height:70px;padding:8px">${t.pv_reserves || ''}</div>
+${t.pv_reserves_lifted_at ? h`<p>Réserves levées le ${ddmmyyyy(t.pv_reserves_lifted_at)}.</p>` : ''}
+<p style="margin-top:14px">Fait le ${signed ? ddmmyyyy(t.pv_signed_at) : '____ / ____ / ________'}${signed ? '' : ', à ________________________'}.</p>
+<div class="sign"><div>Le client${signed ? h` : <b>${t.pv_name}</b>` : ''}<br>${signed && t.pv_signature ? h`<img src="/fichiers/${t.pv_signature}" alt="Signature" style="max-height:90px">` : 'Signature'}</div><div>L’entreprise<br>Signature</div></div>`,
+  { ref: t.pref, date: signed ? ddmmyyyy(t.pv_signed_at) : ddmmyyyy(t.date) }));
+});
+
 // PV de réception, à faire signer au client sur l'iPad.
 r.get('/poses/:id/pv', (req, res) => {
   const t = q.get('SELECT trips.*, projects.name pname, projects.client_id, clients.name cname FROM trips JOIN projects ON projects.id = trips.project_id LEFT JOIN clients ON clients.id = projects.client_id WHERE trips.id = ?', req.params.id);
@@ -184,6 +202,7 @@ r.post('/poses/:id/pv', (req, res) => {
   if (m) { sig = crypto.randomBytes(12).toString('hex') + '.png'; fs.writeFileSync(`${UPLOAD_DIR}/${sig}`, Buffer.from(m[1], 'base64')); }
   const reserves = req.body.res === '1' ? str(req.body.reserves) || 'réserve sans précision' : '';
   // Le PV apparaît ensuite dans le projet et dans l'espace du client (rubrique Documents).
+  logActivity(t.project_id, null, `PV de réception signé par ${str(req.body.name)}${reserves ? ` avec réserve : ${reserves}` : ', sans réserve'}`, 'Patron');
   q.run("UPDATE trips SET pv_signed_at = datetime('now'), done_at = COALESCE(done_at, datetime('now')), pv_name = ?, pv_reserves = ?, pv_signature = ? WHERE id = ?", str(req.body.name), reserves, sig, t.id);
   res.flashTo('/poses', 'PV signé et rangé dans le projet. Pense à facturer le solde.');
 });

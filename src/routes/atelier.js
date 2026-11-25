@@ -1,7 +1,7 @@
 'use strict';
 // Mode atelier (iPad) : qui travaille, ma prochaine tâche, mon carnet, l'étape en cours, il manque, photo, signaler.
 const express = require('express');
-const { q, tx, PHASES, STOCK_CATS } = require('../db');
+const { q, tx, PHASES, STOCK_CATS, logActivity } = require('../db');
 const { h, page, avatar, pill, options, longDate, today, rel, hoursLabel, flashBox, ddmm } = require('../html');
 const { requireAtelier, verify, throttle, fail } = require('../auth');
 const { upload, fileUrl } = require('../uploads');
@@ -165,6 +165,7 @@ r.post('/fiche/:id/prendre', loadStep, (req, res) => {
 });
 r.post('/fiche/:id/commencer', loadStep, (req, res) => {
   if (!mineOrFree(req)) return res.redirect(`/atelier/fiche/${req.step.id}`);
+  if (req.step.status !== 'doing') logActivity(req.step.project_id, req.person.id, `Fiche commencée : ${req.step.title}`, req.person.name);
   q.run("UPDATE steps SET status = 'doing', started_at = COALESCE(started_at, datetime('now')), who_id = COALESCE(who_id, ?), seen = 1 WHERE id = ?", req.person.id, req.step.id);
   res.redirect(`/atelier/fiche/${req.step.id}`);
 });
@@ -178,6 +179,7 @@ r.post('/fiche/:id/fini', loadStep, (req, res) => {
   if (!Number.isFinite(hrs) || hrs <= 0) hrs = parseFloat(req.body.hours);
   if (!Number.isFinite(hrs) || hrs <= 0) return res.redirect(`/atelier/fiche/${req.step.id}?fini=1`);
   q.run("UPDATE steps SET status = 'done', done_at = datetime('now'), started_at = COALESCE(started_at, datetime('now')), declared_hours = ?, declared_label = ?, who_id = COALESCE(who_id, ?) WHERE id = ?", hrs, hoursLabel(hrs), req.person.id, req.step.id);
+  logActivity(req.step.project_id, req.person.id, `Fiche terminée : ${req.step.title} (${hoursLabel(hrs)})`, req.person.name);
   res.flashTo(`/atelier/fiche/${req.step.id}`, `Noté : ${hoursLabel(hrs)}. Le patron est prévenu.`);
 });
 r.post('/fiche/:id/message', loadStep, (req, res) => {
@@ -234,6 +236,7 @@ r.post('/photo', upload.single('photo'), (req, res) => {
   const stepId = req.body.step_id ? Number(req.body.step_id) : null;
   const title = str(req.body.title) || (stepId ? q.get('SELECT title FROM steps WHERE id = ?', stepId)?.title : '') || '';
   q.run('INSERT INTO photos (project_id, step_id, file, title, person_id) VALUES (?, ?, ?, ?, ?)', Number(req.body.project_id), stepId, req.file.filename, title, req.person.id);
+  logActivity(Number(req.body.project_id), req.person.id, `Photo ajoutée${title ? ` : ${title}` : ''}`, req.person.name);
   res.flashTo(stepId ? `/atelier/fiche/${stepId}` : '/atelier', 'Photo rangée dans le projet.');
 });
 r.get('/signaler', (req, res) => {
@@ -249,6 +252,7 @@ r.post('/signaler', upload.single('photo'), (req, res) => {
   tx(() => {
     const ph = req.file ? q.run('INSERT INTO photos (project_id, step_id, file, title, person_id) VALUES (?, ?, ?, ?, ?)', pid, stepId, req.file.filename, str(req.body.body).slice(0, 80), req.person.id).lastInsertRowid : null;
     q.run('INSERT INTO issues (project_id, step_id, person_id, body, photo_id) VALUES (?, ?, ?, ?, ?)', pid, stepId, req.person.id, str(req.body.body), ph);
+    logActivity(pid, req.person.id, `Problème signalé : ${str(req.body.body)}`, req.person.name);
   });
   res.flashTo(stepId ? `/atelier/fiche/${stepId}` : '/atelier', 'Le patron est prévenu. Sa réponse s’affichera ici.');
 });

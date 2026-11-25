@@ -1,7 +1,7 @@
 'use strict';
 // Patron : Aujourd'hui, recherche, liste des projets et fiche projet.
 const express = require('express');
-const { q, tx, PHASES } = require('../db');
+const { q, tx, PHASES, logActivity } = require('../db');
 const { h, raw, layout, pill, avatar, postBtn, options, hidden, ddmm, longDate, today, addDays, rel, hoursLabel, dayMonth, hhmm } = require('../html');
 const L = require('../logic');
 const { upload, fileUrl, isImage } = require('../uploads');
@@ -14,7 +14,7 @@ const friseBar = (fr) => h`<div class="bar" aria-hidden="true">${fr.map((f) => h
 
 function projectCard(p) {
   return h`<a class="proj" href="/projets/${p.id}">
-<div class="line"><b class="t16">${p.name}</b>${pill('no', p.kind)}<span class="mut">${p.client ? p.client.name : 'hors commande client'}</span>
+<div class="line"><span class="ref">${p.ref}</span><b class="t16">${p.name}</b>${pill('no', p.kind)}<span class="mut">${p.client ? p.client.name : 'hors commande client'}</span>
 <span class="mut push">${p.due_date ? `Livraison ${ddmm(p.due_date)} · ` : ''}<b style="color:${p.slack.color}">${p.slack.text}</b></span></div>
 ${friseBar(p.frise)}
 <div class="line"><span class="mut"><b class="ink">${p.cur.phase}</b> · ${p.next}</span><span class="push">${avatar(p.lead, 28)}</span></div></a>`;
@@ -136,7 +136,7 @@ r.get('/projets', (req, res) => {
 ${done ? '' : h`<div class="chips" role="group" aria-label="Filtrer">${chips.map(([k, l]) => h`<a class="chip${f === k ? ' on' : ''}" href="/projets?f=${k}">${l}</a>`)}</div>`}
 <div class="tablebox mt12"><table class="frise">
 <thead><tr><th class="pcol">Projet · prochaine action</th>${PHASES.map((p) => h`<th>${p}</th>`)}<th>Échéance</th></tr></thead>
-<tbody>${rows.map((p) => h`<tr><td class="pcol"><a href="/projets/${p.id}" class="b">${p.name}</a> ${pill('no', p.kind)}<div class="mut">${p.client ? p.client.name : 'hors commande'} → ${p.next}</div></td>
+<tbody>${rows.map((p) => h`<tr><td class="pcol"><span class="ref">${p.ref}</span> <a href="/projets/${p.id}" class="b">${p.name}</a> ${pill('no', p.kind)}<div class="mut">${p.client ? p.client.name : 'hors commande'} → ${p.next}</div></td>
 ${p.frise.map((c) => h`<td><span class="c ${CELL[c.state]}">${c.label}</span></td>`)}
 <td class="due"><b>${p.due_date ? ddmm(p.due_date) : 'à fixer'}</b><div style="color:${p.slack.color}" class="t12 b">${done ? (p.finished_at ? `terminé ${ddmm(p.finished_at)}` : '') : p.slack.text}</div>${avatar(p.lead, 26)}</td></tr>`)}
 ${rows.length ? '' : h`<tr><td colspan="11" class="mut">Aucun projet dans ce filtre.</td></tr>`}</tbody></table></div>
@@ -159,6 +159,7 @@ r.post('/projets/nouveau', (req, res) => {
   const b = req.body;
   const id = q.run('INSERT INTO projects (name, kind, client_id, due_date, lead_id, deposit_needed) VALUES (?, ?, ?, ?, ?, ?)',
     str(b.name), str(b.kind), int(b.client_id), str(b.due_date) || null, int(b.lead_id), b.client_id ? 1 : 0).lastInsertRowid;
+  logActivity(Number(id), null, 'Projet créé', 'Patron');
   res.flashTo(`/projets/${id}`, 'Projet créé. Prépare son carnet de fabrication quand tu es prêt.');
 });
 
@@ -177,6 +178,7 @@ r.get('/projets/:id', loadProject, (req, res) => {
   const photos = q.all('SELECT * FROM photos WHERE project_id = ? ORDER BY created_at DESC', p.id);
   const issues = q.all("SELECT * FROM issues WHERE project_id = ? AND status = 'open' ORDER BY created_at DESC", p.id);
   const docs = q.all('SELECT * FROM documents WHERE project_id = ? ORDER BY id DESC', p.id);
+  const history = q.all('SELECT * FROM activity WHERE project_id = ? ORDER BY created_at DESC, id DESC LIMIT 40', p.id);
   const time = q.all("SELECT COALESCE(NULLIF(geste,''), title) g, SUM(declared_hours) h, COUNT(*) n, SUM(status = 'doing') doing FROM steps WHERE project_id = ? AND (declared_hours IS NOT NULL OR status = 'doing') GROUP BY g", p.id);
   const total = time.reduce((a, t) => a + (t.h || 0), 0);
   const quote = q.get("SELECT * FROM quotes WHERE project_id = ? AND status = 'accepted' ORDER BY id DESC LIMIT 1", p.id);
@@ -184,9 +186,9 @@ r.get('/projets/:id', loadProject, (req, res) => {
   const people = L.people();
   const body = h`
 <div class="mut"><a href="/projets">Projets</a> › ${p.name}</div>
-<div class="head mt4"><div><h1 class="m0">${p.name}</h1>
+<div class="head mt4"><div><div class="ref">Dossier ${p.ref}</div><h1 class="m0">${p.name}</h1>
 <div class="line mt8">${pill('no', p.kind)}<span class="mut">${p.client ? p.client.name : 'hors commande client'}${p.due_date ? ` · Livraison ${ddmm(p.due_date)}` : ''}</span><b style="color:${p.slack.color}" class="t13">${p.slack.text}</b>${p.portal_state === 'open' ? pill('ok', 'Visible sur le portail client') : ''}${p.status === 'termine' ? pill('no', 'Terminé') : ''}</div></div>
-<div class="push line"><a class="btn alt" href="#photos">Ajouter une photo</a><a class="btn alt" href="/atelier">Ouvrir sur tablette</a><a class="btn" href="/carnets/${p.id}">Ouvrir le carnet</a></div></div>
+<div class="push line"><a class="btn alt" href="#photos">Ajouter une photo</a><a class="btn alt" href="/carnets/${p.id}/imprimer">Imprimer le carnet</a><a class="btn" href="/carnets/${p.id}">Ouvrir le carnet</a></div></div>
 
 <section class="card mt20" aria-label="Avancement">
 <div class="frise-big">${p.frise.map((f) => h`<details class="fz ${f.state}"><summary><span class="fz-dot"></span><b>${f.phase}</b><span class="mut t12">${f.label}</span></summary>
@@ -257,6 +259,10 @@ ${p.client_id ? h`<section class="card"><div class="line"><h2>Portail client</h2
 <div class="who"><span class="grow">Photos partagées</span><b>${shared} sur ${photos.length}</b></div>
 <div class="line mt12"><a class="btn alt sm" href="/portails#p${p.id}">Gérer le portail</a><a class="btn alt sm" href="/projets/${p.id}/nouvelles">Donner des nouvelles</a></div></section>` : ''}
 
+<section class="card" id="historique"><h2>Historique</h2><p class="mut">Tout ce qui s’est passé sur ce dossier, daté.</p>
+<ol class="timeline mt8">${history.map((a) => h`<li><time datetime="${a.created_at}">${ddmm(a.created_at)} · ${hhmm(a.created_at)}</time><span>${a.text}${a.who ? h` <span class="mut">· ${a.who}</span>` : ''}</span></li>`)}</ol>
+${history.length ? '' : h`<p class="mut">Rien encore.</p>`}</section>
+
 <section class="card"><h2>Documents</h2><p class="mut">Devis accepté, PV, facture… Cochés « client », ils s’affichent dans son espace.</p>
 ${docs.map((d) => h`<div class="row"><a class="grow" href="${fileUrl(d.file)}" target="_blank">${d.title}</a>
 <form method="post" action="/projets/${p.id}/documents/${d.id}" class="ckrow"><label><input type="checkbox" name="visible_client" value="1" ${d.visible_client ? 'checked' : ''} data-auto> Client</label></form></div>`)}
@@ -285,7 +291,8 @@ r.post('/projets/:id/infos', loadProject, (req, res) => {
     q.run('UPDATE projects SET name = ?, due_date = ?, lead_id = ?, next_action = ?, wood = ?, notes = ?, deposit_needed = ?, deposit_at = ? WHERE id = ?',
       str(b.name) || p.name, str(b.due_date) || null, int(b.lead_id), str(b.next_action), str(b.wood), str(b.notes), p.client_id ? (b.deposit_needed ? 1 : 0) : 0, depositAt, p.id);
     // Acompte reçu : les achats qui l'attendaient se débloquent.
-    if (depositAt && !p.deposit_at) q.run('UPDATE needs SET needs_deposit = 0 WHERE project_id = ?', p.id);
+    if (depositAt && !p.deposit_at) { q.run('UPDATE needs SET needs_deposit = 0 WHERE project_id = ?', p.id); logActivity(p.id, null, `Acompte reçu le ${ddmm(depositAt)}`, 'Patron'); }
+    if (str(b.due_date) && str(b.due_date) !== (p.due_date || '')) logActivity(p.id, null, `Date de livraison : ${ddmm(str(b.due_date))}${p.due_date ? ` (au lieu du ${ddmm(p.due_date)})` : ''}`, 'Patron');
   });
   res.flashTo(`/projets/${p.id}`, depositAt && !p.deposit_at ? 'Acompte noté. Les achats bloqués sont débloqués.' : 'Enregistré.');
 });
@@ -293,11 +300,12 @@ r.post('/projets/:id/infos', loadProject, (req, res) => {
 r.post('/projets/:id/statut', loadProject, (req, res) => {
   const st = req.body.status === 'termine' ? 'termine' : 'en_cours';
   q.run("UPDATE projects SET status = ?, finished_at = CASE WHEN ? = 'termine' THEN datetime('now') ELSE NULL END WHERE id = ?", st, st, req.project.id);
+  logActivity(req.project.id, null, st === 'termine' ? 'Projet terminé' : 'Projet repris', 'Patron');
   res.flashTo(`/projets/${req.project.id}`, st === 'termine' ? 'Projet terminé.' : 'Projet repris.');
 });
 
 r.post('/projets/:id/probleme/:iid', loadProject, (req, res) => {
-  if (req.body.act === 'close') q.run("UPDATE issues SET status = 'closed', reply = ? WHERE id = ? AND project_id = ?", str(req.body.reply), req.params.iid, req.project.id);
+  if (req.body.act === 'close') { q.run("UPDATE issues SET status = 'closed', reply = ? WHERE id = ? AND project_id = ?", str(req.body.reply), req.params.iid, req.project.id); logActivity(req.project.id, null, `Problème traité${str(req.body.reply) ? ` : ${str(req.body.reply)}` : ''}`, 'Patron'); }
   else q.run('UPDATE issues SET reply = ? WHERE id = ? AND project_id = ?', str(req.body.reply), req.params.iid, req.project.id);
   res.flashTo(`/projets/${req.project.id}`, req.body.act === 'close' ? 'Problème traité.' : 'Réponse envoyée sur l’iPad.');
 });
@@ -321,6 +329,7 @@ r.post('/projets/:id/plans/:pid/valider', loadProject, (req, res) => {
   tx(() => {
     q.run("UPDATE plans SET status = 'archivee' WHERE project_id = ? AND status = 'validee'", req.project.id);
     q.run("UPDATE plans SET status = 'validee', validated_at = datetime('now') WHERE id = ? AND project_id = ?", req.params.pid, req.project.id);
+    logActivity(req.project.id, null, `Plan ${q.get('SELECT version FROM plans WHERE id = ?', req.params.pid)?.version || ''} validé`, 'Patron');
     q.run("DELETE FROM phase_overrides WHERE project_id = ? AND phase = 'Conception'", req.project.id);
   });
   res.flashTo(`/projets/${req.project.id}`, 'Plan validé : c’est lui qui fait foi pour l’atelier.');
