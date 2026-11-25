@@ -11,7 +11,9 @@
     var msg = f.getAttribute('data-confirm');
     var btn = e.submitter;
     if (btn && btn.getAttribute('data-confirm-btn')) msg = btn.getAttribute('data-confirm-btn');
-    if (msg && !window.confirm(msg)) e.preventDefault();
+    if (msg && !window.confirm(msg)) { e.preventDefault(); return; }
+    var busy = f.getAttribute('data-busy');
+    if (busy) { var b2 = f.querySelector('button'); if (b2) { b2.disabled = true; b2.textContent = busy; } }
   });
   // Copier un lien.
   document.addEventListener('click', function (e) {

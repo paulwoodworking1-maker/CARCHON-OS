@@ -13,6 +13,8 @@ services:
         value: "22.13.0"
       - key: DATA_DIR
         value: /var/data
+      - key: TZ
+        value: Europe/Paris
       - key: COOKIE_SECURE
         value: "1"
       - key: SESSION_SECRET

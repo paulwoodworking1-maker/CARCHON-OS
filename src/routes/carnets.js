@@ -6,6 +6,8 @@ const { h, layout, pill, avatar, postBtn, options, ddmm, hoursLabel, rel } = req
 const L = require('../logic');
 const { upload, fileUrl } = require('../uploads');
 const { loadProject } = require('./patron');
+const ai = require('../ai');
+const auto = require('../automations');
 
 const r = express.Router();
 const str = (v) => String(v ?? '').trim();
@@ -35,8 +37,9 @@ r.get('/carnets/:id', loadProject, (req, res) => {
   const msgs = sel ? q.all('SELECT messages.*, people.name pname, people.role prole FROM messages LEFT JOIN people ON people.id = messages.person_id WHERE step_id = ? ORDER BY created_at', sel.id) : [];
   if (sel) q.run('UPDATE messages SET read_by_patron = 1 WHERE step_id = ?', sel.id);
   const people = L.people();
+  const avg = auto.averages();
   const checks = sel ? JSON.parse(sel.checks) : [];
-  const stLabel = (s) => (s.status === 'done' ? pill('ok', `Fait${s.declared_label ? ' · ' + s.declared_label : ''}`) : s.status === 'doing' ? pill('wa', 'En cours') : !s.sent ? pill('no', 'Pas envoyée') : s.changed ? pill('wa', 'Modifiée') : '');
+  const stLabel = (s) => (s.status === 'done' ? pill('ok', `Fait${s.declared_label ? ' · ' + s.declared_label : ''}`) : s.status === 'doing' ? pill('wa', 'En cours') : !s.sent ? pill('no', s.ai_generated ? 'Proposée par l’IA' : 'Pas envoyée') : s.changed ? pill('wa', 'Modifiée') : '');
 
   const body = h`
 <div class="mut"><a href="/projets/${p.id}">${p.name}</a>${client ? ` · ${client.name}` : ''}${p.due_date ? ` · livraison ${ddmm(p.due_date)}` : ''}</div>
@@ -47,6 +50,11 @@ r.get('/carnets/:id', loadProject, (req, res) => {
 <aside class="card">
 <h2 class="t16">Ajouter</h2>
 <form method="post" action="/carnets/${p.id}/fiches" class="mt12"><button class="btn sm wfull">+ Une fiche</button></form>
+<div class="h3 mt20">Écris comme tu parles</div>
+${ai.enabled() ? h`<form method="post" action="/carnets/${p.id}/ia" class="form" data-busy="L’assistant prépare les fiches…">
+<label class="sr" for="iatext">Décris le travail</label><textarea id="iatext" name="text" rows="6" required placeholder="ex. Nina débite le noyer lundi, garde les beaux fils pour la façade. Lucas fait les queues d'aronde du caisson à la main, puis on colle ensemble. Huile-cire 2 couches, et pose murale chez le client, mur en pierre."></textarea>
+<button class="btn alt sm">Préparer les fiches</button><p class="mut t12">L’assistant propose des fiches (qui, durée, repères). Rien ne part à l’atelier avant que tu cliques sur « Envoyer ».</p></form>`
+  : h`<p class="mut t12">Avec l’assistant IA activé (Pilotage › Automatisations), tu décris le travail en quelques phrases et les fiches se remplissent toutes seules.</p>`}
 <div class="h3 mt20">Repartir d'un ancien carnet</div>
 <p class="mut">Copie les fiches et les mots du patron, puis ajuste.</p>
 ${others.map((o) => postBtn(`/carnets/${p.id}/copier`, `${o.name} · ${o.n} fiches`, 'linkbtn block', { from: o.id }, `Copier les ${o.n} fiches de « ${o.name} » à la fin de ce carnet ?`))}
@@ -73,7 +81,7 @@ ${sel ? h`<section class="card">
 <label>Repères, un par ligne <textarea name="checks" rows="3">${checks.map((c) => c.t).join('\n')}</textarea></label>
 <div class="grid2"><label>Étape de la frise <select name="phase"><option value="">—</option>${options(PHASES, sel.phase)}</select></label>
 <label>Geste (pour le chiffrage) <select name="geste"><option value="">—</option>${options(GESTES, sel.geste)}</select></label></div>
-<div class="grid2"><label>Temps prévu (heures) <input name="est_hours" inputmode="decimal" value="${sel.est_hours || ''}"></label>
+<div class="grid2"><label>Temps prévu (heures)${avg[sel.geste] ? ` · habituellement ${hoursLabel(avg[sel.geste])}` : ''} <input name="est_hours" inputmode="decimal" value="${sel.est_hours || ''}" placeholder="${avg[sel.geste] ? String(Math.round(avg[sel.geste] * 2) / 2).replace('.', ',') : 'vide = moyenne du geste'}"></label>
 <label>Plan <select name="plan_id"><option value="">—</option>${options(plans.map((x) => [x.id, x.version]), sel.plan_id)}</select></label></div>
 <label>Message vocal (fichier audio) <input type="file" name="audio" accept="audio/*" capture></label>
 ${sel.audio ? h`<audio controls src="${fileUrl(sel.audio)}"></audio>` : ''}
@@ -103,7 +111,8 @@ r.post('/carnets/:id/fiches/:sid', loadProject, upload.single('audio'), (req, re
   const checks = str(b.checks).split('\n').map((t) => t.trim()).filter(Boolean).map((t) => ({ t, done: !!old[t] }));
   q.run(`UPDATE steps SET title = ?, piece = ?, who_id = ?, note = ?, checks = ?, phase = ?, geste = ?, est_hours = ?, plan_id = ?, audio = COALESCE(?, audio),
     changed = CASE WHEN sent = 1 THEN 1 ELSE 0 END, seen = CASE WHEN sent = 1 THEN 0 ELSE seen END WHERE id = ?`,
-  str(b.title) || 'Fiche', str(b.piece), b.who_id ? Number(b.who_id) : null, str(b.note), JSON.stringify(checks), str(b.phase), str(b.geste), num(b.est_hours), b.plan_id ? Number(b.plan_id) : null, req.file ? req.file.filename : null, s.id);
+  str(b.title) || 'Fiche', str(b.piece), b.who_id ? Number(b.who_id) : null, str(b.note), JSON.stringify(checks), str(b.phase), str(b.geste),
+  num(b.est_hours) || Math.round((auto.averages()[str(b.geste)] || 0) * 2) / 2, b.plan_id ? Number(b.plan_id) : null, req.file ? req.file.filename : null, s.id);
   res.flashTo(`/carnets/${req.project.id}?fiche=${s.id}`, s.sent ? 'Enregistré. Envoie la modification pour qu’elle soit signalée sur l’iPad.' : 'Fiche enregistrée.');
 });
 
@@ -126,6 +135,32 @@ r.post('/carnets/:id/fiches/:sid/message', loadProject, (req, res) => {
   const s = q.get('SELECT id FROM steps WHERE id = ? AND project_id = ?', req.params.sid, req.project.id);
   if (s && str(req.body.body)) q.run('INSERT INTO messages (step_id, person_id, body, read_by_patron) VALUES (?, ?, ?, 1)', s.id, L.patron().id, str(req.body.body));
   res.redirect(`/carnets/${req.project.id}?fiche=${req.params.sid}`);
+});
+
+// L'assistant transforme une description libre en fiches (brouillons, pas encore envoyées).
+r.post('/carnets/:id/ia', loadProject, async (req, res, next) => {
+  const p = req.project;
+  const text = str(req.body.text).slice(0, 8000);
+  if (!text) return res.redirect(`/carnets/${p.id}`);
+  try {
+    const people = L.people();
+    const existing = q.all('SELECT title FROM steps WHERE project_id = ? ORDER BY ord', p.id).map((s) => s.title);
+    const out = await ai.carnetFromText({ project: p, text, people, phases: PHASES, gestes: GESTES, averages: auto.averages(), existing });
+    const byName = (n) => people.find((x) => x.name.toLowerCase() === String(n).trim().toLowerCase() || (x.role === 'patron' && /^(toi|patron|moi)$/i.test(String(n).trim())));
+    let ord = q.get('SELECT MAX(ord) m FROM steps WHERE project_id = ?', p.id).m || 0;
+    let first = null;
+    tx(() => out.fiches.slice(0, 40).forEach((f) => {
+      const id = q.run('INSERT INTO steps (project_id, ord, title, piece, who_id, phase, geste, est_hours, note, checks, ai_generated) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)',
+        p.id, ++ord, str(f.titre).slice(0, 120) || 'Fiche', str(f.pieces), byName(f.qui)?.id || null, PHASES.includes(f.etape_frise) ? f.etape_frise : '', GESTES.includes(f.geste) ? f.geste : '',
+        Math.max(0, Math.min(200, Number(f.heures) || 0)), str(f.mot_du_patron), JSON.stringify((f.reperes || []).slice(0, 6).map((t) => ({ t: str(t), done: false })))).lastInsertRowid;
+      first = first || id;
+    }));
+    const msg = `${out.fiches.length} fiche(s) proposée(s). Relis-les, ajuste, puis « Envoyer à l’atelier ».${out.remarques ? ` Remarque de l’assistant : ${out.remarques}` : ''}`;
+    res.flashTo(`/carnets/${p.id}${first ? `?fiche=${first}` : ''}`, msg);
+  } catch (e) {
+    if (e instanceof ai.AIError) return res.flashTo(`/carnets/${p.id}`, e.message, 'ko');
+    next(e);
+  }
 });
 
 r.post('/carnets/:id/envoyer', loadProject, (req, res) => {

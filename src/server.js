@@ -71,10 +71,24 @@ app.get('/fichiers/:name', (req, res) => {
   res.sendFile(f);
 });
 
+// Après chaque modification faite dans le logiciel, le planning automatique se recalcule.
+const automations = require('./automations');
+let replanQueued = false;
+app.use((req, res, next) => {
+  if (req.method === 'POST' && !req.path.startsWith('/p/')) {
+    res.on('finish', () => {
+      if (res.statusCode >= 400 || replanQueued) return;
+      replanQueued = true;
+      setImmediate(() => { replanQueued = false; automations.changed(); });
+    });
+  }
+  next();
+});
+
 // --- Routes ---
 app.use('/p', require('./routes/client'));          // portail client (liens privés)
 app.use('/atelier', require('./routes/atelier'));   // iPad
-for (const m of ['patron', 'carnets', 'achats', 'planning', 'reglages', 'portails']) app.use('/', requirePatron, require(`./routes/${m}`));
+for (const m of ['patron', 'carnets', 'achats', 'planning', 'reglages', 'portails', 'automatisations']) app.use('/', requirePatron, require(`./routes/${m}`));
 
 app.use((req, res) => res.status(404).send(page('Introuvable', h`<main class="login"><h1>Page introuvable</h1><p><a href="/">Revenir à l’accueil</a></p></main>`)));
 app.use((err, req, res, next) => {
@@ -85,5 +99,6 @@ app.use((err, req, res, next) => {
 if (require.main === module) {
   const port = Number(process.env.PORT || 3000);
   app.listen(port, () => console.log(`Carchon OS prêt sur http://localhost:${port}`));
+  automations.start();
 }
 module.exports = app;

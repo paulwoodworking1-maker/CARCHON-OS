@@ -41,9 +41,12 @@ if [ ! -f /etc/carchon-os.env ]; then
   SECRET=$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')
   {
     echo "PORT=3000"
+    echo "TZ=Europe/Paris"
     echo "DATA_DIR=$DATA_DIR"
     echo "SESSION_SECRET=$SECRET"
     if [ -n "$DOMAIN" ]; then echo "PUBLIC_URL=https://$DOMAIN"; echo "COOKIE_SECURE=1"; fi
+    echo "# Assistant IA (facultatif) : clé créée sur console.anthropic.com"
+    echo "# ANTHROPIC_API_KEY="
     echo "# Envoi des codes e-mail aux clients (à remplir plus tard) :"
     echo "# SMTP_HOST=ssl0.ovh.net"
     echo "# SMTP_PORT=465"

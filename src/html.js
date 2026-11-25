@@ -76,7 +76,7 @@ const SUBNAV = {
   projets: [['/projets', 'Projets en cours'], ['/carnets', 'Carnets de fabrication'], ['/portails', 'Portails clients'], ['/projets?vue=termines', 'Terminés']],
   planning: [['/planning', 'Par personne'], ['/poses', 'Livraisons et poses']],
   achats: [['/achats', 'À commander'], ['/commandes', 'Commandes en cours'], ['/fournisseurs', 'Fournisseurs']],
-  pilotage: [['/pilotage', 'Heures et chiffrage'], ['/equipe', 'Réglages équipe']],
+  pilotage: [['/pilotage', 'Heures et chiffrage'], ['/automatisations', 'Automatisations'], ['/equipe', 'Réglages équipe']],
 };
 
 function flashBox(flash) {

@@ -25,7 +25,8 @@ r.get('/planning', (req, res) => {
   const projects = q.all("SELECT id, name FROM projects WHERE status = 'en_cours' ORDER BY name");
   const bars = q.all('SELECT bars.*, projects.name pname FROM bars LEFT JOIN projects ON projects.id = bars.project_id WHERE start_date <= ? AND end_date >= ? ORDER BY start_date', end, start);
   const lanes = [
-    ...people.map((p) => ({ key: `p${p.id}`, title: p.role === 'patron' ? 'Toi' : p.name, sub: p.sub, person: p, bars: bars.filter((b) => b.person_id === p.id) })),
+    ...people.map((p) => ({ key: `p${p.id}`, title: p.role === 'patron' ? 'Toi' : p.name, sub: p.sub, person: p,
+      bars: bars.filter((b) => b.person_id === p.id).map((b) => (b.auto ? { ...b, kind: 'b1 autob', ro: `/carnets/${b.project_id}`, title: 'Planifié automatiquement depuis le carnet' } : b)) })),
     { key: 'sup', title: 'Livraisons fournisseur', sub: '', bars: q.all('SELECT orders.*, suppliers.name sname FROM orders LEFT JOIN suppliers ON suppliers.id = orders.supplier_id WHERE expected_at BETWEEN ? AND ? AND arrived_at IS NULL', start, end).map((o) => ({ kind: 'ev', label: `Livraison ${o.sname || ''}`, detail: o.what, start_date: o.expected_at, end_date: o.expected_at, ro: '/commandes' })) },
     { key: 'pose', title: 'Poses et rendez-vous', sub: '', bars: [
       ...q.all('SELECT trips.*, projects.name pname FROM trips JOIN projects ON projects.id = trips.project_id WHERE date BETWEEN ? AND ?', start, end).map((t) => ({ kind: 'b3', label: t.pname, detail: t.what, start_date: t.date, end_date: t.date, ro: '/poses' })),
@@ -57,13 +58,13 @@ r.get('/planning', (req, res) => {
   const body = h`<div class="head"><div><div class="eb">Planning</div><h1>Atelier · ${Number(start.slice(8))} ${MOIS_C[Number(start.slice(5, 7)) - 1]} – ${Number(end.slice(8))} ${MOIS_C[Number(end.slice(5, 7)) - 1]}</h1></div>
 <div class="push line"><a class="btn alt sm" href="/planning?du=${prev}&semaines=${weeks}" aria-label="Période précédente">‹</a><a class="btn alt sm" href="/planning?semaines=${weeks}">Aujourd'hui</a><a class="btn alt sm" href="/planning?du=${next}&semaines=${weeks}" aria-label="Période suivante">›</a>
 <div class="seg">${[[1, 'Semaine'], [2, '2 semaines'], [4, 'Mois']].map(([w, l]) => h`<a href="/planning?du=${start}&semaines=${w}" class="${w === weeks ? 'on' : ''}">${l}</a>`)}</div></div></div>
-<p class="mut mt8">Qui travaille sur quel projet, et quel jour. Le détail des étapes reste dans le carnet de chaque projet. Clique une barre pour la déplacer.</p>
+<p class="mut mt8">Les barres bleues se posent toutes seules d'après les fiches envoyées à l'atelier et leurs heures : pour les changer, modifie le carnet. Ajoute à la main les rendez-vous, congés et blocages : le planning les contourne.</p>
 <div class="tablebox mt12"><div class="plan" style="grid-template-columns: 190px repeat(${days.length}, minmax(${weeks === 4 ? 44 : 84}px, 1fr)); grid-template-rows: 44px repeat(${row - 2}, 58px)">
 <div class="ph0">QUI</div>
 ${days.map((d, i) => h`<div class="phd${d === t ? ' td' : ''}" style="grid-column:${i + 2}">${JOURS_C[parseDate(d).getDay()].toUpperCase()} ${Number(d.slice(8))}${d === t ? h`<small>aujourd'hui</small>` : ''}</div>`)}
 ${grid.map((ln) => h`<div class="plane" style="grid-row:${ln.row} / span ${ln.n}">${ln.person ? avatar(ln.person, 30) : ''}<div><b>${ln.title}</b><span class="mut t12">${ln.sub}</span></div></div>
 ${days.map((d, i) => h`<div class="pcell${d === t ? ' td' : ''}" style="grid-column:${i + 2};grid-row:${ln.row} / span ${ln.n}"></div>`)}
-${ln.placed.map((b) => b.ro ? h`<a class="pbar ${b.kind}" href="${b.ro}" style="grid-column:${b.a} / ${b.z};grid-row:${ln.row + b.t}"><b>${b.label}</b><span>${b.detail}</span></a>`
+${ln.placed.map((b) => b.ro ? h`<a class="pbar ${b.kind}" href="${b.ro}" title="${b.title || ''}" style="grid-column:${b.a} / ${b.z};grid-row:${ln.row + b.t}"><b>${b.label}</b><span>${b.detail}</span></a>`
     : h`<details class="pbar ${K[b.kind] || 'b1'}" style="grid-column:${b.a} / ${b.z};grid-row:${ln.row + b.t}"><summary><b>${b.label || b.pname}</b><span>${b.detail}</span></summary>
 <form method="post" action="/planning/barres/${b.id}" class="pop form">${barForm(b)}<div class="line"><button class="btn sm">Enregistrer</button><button class="btn alt sm" name="del" value="1">Supprimer</button></div></form></details>`)}`)}
 </div></div>

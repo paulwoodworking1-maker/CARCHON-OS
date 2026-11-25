@@ -101,7 +101,7 @@ function toDecide() {
   for (const m of q.all('SELECT messages.*, steps.title st, steps.project_id pid, people.name pname FROM messages JOIN steps ON steps.id = messages.step_id LEFT JOIN people ON people.id = messages.person_id WHERE read_by_patron = 0 ORDER BY messages.created_at DESC')) {
     items.push({ kind: 'no', tag: 'Message', title: `${m.pname} · ${m.st}`, text: `« ${m.body} »`, href: `/carnets/${m.pid}?fiche=${m.step_id}`, cta: 'Répondre' });
   }
-  return items;
+  return [...items, ...require('./automations').alerts()];
 }
 function relDays(s) {
   const n = Math.round((parseDate(today()) - parseDate(String(s).slice(0, 10))) / 86400000);

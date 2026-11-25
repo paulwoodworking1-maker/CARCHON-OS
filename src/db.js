@@ -145,6 +145,15 @@ CREATE TABLE IF NOT EXISTS events (
 );
 `);
 
+// Colonnes ajoutées après la première version (bases déjà en service).
+function addColumn(table, col, def) {
+  if (!db.prepare(`PRAGMA table_info(${table})`).all().some((c) => c.name === col)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${def}`);
+}
+addColumn('bars', 'auto', 'INTEGER NOT NULL DEFAULT 0');
+addColumn('bars', 'step_id', 'INTEGER');
+addColumn('trips', 'reminder_sent_at', 'TEXT');
+addColumn('steps', 'ai_generated', 'INTEGER NOT NULL DEFAULT 0');
+
 // --- petits utilitaires ---
 const q = {
   get: (sql, ...a) => db.prepare(sql).get(...a),

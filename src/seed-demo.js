@@ -64,8 +64,6 @@ tx(() => {
   q.run("INSERT INTO needs (text, category, supplier_id, project_id, person_id, source, needs_deposit, acknowledged) VALUES ('Noyer 27 mm · 2 plateaux, ~2,40 × 0,32 m', 'Matériaux', ?, ?, ?, 'note', 1, 1)", sc, p2, pa);
   q.run('INSERT INTO orders (supplier_id, what, ordered_at, expected_at) VALUES (?, ?, ?, ?)', ff, 'Abrasifs grain 240, huile-cire × 4', d(-4), d(2));
 
-  q.run("INSERT INTO bars (person_id, project_id, label, kind, start_date, end_date) VALUES (?, ?, 'Table à manger · Roche', 'work', ?, ?)", lu, p1, d(0), d(4));
-  q.run("INSERT INTO bars (person_id, project_id, label, kind, start_date, end_date) VALUES (?, ?, 'Maggio', 'work', ?, ?)", ni, p3, d(0), d(1));
   q.run("INSERT INTO bars (person_id, label, detail, kind, start_date, end_date) VALUES (?, 'Libre', 'à planifier', 'free', ?, ?)", ni, d(2), d(4));
   q.run("INSERT INTO bars (person_id, project_id, label, detail, kind, start_date, end_date) VALUES (?, ?, 'Bibliothèque Vasse', 'Bloqué : V2 non validée, acompte attendu', 'blocked', ?, ?)", ni, p2, d(7), d(11));
   q.run("INSERT INTO bars (person_id, project_id, label, detail, kind, start_date, end_date) VALUES (?, ?, 'Bibliothèque Vasse', 'RDV architecte 15 h', 'work', ?, ?)", pa, p2, d(0), d(0));

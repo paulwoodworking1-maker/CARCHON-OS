@@ -15,10 +15,10 @@ const str = (v) => String(v ?? '').trim();
 r.use((req, res, next) => { res.set('X-Robots-Tag', 'noindex, nofollow'); res.set('Cache-Control', 'no-store'); next(); });
 
 const shell = (title, inner, test) => page(title, h`<div class="phone">
-<header class="cl-head"><img src="/static/logo.png" alt="Carchon Les Ateliers"></header>
+<header class="cl-head"><a href="https://www.carchon.com" target="_blank" rel="noopener" aria-label="Carchon Les Ateliers, site web"><img src="/static/logo.png" alt="Carchon Les Ateliers"></a></header>
 ${test ? h`<div class="testband">Page de test — sans valeur contractuelle.</div>` : ''}
 ${inner}
-<p class="cl-foot">Ce lien est personnel : ne le transférez pas. Vos données servent uniquement au suivi de votre projet.</p></div>`, { bodyClass: 'client' });
+<p class="cl-foot">Ce lien est personnel : ne le transférez pas. Vos données servent uniquement au suivi de votre projet.<br><a class="cl-site" href="https://www.carchon.com" target="_blank" rel="noopener">www.carchon.com</a></p></div>`, { bodyClass: 'client' });
 
 // ---------- Devis à accepter ----------
 function findQuote(req) {

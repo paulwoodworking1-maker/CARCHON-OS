@@ -62,6 +62,7 @@ r.get('/', (req, res) => {
 <section class="card" aria-labelledby="dec">
   <div class="line"><h2 id="dec">À décider</h2>${pill(decide.length ? 'ko' : 'ok', decide.length)}<span class="mut push">Tout ce qui attend ta réponse, au même endroit</span></div>
   ${decide.length ? decide.map((d, i) => h`<div class="row${i ? '' : ' f'}"><span class="kind">${pill(d.kind, d.tag)}</span><div class="grow"><b>${d.title}</b><span class="mut">${d.text}</span></div>
+    ${d.href2 ? h`<a class="btn sm" href="${d.href2}">${d.cta2}</a>` : ''}
     ${d.ack ? postBtn(`/achats/besoin/${d.ack}/valider`, 'Valider', 'btn alt sm') : h`<a class="btn ${d.primary ? '' : 'alt '}sm" href="${d.href}">${d.cta}</a>`}</div>`)
     : h`<p class="mut">Rien n’attend ta réponse. Bonne journée à l’atelier.</p>`}
 </section>
@@ -254,7 +255,7 @@ ${p.client_id ? h`<section class="card"><div class="line"><h2>Portail client</h2
 <div class="who"><span class="grow">Acompte</span><b>${p.deposit_at ? `Reçu le ${ddmm(p.deposit_at)}` : 'Attendu'}</b></div>
 <form method="post" action="/projets/${p.id}/infos" class="who"><label class="grow" for="rd">Prête à poser vers le</label><input id="rd" type="date" name="ready_date" value="${p.ready_date || ''}" data-auto><input type="hidden" name="only" value="ready_date"></form>
 <div class="who"><span class="grow">Photos partagées</span><b>${shared} sur ${photos.length}</b></div>
-<div class="line mt12"><a class="btn alt sm" href="/portails#p${p.id}">Gérer le portail</a></div></section>` : ''}
+<div class="line mt12"><a class="btn alt sm" href="/portails#p${p.id}">Gérer le portail</a><a class="btn alt sm" href="/projets/${p.id}/nouvelles">Donner des nouvelles</a></div></section>` : ''}
 
 <section class="card"><h2>Documents</h2><p class="mut">Devis accepté, PV, facture… Cochés « client », ils s’affichent dans son espace.</p>
 ${docs.map((d) => h`<div class="row"><a class="grow" href="${fileUrl(d.file)}" target="_blank">${d.title}</a>
@@ -344,6 +345,39 @@ r.post('/projets/:id/documents', loadProject, upload.single('file'), (req, res) 
 r.post('/projets/:id/documents/:did', loadProject, (req, res) => {
   q.run('UPDATE documents SET visible_client = ? WHERE id = ? AND project_id = ?', req.body.visible_client ? 1 : 0, req.params.did, req.project.id);
   res.redirect(`/projets/${req.project.id}`);
+});
+
+// Message d'avancement pour le client : rédigé par l'assistant si activé, sinon modèle prêt à adapter.
+r.get('/projets/:id/nouvelles', loadProject, async (req, res, next) => {
+  const p = L.projectSummary(req.project);
+  if (!p.client) return res.redirect(`/projets/${p.id}`);
+  const ai = require('../ai');
+  const done = q.all("SELECT title FROM steps WHERE project_id = ? AND status = 'done' AND done_at >= datetime('now', '-14 days') ORDER BY done_at", p.id).map((s) => s.title);
+  const doing = q.all("SELECT title FROM steps WHERE project_id = ? AND status = 'doing'", p.id).map((s) => s.title);
+  const trip = q.get('SELECT * FROM trips WHERE project_id = ? AND done_at IS NULL ORDER BY date LIMIT 1', p.id);
+  const nPhotos = q.get('SELECT COUNT(*) n FROM photos WHERE project_id = ? AND shared_client = 1', p.id).n;
+  const facts = [
+    `Étape actuelle : ${p.cur.phase.toLowerCase()}`,
+    done.length ? `Fait ces deux dernières semaines : ${done.join(', ')}` : null,
+    doing.length ? `En cours à l'atelier : ${doing.join(', ')}` : null,
+    p.ready_date ? `Prêt à poser vers le ${dayMonth(p.ready_date)}` : null,
+    trip ? `Livraison / pose prévue le ${longDate(trip.date)}` : null,
+    nPhotos && p.portal_state === 'open' ? `${nPhotos} photo${nPhotos > 1 ? 's' : ''} de l'atelier dans votre espace en ligne` : null,
+  ].filter(Boolean);
+  let subject = `Des nouvelles de votre projet · ${p.name}`;
+  let text = `Bonjour,\n\nVoici où en est votre projet « ${p.name} » :\n${facts.map((f) => `- ${f}`).join('\n')}\n\nN'hésitez pas à nous écrire si vous avez une question.\n\nBien cordialement,\nL'équipe Carchon`;
+  let note = ai.enabled() ? '' : 'Modèle simple : active l’assistant IA (Pilotage › Automatisations) pour un message rédigé.';
+  if (ai.enabled() && req.query.modele !== '1') {
+    try { const m = await ai.clientUpdate({ project: p, clientName: p.client.name, facts }); subject = m.objet; text = m.message; note = 'Rédigé par l’assistant à partir de l’avancement réel. Relis avant d’envoyer.'; }
+    catch (e) { if (!(e instanceof ai.AIError)) return next(e); note = `${e.message} Voici un modèle simple.`; }
+  }
+  const mail = `mailto:${encodeURIComponent(p.client.email || '')}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(text)}`;
+  const body = h`<div class="mut"><a href="/projets/${p.id}">${p.name}</a></div><h1>Donner des nouvelles à ${p.client.name}</h1>
+<section class="card mt20 mw680 form"><p class="mut">${note}</p>
+<label>Objet <input value="${subject}" readonly></label><label>Message <textarea id="newsmsg" rows="12">${text}</textarea></label>
+<div class="line"><a class="btn" href="${mail}">Ouvrir dans ma messagerie</a><button type="button" class="btn alt" data-copy="#newsmsg">Copier</button></div>
+<p class="mut t12">Faits utilisés : ${facts.join(' · ')}</p></section>`;
+  res.send(layout({ title: 'Nouvelles', tab: 'projets', sub: '/projets', body }));
 });
 
 module.exports = r;

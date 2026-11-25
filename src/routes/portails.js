@@ -7,6 +7,7 @@ const { h, layout, pill, postBtn, options, ddmm, ddmmyyyy, addDays, today } = re
 const { token, sha256 } = require('../auth');
 const { upload, filePath } = require('../uploads');
 const L = require('../logic');
+const ai = require('../ai');
 
 const r = express.Router();
 const str = (v) => String(v ?? '').trim();
@@ -22,7 +23,8 @@ r.get('/portails', (req, res) => {
   const pending = [...latest.values()].filter((x) => x.status === 'sent' || x.status === 'revoked' || x.status === 'expired' || (x.status === 'refused' && !x.project_id));
   const shown = req.session.shownLink; // lien affiché une seule fois
   if (shown) { delete req.session.shownLink; res.saveSession(); }
-  const open = req.query.nouveau === '1';
+  const draft = req.session.draftQuote || null;
+  const open = req.query.nouveau === '1' || !!draft;
   const LINK = { sent: ['wa', (x) => `Envoyé le ${ddmm(x.created_at)} · ouvert jusqu’au ${ddmm(x.valid_until)}`], accepted: ['ok', (x) => `Accepté le ${ddmm(x.accepted_at)}`], modif: ['wa', () => 'Modification demandée'], refused: ['ko', () => 'Refusé'], revoked: ['no', () => 'Fermé (non valable)'] };
   const body = h`<div class="head"><div><div class="eb">Projets</div><h1>Portails clients</h1>
 <p class="mut mt8 mw680">Un espace par client et par commande. Il reçoit le devis, l'avancement, la date de pose prévue et les photos que tu partages. Jamais de prix de revient, de fournisseur ni de notes internes.</p></div>
@@ -39,11 +41,15 @@ ${setting('cgv_file') ? h`<p class="mut">CGV actuelles : <a href="/fichiers/${se
 ${shown ? h`<section class="card ok-card mt20" role="status"><b>${shown.title}</b><p class="mut">Copie-le et envoie-le toi-même ${shown.to ? `à ${shown.to}` : 'au client'}. Il ne sera plus affiché ensuite : si besoin, on en crée un nouveau.</p>
 <div class="line mt8"><input class="qin" readonly value="${shown.url}" id="shownlink" aria-label="Lien"><button type="button" class="btn" data-copy="#shownlink">Copier le lien</button>${shown.mailto ? h`<a class="btn alt" href="${shown.mailto}">Préparer l’e-mail</a>` : ''}</div></section>` : ''}
 
-${open ? h`<section class="card mt20" id="envoi"><div class="line"><h2>Envoyer un devis au client</h2><a class="push btn alt sm" href="/portails">Annuler</a></div>
+${open ? h`<section class="card mt20" id="envoi"><div class="line"><h2>Envoyer un devis au client</h2><a class="push btn alt sm" href="/portails/devis/annuler">Annuler</a></div>
+${ai.enabled() && !draft ? h`<form method="post" action="/portails/devis/lire" enctype="multipart/form-data" class="card warm form mt12 mw680" data-busy="L’assistant lit le devis…">
+<b>Le plus rapide : dépose le PDF, l’assistant remplit le reste.</b>
+<input type="file" name="pdf" accept="application/pdf" required aria-label="PDF du devis"><button class="btn alt sm">Lire le devis</button></form>` : ''}
+${draft?.resume ? h`<p class="mut mt12">Lu par l’assistant : ${draft.resume}${draft.montant ? ` · ${draft.montant}` : ''}${draft.acompte ? ` · acompte ${draft.acompte}` : ''}. Vérifie avant de créer le lien.</p>` : ''}
 <form method="post" action="/portails/devis" enctype="multipart/form-data" class="form mt12 mw680">
-<div class="grid2"><label>N° du devis <input name="number" required placeholder="D-(2026)-00399"></label><label>Projet (nom court) <input name="project_name" placeholder="ex. Table à manger · chêne"></label></div>
-<label>PDF du devis (exporté de Qonto) <input type="file" name="pdf" accept="application/pdf" required></label>
-<div class="grid2"><label>Qui signe <input name="signer_name" required></label><label>Son e-mail <input type="email" name="signer_email" required></label></div>
+<div class="grid2"><label>N° du devis <input name="number" required placeholder="D-(2026)-00399" value="${draft?.number || ''}"></label><label>Projet (nom court) <input name="project_name" placeholder="ex. Table à manger · chêne" value="${draft?.project_name || ''}"></label></div>
+${draft ? h`<p class="mut">PDF du devis déposé ✓ <a href="/portails/devis/annuler?nouveau=1">changer</a></p>` : h`<label>PDF du devis (exporté de Qonto) <input type="file" name="pdf" accept="application/pdf" required></label>`}
+<div class="grid2"><label>Qui signe <input name="signer_name" required value="${draft?.signer_name || ''}"></label><label>Son e-mail <input type="email" name="signer_email" required value="${draft?.signer_email || ''}"></label></div>
 <label>Rattacher à un projet existant (nouvelle version) <select name="project_id"><option value="">Non : l’acceptation crée la commande</option>${options(q.all("SELECT id, name FROM projects WHERE status = 'en_cours' ORDER BY name").map((p) => [p.id, p.name]))}</select></label>
 <fieldset class="chips m0"><legend>Valable</legend>${['15', '30'].map((d) => h`<label class="chip"><input type="radio" name="days" value="${d}" ${d === '30' ? 'checked' : ''}>${d} jours</label>`)}</fieldset>
 <ul class="mut checklist"><li>PDF du devis repris tel quel, empreinte calculée</li><li>CGV jointes ${setting('cgv_file') ? '' : '(aucune CGV déposée : à ajouter dans le bloc Mode test)'}</li><li>Ce document ne bougera plus : le client accepte exactement celui-ci</li></ul>
@@ -88,8 +94,33 @@ r.post('/portails/reglages', upload.single('cgv'), (req, res) => {
   res.flashTo('/portails', 'Réglages du portail enregistrés.');
 });
 
+// L'assistant lit le PDF et prépare le formulaire.
+r.post('/portails/devis/lire', upload.single('pdf'), async (req, res, next) => {
+  if (!req.file || !/\.pdf$/.test(req.file.filename)) return res.flashTo('/portails?nouveau=1', 'Il faut un PDF.', 'ko');
+  try {
+    const x = await ai.readQuotePdf(fs.readFileSync(req.file.path));
+    req.session.draftQuote = { pdf: req.file.filename, number: x.numero, signer_name: x.client_nom, signer_email: x.client_email, project_name: x.objet, resume: x.resume, montant: x.montant_ttc, acompte: x.acompte };
+    res.saveSession();
+    res.redirect('/portails#envoi');
+  } catch (e) {
+    req.session.draftQuote = { pdf: req.file.filename };
+    res.saveSession();
+    if (e instanceof ai.AIError) return res.flashTo('/portails#envoi', `${e.message} Le PDF est gardé : remplis les champs à la main.`, 'ko');
+    next(e);
+  }
+});
+r.get('/portails/devis/annuler', (req, res) => {
+  const d = req.session.draftQuote;
+  if (d?.pdf) fs.rmSync(filePath(d.pdf), { force: true });
+  delete req.session.draftQuote; res.saveSession();
+  res.redirect(req.query.nouveau ? '/portails?nouveau=1#envoi' : '/portails');
+});
+
 r.post('/portails/devis', upload.single('pdf'), (req, res) => {
   const b = req.body;
+  const draft = req.session.draftQuote;
+  if (!req.file && draft?.pdf) req.file = { filename: draft.pdf, path: filePath(draft.pdf) };
+  delete req.session.draftQuote;
   if (!req.file || !/\.pdf$/.test(req.file.filename)) return res.flashTo('/portails?nouveau=1', 'Il faut le PDF du devis.', 'ko');
   const email = str(b.signer_email).toLowerCase();
   const isTest = testMode();
