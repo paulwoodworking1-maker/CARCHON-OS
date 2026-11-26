@@ -85,9 +85,10 @@ r.get('/planning/agenda', (req, res) => {
   const base = (process.env.PUBLIC_URL || `${/^(localhost|127\.)/.test(host) ? 'http' : 'https'}://${host}`).replace(/\/$/, '');
   const feedUrl = `${base}/agenda/${G.feedToken()}.ics`;
   const url = G.importUrl(), err = setting('gcal_error'), n = q.get('SELECT COUNT(*) n FROM gcal_events').n;
+  const sa = G.serviceAccount(), perr = setting('gcal_push_error'), pushed = q.get('SELECT COUNT(*) n FROM gcal_pushed').n;
   const acct = setting('gmail_account') || setting('patron_email') || '';
   const body = h`<div class="eb">Planning</div><h1>Google Agenda</h1>
-<p class="mut mt8 mw680">Ton Google Agenda${acct ? h` (<b>${acct}</b>)` : ''} est l’agenda central : tu le vois sur ton téléphone, Cockpit et Carchon OS s’y raccordent. Ici, deux liaisons : tes rendez-vous Google s’affichent dans le planning de l’atelier, et le planning de l’atelier apparaît dans Google Agenda.</p>
+<p class="mut mt8 mw680">Ton Google Agenda${acct ? h` (<b>${acct}</b>)` : ''} est l’agenda central : tu le vois sur ton téléphone, Cockpit et Carchon OS s’y raccordent. Ici, deux liaisons : tes rendez-vous Google (y compris ceux de Cockpit) s’affichent dans le planning de l’atelier, et le planning de l’atelier s’écrit dans Google Agenda.</p>
 
 <section class="card mt20 mw680" id="lire"><h2>1 · Google Agenda → planning de l’atelier</h2>
 ${url ? h`<p class="mt8">${err ? pill('ko', 'Erreur') : pill('ok', 'Relié')} ${err ? h`Dernier essai en échec : ${err}.` : h`${n} rendez-vous lus, dernière mise à jour ${ago(setting('gcal_last_sync'))}. Mise à jour toute seule toutes les 10 minutes.`}</p>`
@@ -101,17 +102,30 @@ ${url ? h`<p class="mt8">${err ? pill('ko', 'Erreur') : pill('ok', 'Relié')} ${
 <p class="mut t12 mt8">Cette adresse donne accès à tout ton agenda : ne la partage pas. Si elle fuit, « Réinitialiser » dans Google en crée une nouvelle.</p></section>
 
 <section class="card mt20 mw680" id="ecrire"><h2>2 · Planning de l’atelier → Google Agenda</h2>
-<p class="mut mt8">Barres du planning (planifiées automatiquement ou ajoutées à la main), poses et livraisons fournisseur, dans un agenda « Atelier » à part, que tu peux afficher ou masquer d’un clic.</p>
+<p class="mut mt8">Barres du planning (toute l’équipe), poses et livraisons fournisseur, écrites directement dans un agenda « Atelier » à part, que tu peux afficher ou masquer d’un clic. Chaque modification dans Carchon OS arrive dans Google en quelques secondes.</p>
+${G.pushReady() ? h`<p class="mt12">${perr ? pill('ko', 'Erreur') : pill('ok', 'Relié')} ${perr ? h`Dernier envoi en échec : ${perr}.` : h`${pushed} rendez-vous dans Google, dernier envoi ${ago(setting('gcal_push_last'))}.`}</p>` : ''}
+<h3 class="mt20">a · Créer la clé Google (une seule fois, 10 minutes)</h3>
+<ol class="mt8">
+<li>Ouvre <a href="https://console.cloud.google.com/projectcreate" target="_blank" rel="noopener">Google Cloud › Nouveau projet</a> avec ton compte Google, nomme-le « Carchon OS », « Créer ».</li>
+<li>Active l’accès à l’agenda : <a href="https://console.cloud.google.com/apis/library/calendar-json.googleapis.com" target="_blank" rel="noopener">Google Calendar API › Activer</a> (vérifie que le projet « Carchon OS » est choisi en haut).</li>
+<li>Ouvre <a href="https://console.cloud.google.com/iam-admin/serviceaccounts/create" target="_blank" rel="noopener">Comptes de service › Créer</a>, nom « carchon-os », puis « OK » (aucun rôle à donner).</li>
+<li>Clique sur le compte créé › onglet « Clés » › « Ajouter une clé » › « Créer une clé » › JSON. Un fichier se télécharge : dépose-le ici.</li></ol>
+${sa ? h`<p class="mt8">${pill('ok', 'Clé enregistrée')} Compte de service : <code style="user-select:all">${sa.client_email}</code></p>` : ''}
+${process.env.GOOGLE_SERVICE_ACCOUNT ? h`<p class="mut t12">La clé vient de la variable GOOGLE_SERVICE_ACCOUNT chez l’hébergeur.</p>` : h`<form method="post" action="/planning/agenda/cle" enctype="multipart/form-data" class="form mt8"><label>Fichier de clé (.json) <input type="file" name="key" accept=".json,application/json" required></label><div class="line"><button class="btn sm">${sa ? 'Remplacer la clé' : 'Enregistrer la clé'}</button>${sa ? h`<button class="btn alt sm" name="del" value="1" formnovalidate>Retirer la clé</button>` : ''}</div></form>`}
+<h3 class="mt20">b · Créer l’agenda « Atelier » et le partager</h3>
+<ol class="mt8">
+<li>Dans <a href="https://calendar.google.com/calendar/u/0/r/settings/createcalendar" target="_blank" rel="noopener">Google Agenda › Créer un agenda</a>, nomme-le « Atelier Carchon », « Créer l’agenda ».</li>
+<li>Ouvre ses paramètres (à gauche) › « Partager avec des personnes ou des groupes » › ajoute ${sa ? h`<code style="user-select:all">${sa.client_email}</code>` : 'l’adresse du compte de service (affichée ici une fois la clé enregistrée)'} avec le droit <b>« Apporter des modifications aux événements »</b>.</li>
+<li>Plus bas, « Intégrer l’agenda » : copie l’<b>ID de l’agenda</b> (il finit par <code>@group.calendar.google.com</code>) et colle-le ici.</li></ol>
+<form method="post" action="/planning/agenda/ecrire" class="form mt8"><label>ID de l’agenda « Atelier » <input name="gcal_push_cal" value="${G.pushCal()}" placeholder="…@group.calendar.google.com" autocomplete="off"></label>
+<div class="line"><button class="btn sm">Enregistrer et tout envoyer</button>${G.pushReady() ? h`<button class="btn alt sm" name="now" value="1">Envoyer maintenant</button>` : ''}</div></form>
+<details class="mt20"><summary class="mut t12">Sans clé Google : abonnement par adresse (Google se met à jour toutes les quelques heures)</summary>
 <div class="line mt12"><input id="feedurl" readonly value="${feedUrl}" style="flex:1;min-width:0"><button type="button" class="btn alt sm" data-copy="#feedurl">Copier</button></div>
-<ol class="mt12">
-<li>Copie l’adresse ci-dessus.</li>
-<li>Ouvre <a href="https://calendar.google.com/calendar/u/0/r/settings/addbyurl" target="_blank" rel="noopener">Google Agenda › Ajouter un agenda › À partir de l’URL</a>.</li>
-<li>Colle l’adresse, puis « Ajouter l’agenda ». C’est tout : il apparaît aussi sur ton téléphone.</li></ol>
-<p class="mut t12 mt8">Google relit cet agenda tout seul, plusieurs fois par jour (Google choisit le rythme, compte quelques heures). Les rendez-vous qui doivent être vus tout de suite : crée-les dans Google, ils arrivent ici en 10 minutes.</p>
-<form method="post" action="/planning/agenda/nouvelle-adresse" data-confirm="Créer une nouvelle adresse ? L’ancienne ne marchera plus : il faudra la remplacer dans Google Agenda."><button class="btn alt sm">Créer une nouvelle adresse</button></form></section>
+<p class="mut t12 mt8">À coller dans <a href="https://calendar.google.com/calendar/u/0/r/settings/addbyurl" target="_blank" rel="noopener">Google Agenda › Ajouter un agenda › À partir de l’URL</a>. N’utilise pas les deux à la fois : les rendez-vous apparaîtraient en double.</p>
+<form method="post" action="/planning/agenda/nouvelle-adresse" data-confirm="Créer une nouvelle adresse ? L’ancienne ne marchera plus."><button class="btn alt sm">Créer une nouvelle adresse</button></form></details></section>
 
 <section class="card mt20 mw680" id="cockpit"><h2>Et le planning de Cockpit ?</h2>
-<p class="mut mt8">Le plus simple : ne garde qu’un seul agenda de référence, Google. Les rendez-vous commerciaux (visites, métrés, signatures) se prennent dans Cockpit ou directement dans Google, mais doivent finir dans Google ; Carchon OS les affiche alors ici, à côté du travail de l’atelier. Si Cockpit sait s’abonner à un agenda (adresse iCal), donne-lui aussi l’adresse du point 2 : il verra la charge de l’atelier sans double saisie.</p></section>`;
+<p class="mut mt8">Cockpit écrit déjà dans ton Google Agenda : avec le point 1, ses rendez-vous (visites, métrés, signatures) s’affichent donc ici, à côté du travail de l’atelier, sans rien relier de plus. Google reste l’agenda de référence ; Carchon OS n’écrit que dans l’agenda « Atelier », jamais dans celui de Cockpit.</p></section>`;
   res.send(layout({ title: 'Google Agenda', tab: 'planning', sub: '/planning/agenda', body, flash: req.flash }));
 });
 r.post('/planning/agenda', async (req, res, next) => {
@@ -127,6 +141,29 @@ r.post('/planning/agenda', async (req, res, next) => {
     const x = await G.sync();
     if (x.error) return res.flashTo('/planning/agenda', `Adresse enregistrée, mais la lecture a échoué : ${x.error}.`, 'ko');
     res.flashTo('/planning', `Google Agenda relié : ${x.n} rendez-vous affichés dans le planning.`);
+  } catch (e) { next(e); }
+});
+const keyUpload = require('multer')({ storage: require('multer').memoryStorage(), limits: { fileSize: 64 * 1024 } });
+r.post('/planning/agenda/cle', keyUpload.single('key'), (req, res) => {
+  if (req.body.del) { setSetting('gcal_sa', ''); return res.flashTo('/planning/agenda#ecrire', 'Clé Google retirée.'); }
+  let j = null; try { j = JSON.parse(req.file ? req.file.buffer.toString('utf8') : ''); } catch {}
+  if (!j || j.type !== 'service_account' || !j.client_email || !j.private_key) return res.flashTo('/planning/agenda#ecrire', 'Ce fichier n’est pas une clé de compte de service Google (fichier .json téléchargé depuis l’onglet « Clés »).', 'ko');
+  setSetting('gcal_sa', JSON.stringify({ type: j.type, client_email: j.client_email, private_key: j.private_key, token_uri: j.token_uri }));
+  res.flashTo('/planning/agenda#ecrire', `Clé enregistrée. Partage maintenant l’agenda « Atelier » avec ${j.client_email}.`);
+});
+r.post('/planning/agenda/ecrire', async (req, res, next) => {
+  try {
+    if (!req.body.now) {
+      const id = str(req.body.gcal_push_cal);
+      if (id && !/^[^\s@]+@[^\s@]+$/.test(id)) return res.flashTo('/planning/agenda#ecrire', 'L’ID de l’agenda ressemble à une adresse e-mail (…@group.calendar.google.com).', 'ko');
+      if (id !== G.pushCal()) q.run('DELETE FROM gcal_pushed');
+      setSetting('gcal_push_cal', id);
+      if (!id) return res.flashTo('/planning/agenda#ecrire', 'Envoi vers Google arrêté.');
+    }
+    if (!G.serviceAccount()) return res.flashTo('/planning/agenda#ecrire', 'ID enregistré. Il manque la clé Google (étape a).', 'ko');
+    const x = await G.push();
+    if (x.error) return res.flashTo('/planning/agenda#ecrire', `L’envoi a échoué : ${x.error}.`, 'ko');
+    res.flashTo('/planning/agenda#ecrire', `C’est relié : ${x.n} changement${x.n > 1 ? 's' : ''} envoyé${x.n > 1 ? 's' : ''} dans Google Agenda. La suite part toute seule.`);
   } catch (e) { next(e); }
 });
 r.post('/planning/agenda/nouvelle-adresse', (req, res) => {

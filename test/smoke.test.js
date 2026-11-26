@@ -208,3 +208,46 @@ test('Google Agenda : page de réglage, flux iCal privé et lecture d’un agend
     ['Point hebdo', '2026-11-30', '2026-11-30'], ['Métré chez M. Dupont', '2026-12-03', '2026-12-03'], ['Salon', '2026-12-10', '2026-12-12'], ['Point hebdo', '2026-12-14', '2026-12-14']]);
   assert.strictEqual(ev[1].time, '10:00');
 });
+
+test('Google Agenda : écriture directe (Google simulé) : création, mise à jour, suppression', async () => {
+  const crypto = require('node:crypto');
+  const { setSetting, q } = require('../src/db');
+  const G = require('../src/gcal');
+  const { privateKey, publicKey } = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
+  setSetting('gcal_sa', JSON.stringify({ type: 'service_account', client_email: 'carchon@test.iam.gserviceaccount.com', private_key: privateKey.export({ type: 'pkcs8', format: 'pem' }) }));
+  setSetting('gcal_push_cal', 'atelier@group.calendar.google.com');
+  const store = new Map(); const calls = [];
+  const real = global.fetch;
+  global.fetch = async (url, o = {}) => {
+    url = String(url);
+    if (url.startsWith('https://oauth2.googleapis.com/')) {
+      const [h, c, s] = new URLSearchParams(o.body).get('assertion').split('.');
+      assert.ok(crypto.verify('RSA-SHA256', Buffer.from(`${h}.${c}`), publicKey, Buffer.from(s, 'base64url')), 'jeton signé avec la clé');
+      return new Response(JSON.stringify({ access_token: 'tok', expires_in: 3600 }), { status: 200 });
+    }
+    if (url.startsWith('https://www.googleapis.com/calendar/v3/calendars/atelier%40group.calendar.google.com/events')) {
+      const id = url.split('/events/')[1]; calls.push(o.method);
+      if (o.method === 'PUT') { if (!store.has(id)) return new Response('{}', { status: 404 }); store.set(id, JSON.parse(o.body)); return new Response(o.body, { status: 200 }); }
+      if (o.method === 'POST') { const b = JSON.parse(o.body); store.set(b.id, b); return new Response(o.body, { status: 200 }); }
+      if (o.method === 'DELETE') { store.delete(id); return new Response(null, { status: 204 }); }
+    }
+    return real(url, o);
+  };
+  try {
+    const want = G.items('2000-01-01').filter((e) => e.end >= require('../src/html').addDays(require('../src/html').today(), -30));
+    let x = await G.push();
+    assert.ok(!x.error, x.error);
+    assert.strictEqual(store.size, want.length);
+    assert.ok(want.length > 0);
+    // Rien de changé : aucun appel.
+    calls.length = 0; await G.push(); assert.strictEqual(calls.length, 0);
+    // Une barre modifiée : une mise à jour ; une barre supprimée : une suppression.
+    const bars = q.all("SELECT id FROM bars WHERE end_date >= date('now') LIMIT 2");
+    q.run("UPDATE bars SET label = 'Nouveau titre' WHERE id = ?", bars[0].id);
+    q.run('DELETE FROM bars WHERE id = ?', bars[1].id);
+    calls.length = 0; x = await G.push();
+    assert.deepStrictEqual(calls.sort(), ['DELETE', 'PUT']);
+    assert.match(store.get(G.evId(`bar-${bars[0].id}`)).summary, /Nouveau titre/);
+    assert.ok(!store.has(G.evId(`bar-${bars[1].id}`)));
+  } finally { global.fetch = real; setSetting('gcal_push_cal', ''); }
+});

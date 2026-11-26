@@ -8,7 +8,7 @@ Le logiciel de fabrication et de logistique de Carchon Les Ateliers, pendant de 
 - **Approvisionner** : bois noble par lot, pièces finies comptées avec seuil boutique, consommables en trois états, achats et fournisseurs.
 - **Livrer et garantir** : contrôle qualité, registre des pièces (numéro, bois, fiches, contrôle, expédition, SAV), expéditions avec bon de livraison, demandes SAV.
 - **Piloter** : heures et chiffrage, coût réel par OF, machines (entretiens à la date ou à l'usage calculé depuis les fiches, pannes, pièces d'usure), automatisations, équipe.
-- **Google Agenda** : les rendez-vous Google s’affichent dans le planning (adresse secrète iCal, lue toutes les 10 min) et le planning de l’atelier est publié dans un agenda Google « Atelier » (abonnement par URL). Réglage : Planning › Google Agenda.
+- **Google Agenda** : les rendez-vous Google s’affichent dans le planning (adresse secrète iCal, lue toutes les 10 min) et le planning de l’atelier est écrit en direct dans un agenda Google « Atelier » (clé de compte de service Google, ou à défaut abonnement par URL). Réglage : Planning › Google Agenda.
 - **Passer sur Cockpit** : bouton en bas de la colonne (adresse dans Équipe et réglages › Entreprise).
 - **Liaison Cockpit** : API `POST /api/v1/affaires`, `POST /api/v1/affaires/{réf}/acompte`, `GET /api/v1/ofs` (clé dans Équipe et réglages › Entreprise).
 

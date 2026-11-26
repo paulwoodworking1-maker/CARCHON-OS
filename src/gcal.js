@@ -84,7 +84,7 @@ function parseICS(text, from, to) {
   const moved = new Set(evs.filter((e) => e.recurrence && e.uid).map((e) => `${e.uid}|${e.recurrence.date}`));
   const out = [];
   for (const e of evs) {
-    if (!e.start || e.status === 'CANCELLED' || !e.uid || /@carchon-os$/.test(e.uid)) continue;
+    if (!e.start || e.status === 'CANCELLED' || !e.uid || /@carchon-os$|^carchon[0-9a-f]{40}@google\.com$/.test(e.uid)) continue;
     // Durée en jours : DTEND est exclusif pour un événement « toute la journée ».
     let len = 0;
     if (e.end) { const a = new Date(`${e.start.date}T12:00:00`), b = new Date(`${e.end.date}T12:00:00`); len = Math.round((b - a) / 864e5); if (!e.start.time) len -= 1; }
@@ -127,7 +127,8 @@ async function sync() {
 const between = (start, end) => q.all('SELECT * FROM gcal_events WHERE start_date <= ? AND end_date >= ? ORDER BY start_date, time', end, start);
 
 let timer = null;
-function start() { if (timer) return; setTimeout(sync, 8000); timer = setInterval(sync, 10 * 60 * 1000); timer.unref(); }
+const both = async () => { await sync(); await push(); };
+function start() { if (timer) return; setTimeout(both, 8000); timer = setInterval(both, 10 * 60 * 1000); timer.unref(); }
 
 // ---------- Flux Carchon OS → Google ----------
 function feedToken() {
@@ -148,15 +149,11 @@ function fold(line) {
   for (const ch of line) { if (Buffer.byteLength(cur + ch) > 73) { out.push(cur); cur = ' '; } cur += ch; }
   out.push(cur); return out.join('\r\n');
 }
-function feed() {
-  const from = addD(isoOf(new Date()), -60);
-  const company = setting('company_name') || 'Carchon OS';
-  const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d+/, '');
-  const ev = [];
-  const add = (uid, s, e, title, detail = '', place = '') => ev.push(['BEGIN:VEVENT', `UID:${uid}@carchon-os`, `DTSTAMP:${stamp}`,
-    `DTSTART;VALUE=DATE:${ymd(s)}`, `DTEND;VALUE=DATE:${ymd(addD(e || s, 1))}`, `SUMMARY:${esc(title)}`,
-    detail ? `DESCRIPTION:${esc(detail)}` : '', place ? `LOCATION:${esc(place)}` : '', 'TRANSP:TRANSPARENT', 'END:VEVENT'].filter(Boolean));
-  for (const b of q.all('SELECT bars.*, people.name who, people.role, projects.name pname FROM bars LEFT JOIN people ON people.id = bars.person_id LEFT JOIN projects ON projects.id = bars.project_id WHERE end_date >= ?', from)) {
+// Ce que l'atelier publie dans Google : [{ key, start, end, title, detail, place }]
+function items(from) {
+  const out = [];
+  const add = (key, start, end, title, detail = '', place = '') => out.push({ key, start, end: end || start, title, detail, place: place || '' });
+  for (const b of q.all('SELECT bars.*, people.name who, projects.name pname FROM bars LEFT JOIN people ON people.id = bars.person_id LEFT JOIN projects ON projects.id = bars.project_id WHERE end_date >= ?', from)) {
     const kind = { blocked: 'Bloqué · ', free: 'Libre · ' }[b.kind] || '';
     const who = b.who ? `${b.who} · ` : '';
     add(`bar-${b.id}`, b.start_date, b.end_date, `${who}${kind}${b.label || b.pname || 'Atelier'}`, [b.pname && b.pname !== b.label ? b.pname : '', b.detail].filter(Boolean).join(' · '));
@@ -165,11 +162,100 @@ function feed() {
     add(`pose-${t.id}`, t.date, t.date, `Pose · ${t.pname}`, [t.what, t.team ? `Équipe : ${t.team}` : '', t.contact ? `Contact : ${t.contact}` : '', t.access ? `Accès : ${t.access}` : ''].filter(Boolean).join('\n'), t.place);
   }
   for (const o of q.all('SELECT orders.*, suppliers.name sname FROM orders LEFT JOIN suppliers ON suppliers.id = orders.supplier_id WHERE expected_at >= ? AND arrived_at IS NULL', from)) {
-    add(`cmd-${o.id}`, o.expected_at, o.expected_at, `Livraison ${o.sname || 'fournisseur'}`, o.what);
+    add(`cmd-${o.id}`, o.expected_at, o.expected_at, `Livraison ${o.sname || 'fournisseur'}`, o.what || '');
   }
+  return out;
+}
+function feed() {
+  const company = setting('company_name') || 'Carchon OS';
+  const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d+/, '');
+  const ev = items(addD(isoOf(new Date()), -60)).map((e) => ['BEGIN:VEVENT', `UID:${e.key}@carchon-os`, `DTSTAMP:${stamp}`,
+    `DTSTART;VALUE=DATE:${ymd(e.start)}`, `DTEND;VALUE=DATE:${ymd(addD(e.end, 1))}`, `SUMMARY:${esc(e.title)}`,
+    e.detail ? `DESCRIPTION:${esc(e.detail)}` : '', e.place ? `LOCATION:${esc(e.place)}` : '', 'TRANSP:TRANSPARENT', 'END:VEVENT'].filter(Boolean));
   return ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Carchon OS//Planning//FR', 'CALSCALE:GREGORIAN', 'METHOD:PUBLISH',
     `X-WR-CALNAME:${esc(`${company} · Atelier`)}`, 'X-WR-TIMEZONE:Europe/Paris', 'REFRESH-INTERVAL;VALUE=DURATION:PT1H', 'X-PUBLISHED-TTL:PT1H',
     ...ev.flat(), 'END:VCALENDAR'].map(fold).join('\r\n') + '\r\n';
 }
 
-module.exports = { parseICS, expand, sync, start, between, importUrl, feed, feedToken, checkToken };
+// ---------- Écriture directe dans Google Agenda (instantanée) ----------
+// Un « compte de service » Google (clé JSON) à qui tu partages l'agenda « Atelier » en modification.
+db.exec(`CREATE TABLE IF NOT EXISTS gcal_pushed (key TEXT PRIMARY KEY, cal TEXT NOT NULL, end_date TEXT NOT NULL, hash TEXT NOT NULL)`);
+function serviceAccount() {
+  const raw = String(process.env.GOOGLE_SERVICE_ACCOUNT || setting('gcal_sa') || '').trim(); if (!raw) return null;
+  try {
+    const j = JSON.parse(raw.startsWith('{') ? raw : Buffer.from(raw, 'base64').toString('utf8'));
+    return j.client_email && j.private_key ? j : null;
+  } catch { return null; }
+}
+const pushCal = () => String(setting('gcal_push_cal') || '').trim();
+const pushReady = () => !!(serviceAccount() && pushCal());
+let tok = null;
+async function accessToken() {
+  if (tok && tok.exp > Date.now() + 60000) return tok.value;
+  const sa = serviceAccount(); if (!sa) throw new Error('clé Google absente');
+  const b64 = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
+  const now = Math.floor(Date.now() / 1000);
+  const aud = sa.token_uri || 'https://oauth2.googleapis.com/token';
+  const unsigned = `${b64({ alg: 'RS256', typ: 'JWT' })}.${b64({ iss: sa.client_email, scope: 'https://www.googleapis.com/auth/calendar.events', aud, iat: now, exp: now + 3600 })}`;
+  const sig = crypto.sign('RSA-SHA256', Buffer.from(unsigned), sa.private_key).toString('base64url');
+  const res = await fetch(aud, { method: 'POST', signal: AbortSignal.timeout(20000), headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer', assertion: `${unsigned}.${sig}` }) });
+  const j = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(`Google refuse la clé (${j.error_description || j.error || res.status})`);
+  tok = { value: j.access_token, exp: Date.now() + (j.expires_in || 3600) * 1000 };
+  return tok.value;
+}
+async function api(method, path, body) {
+  const res = await fetch(`https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(pushCal())}${path}`, {
+    method, signal: AbortSignal.timeout(20000), headers: { authorization: `Bearer ${await accessToken()}`, 'content-type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
+  if (res.status === 204) return { status: 204 };
+  const j = await res.json().catch(() => ({}));
+  return { status: res.status, body: j, message: j.error?.message || '' };
+}
+const evId = (key) => `carchon${crypto.createHash('sha1').update(key).digest('hex')}`; // identifiant stable, lettres admises par Google
+const evBody = (e) => ({ id: evId(e.key), status: 'confirmed', summary: e.title, description: e.detail || '', location: e.place || '',
+  start: { date: e.start }, end: { date: addD(e.end, 1) }, transparency: 'transparent' });
+const hashOf = (e) => crypto.createHash('sha1').update(JSON.stringify(evBody(e))).digest('hex');
+function explain(r) {
+  if (r.status === 404) return 'agenda introuvable : vérifie l’ID de l’agenda et qu’il est partagé avec le compte de service';
+  if (r.status === 403) return 'accès refusé : partage l’agenda avec le compte de service, droit « Modifier les événements »';
+  return r.message || `erreur Google ${r.status}`;
+}
+let pushing = null, again = false;
+async function push() {
+  if (!pushReady()) return { skipped: true };
+  if (pushing) { again = true; return pushing; }
+  pushing = (async () => {
+    const cal = pushCal(); const from = addD(isoOf(new Date()), -30);
+    let n = 0;
+    try {
+      const want = items(from);
+      const keys = new Set(want.map((e) => e.key));
+      const done = Object.fromEntries(q.all('SELECT * FROM gcal_pushed WHERE cal = ?', cal).map((x) => [x.key, x]));
+      for (const e of want) {
+        const hsh = hashOf(e); if (done[e.key]?.hash === hsh) continue;
+        let r = await api('PUT', `/events/${evId(e.key)}`, evBody(e));
+        if (r.status === 404) r = await api('POST', '/events', evBody(e)); // pas encore créé
+        if (r.status >= 300) throw new Error(explain(r));
+        q.run('INSERT INTO gcal_pushed (key, cal, end_date, hash) VALUES (?, ?, ?, ?) ON CONFLICT(key) DO UPDATE SET cal = excluded.cal, end_date = excluded.end_date, hash = excluded.hash', e.key, cal, e.end, hsh); n++;
+      }
+      for (const x of Object.values(done)) {
+        if (keys.has(x.key) || x.end_date < from) continue; // le passé lointain reste tel quel dans Google
+        const r = await api('DELETE', `/events/${evId(x.key)}`);
+        if (r.status >= 300 && r.status !== 404 && r.status !== 410) throw new Error(explain(r));
+        q.run('DELETE FROM gcal_pushed WHERE key = ?', x.key); n++;
+      }
+      setSetting('gcal_push_last', new Date().toISOString()); setSetting('gcal_push_error', '');
+      return { n };
+    } catch (e) {
+      setSetting('gcal_push_error', e.message); console.error('[google agenda · envoi]', e.message);
+      return { error: e.message, n };
+    }
+  })();
+  try { return await pushing; } finally { pushing = null; if (again) { again = false; setImmediate(push); } }
+}
+// Après une modification dans le logiciel : envoi quelques secondes plus tard (les changements groupés partent ensemble).
+let soon = null;
+function changed() { if (!pushReady()) return; clearTimeout(soon); soon = setTimeout(push, 4000); soon.unref?.(); }
+
+module.exports = { parseICS, expand, sync, start, between, importUrl, feed, feedToken, checkToken, items, serviceAccount, pushCal, pushReady, push, changed, evId };

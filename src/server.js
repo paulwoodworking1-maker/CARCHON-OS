@@ -155,7 +155,7 @@ app.use((req, res, next) => {
     res.on('finish', () => {
       if (res.statusCode >= 400 || replanQueued) return;
       replanQueued = true;
-      setImmediate(() => { replanQueued = false; automations.changed(); });
+      setImmediate(() => { replanQueued = false; automations.changed(); require('./gcal').changed(); });
     });
   }
   next();
