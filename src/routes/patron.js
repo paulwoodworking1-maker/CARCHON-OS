@@ -1,7 +1,7 @@
 'use strict';
 // Patron : Aujourd'hui, recherche, liste des projets et fiche projet.
 const express = require('express');
-const { q, tx, PHASES, logActivity } = require('../db');
+const { q, tx, PHASES, FAMILIES, SOURCES, logActivity } = require('../db');
 const { icon, h, raw, layout, pill, avatar, postBtn, options, hidden, ddmm, longDate, today, addDays, rel, hoursLabel, dayMonth, hhmm } = require('../html');
 const L = require('../logic');
 const { upload, fileUrl, isImage } = require('../uploads');
@@ -11,6 +11,8 @@ const SMS = require('../sms');
 const r = express.Router();
 const int = (v) => (v === undefined || v === '' || v === null ? null : Number(v));
 const str = (v) => String(v ?? '').trim();
+// « 8 400,50 € » -> 8400.5 ; vide -> null.
+const euros = (v) => { const x = Number(String(v ?? '').replace(/[\s\u00a0\u202f€]/g, '').replace(',', '.')); return String(v ?? '').trim() && Number.isFinite(x) ? x : null; };
 
 const friseBar = (fr) => h`<div class="bar" aria-hidden="true">${fr.map((f) => h`<i class="${f.state}" title="${f.phase} · ${f.label}"></i>`)}</div>`;
 
@@ -359,6 +361,9 @@ ${time.map((t, i) => h`<div class="who${i ? '' : ' f'}"><span class="grow">${t.g
 <label>Prochaine action (vide = automatique) <input name="next_action" value="${p.next_action}"></label>
 ${p.client_id ? h`<label class="ck"><input type="checkbox" name="deposit_needed" value="1" ${p.deposit_needed ? 'checked' : ''}> Acompte demandé</label>
 <label>Acompte reçu le <input type="date" name="deposit_at" value="${p.deposit_at ? p.deposit_at.slice(0, 10) : ''}"></label>` : ''}
+<div class="grid2"><label>Montant vendu HT (€) <input name="amount_ht" inputmode="decimal" value="${p.amount_ht ?? ''}" placeholder="ex. 8400"></label><label>Matière et sous-traitance HT (€) <input name="material_ht" inputmode="decimal" value="${p.material_ht ?? ''}" placeholder="ex. 1900"></label></div>
+<div class="grid2"><label>Famille <select name="family"><option value="">—</option>${options(FAMILIES, p.family)}</select></label><label>Origine du client <select name="source"><option value="">—</option>${options(SOURCES, p.source)}</select></label></div>
+<p class="mut t12">Servent à l'Analyse : taux horaire réel, familles et canaux qui rapportent.</p>
 <label>Bois <textarea name="wood" rows="2">${p.wood}</textarea></label>
 <label>Notes <textarea name="notes" rows="4">${p.notes}</textarea></label>
 <button class="btn sm">Enregistrer</button></form>
@@ -415,8 +420,9 @@ r.post('/projets/:id/infos', loadProject, (req, res) => {
   }
   const depositAt = str(b.deposit_at) || null;
   tx(() => {
-    q.run('UPDATE projects SET name = ?, due_date = ?, lead_id = ?, next_action = ?, wood = ?, notes = ?, deposit_needed = ?, deposit_at = ? WHERE id = ?',
-      str(b.name) || p.name, str(b.due_date) || null, int(b.lead_id), str(b.next_action), str(b.wood), str(b.notes), p.client_id ? (b.deposit_needed ? 1 : 0) : 0, depositAt, p.id);
+    q.run('UPDATE projects SET name = ?, due_date = ?, lead_id = ?, next_action = ?, wood = ?, notes = ?, deposit_needed = ?, deposit_at = ?, amount_ht = ?, material_ht = ?, family = ?, source = ? WHERE id = ?',
+      str(b.name) || p.name, str(b.due_date) || null, int(b.lead_id), str(b.next_action), str(b.wood), str(b.notes), p.client_id ? (b.deposit_needed ? 1 : 0) : 0, depositAt,
+      euros(b.amount_ht), euros(b.material_ht), FAMILIES.includes(b.family) ? b.family : '', SOURCES.includes(b.source) ? b.source : '', p.id);
     // Acompte reçu : les achats qui l'attendaient se débloquent.
     if (depositAt && !p.deposit_at) { q.run('UPDATE needs SET needs_deposit = 0 WHERE project_id = ?', p.id); logActivity(p.id, null, `Acompte reçu le ${ddmm(depositAt)}`, 'Patron'); SMS.notify('acompte', { projectId: p.id }); }
     if (str(b.due_date) && str(b.due_date) !== (p.due_date || '')) logActivity(p.id, null, `Date de livraison : ${ddmm(str(b.due_date))}${p.due_date ? ` (au lieu du ${ddmm(p.due_date)})` : ''}`, 'Patron');

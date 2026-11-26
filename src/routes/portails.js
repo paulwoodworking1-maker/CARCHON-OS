@@ -2,7 +2,7 @@
 // Portails clients côté patron : envoyer un devis à accepter, ouvrir / couper les espaces clients.
 const express = require('express');
 const fs = require('node:fs');
-const { q, tx, setting, setSetting, logActivity } = require('../db');
+const { q, tx, setting, setSetting, logActivity, FAMILIES, SOURCES } = require('../db');
 const { h, layout, pill, postBtn, options, ddmm, ddmmyyyy, addDays, today, rel } = require('../html');
 const { token, sha256 } = require('../auth');
 const { upload, filePath } = require('../uploads');
@@ -280,6 +280,8 @@ ${draft?.resume ? h`<p class="mut mt12">Lu par l’assistant : ${draft.resume}${
 <div class="grid2"><label>N° du devis <input name="number" required placeholder="D-(2026)-00399" value="${draft?.number || ''}"></label><label>Projet (nom court) <input name="project_name" placeholder="ex. Table à manger · chêne" value="${draft?.project_name || ''}"></label></div>
 ${draft?.pdf ? h`<p class="mut">PDF du devis déposé ✓ <a href="/portails/devis/annuler?nouveau=1">changer</a></p>` : h`<label>PDF du devis${from ? ' (nouvelle version)' : ''} (exporté de Qonto) <input type="file" name="pdf" accept="application/pdf" required></label>`}
 <div class="grid2"><label>Qui signe <input name="signer_name" required value="${draft?.signer_name || ''}"></label><label>Son e-mail <input type="email" name="signer_email" required value="${draft?.signer_email || ''}"></label></div>
+<div class="grid2"><label>Montant HT (€) <input name="amount_ht" inputmode="decimal" value="${draft?.amount_ht ?? ''}" placeholder="ex. 8400"></label><label>Famille <select name="family"><option value="">—</option>${options(FAMILIES, draft?.family)}</select></label></div>
+<label>Comment ce client t'a trouvé <select name="source"><option value="">—</option>${options(SOURCES, draft?.source)}</select></label>
 <label>Son portable (pour les SMS de suivi, facultatif) <input type="tel" name="signer_phone" placeholder="06 12 34 56 78" value="${draft?.signer_phone || ''}"></label>
 <label>Lignes du devis, une par ligne : « désignation ; quantité » <textarea name="lines" rows="5" placeholder="Table à manger chêne 220 × 95 cm ; 1&#10;Allonges 50 cm ; 2&#10;Livraison et installation ; 1">${linesText(draft?.lines)}</textarea></label>
 <p class="mut t12">Facultatif, mais conseillé : le client pourra ajuster chaque ligne (modifier, retirer, changer la quantité) au lieu d’écrire un long message.</p>
@@ -303,7 +305,7 @@ r.post('/portails/devis/lire', upload.single('pdf'), async (req, res, next) => {
   if (!req.file || !/\.pdf$/.test(req.file.filename)) return res.flashTo('/portails/envoyer', 'Il faut un PDF.', 'ko');
   try {
     const x = await ai.readQuotePdf(fs.readFileSync(req.file.path));
-    req.session.draftQuote = { ...(req.session.draftQuote || {}), pdf: req.file.filename, number: x.numero, signer_name: x.client_nom, signer_email: x.client_email, project_name: x.objet, resume: x.resume, montant: x.montant_ttc, acompte: x.acompte,
+    req.session.draftQuote = { ...(req.session.draftQuote || {}), pdf: req.file.filename, number: x.numero, signer_name: x.client_nom, signer_email: x.client_email, project_name: x.objet, resume: x.resume, montant: x.montant_ttc, acompte: x.acompte, amount_ht: x.montant_ht ? String(x.montant_ht).replace(/[^\d,.]/g, '') : '',
       lines: (x.lignes || []).map((l) => ({ d: l.designation, q: l.quantite || '1' })) };
     res.saveSession();
     res.redirect('/portails/envoyer');
@@ -332,7 +334,7 @@ r.post('/portails/devis', upload.single('pdf'), (req, res) => {
   if (isTest && req.body.allow_test && email) setSetting('portal_test_emails', [...new Set([...testEmails(), email])].join(', '));
   if (isTest && !testEmails().includes(email)) {
     // On garde le PDF et ce qui a été saisi : il suffit d'autoriser l'adresse puis de renvoyer.
-    req.session.draftQuote = { ...(draft || {}), pdf: req.file.filename, number: str(b.number), project_name: str(b.project_name), signer_name: str(b.signer_name), signer_email: email, signer_phone: str(b.signer_phone), lines: parseLines(b.lines), project_id: b.project_id || null };
+    req.session.draftQuote = { ...(draft || {}), pdf: req.file.filename, amount_ht: str(b.amount_ht), family: str(b.family), source: str(b.source), number: str(b.number), project_name: str(b.project_name), signer_name: str(b.signer_name), signer_email: email, signer_phone: str(b.signer_phone), lines: parseLines(b.lines), project_id: b.project_id || null };
     return res.flashTo('/portails/envoyer', `Mode test : ${email} n’est pas une adresse de test. Clique « Autoriser cette adresse et envoyer », ou passe le portail en mode réel dans Réglages.`, 'ko');
   }
   const number = str(b.number);
@@ -348,6 +350,9 @@ r.post('/portails/devis', upload.single('pdf'), (req, res) => {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?)`, projectId, prev?.client_id || null, number, prev ? prev.version + 1 : 1, req.file.filename, sha256(fs.readFileSync(req.file.path)),
     cgv, cgv ? sha256(fs.readFileSync(filePath(cgv))) : null, str(b.signer_name), email, str(b.project_name) || prev?.project_name || '', addDays(today(), days), sha256(t), isTest ? 1 : 0, JSON.stringify(parseLines(b.lines)), SMS.seal(t), str(b.signer_phone) || prev?.signer_phone || '').lastInsertRowid);
   });
+  { const a = Number(str(b.amount_ht).replace(/[\s\u00a0\u202f€]/g, '').replace(',', '.'));
+    q.run('UPDATE quotes SET amount_ht = ?, family = ?, source = ? WHERE id = ?', str(b.amount_ht) && Number.isFinite(a) ? a : prev?.amount_ht ?? null,
+      FAMILIES.includes(b.family) ? b.family : prev?.family || '', SOURCES.includes(b.source) ? b.source : prev?.source || '', newId); }
   SMS.notify('devis', { quoteId: newId });
   const url = `${base(req)}/p/devis/${t}`;
   req.session.shownLink = { title: `Lien d’acceptation créé pour ${str(b.signer_name)} · valable ${days} jours`, url, to: email,

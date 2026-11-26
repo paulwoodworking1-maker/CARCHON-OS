@@ -27,7 +27,7 @@ test('sans connexion, on est renvoyé vers la connexion', async () => {
 });
 
 const pages = ['/', '/projets', '/projets?vue=termines', '/projets/1', '/projets/nouveau', '/carnets', '/carnets/1', '/stock', '/achats', '/commandes',
-  '/fournisseurs', '/planning', '/planning?semaines=4', '/poses', '/poses/1/pv', '/pilotage', '/pilotage/export.csv', '/equipe', '/portails', '/portails?nouveau=1', '/recherche?q=chêne', '/automatisations', '/automatisations/resume', '/projets/1/nouvelles', '/entreprise', '/carnets/1/imprimer', '/poses/1/pv/imprimer', '/commandes/1/bon', '/catalogue', '/catalogue?m=1&qty=12', '/machines', '/machines?m=2', '/charge', '/charge?p=2&w=1', '/bois', '/pieces', '/expeditions', '/expeditions/1/bon', '/sav', '/sav?nouveau=1', '/unites', '/unites/1', '/unites/6', '/pilotage/couts', '/projets/4', '/assistant', '/decider', '/decider?tag=Achat', '/projets?f=retard', '/projets?vue=frise', '/projets?resp=1&canal=Boutique', '/projets?f=acompte', '/portails/envoyer', '/portails/reglages', '/portails/parcours?p=1', '/portails?f=espaces', '/portails?f=signes', '/portails/envoyer?depuis=1'];
+  '/fournisseurs', '/planning', '/planning?semaines=4', '/poses', '/poses/1/pv', '/pilotage', '/pilotage/export.csv', '/equipe', '/portails', '/portails?nouveau=1', '/recherche?q=chêne', '/automatisations', '/automatisations/resume', '/projets/1/nouvelles', '/entreprise', '/carnets/1/imprimer', '/poses/1/pv/imprimer', '/commandes/1/bon', '/catalogue', '/catalogue?m=1&qty=12', '/machines', '/machines?m=2', '/charge', '/charge?p=2&w=1', '/bois', '/pieces', '/expeditions', '/expeditions/1/bon', '/sav', '/sav?nouveau=1', '/unites', '/unites/1', '/unites/6', '/pilotage/couts', '/projets/4', '/assistant', '/decider', '/decider?tag=Achat', '/projets?f=retard', '/projets?vue=frise', '/projets?resp=1&canal=Boutique', '/projets?f=acompte', '/portails/envoyer', '/portails/reglages', '/portails/parcours?p=1', '/portails?f=espaces', '/portails?f=signes', '/portails/envoyer?depuis=1', '/analyse', '/analyse?periode=90', '/analyse?periode=0'];
 for (const p of pages) {
   test(`GET ${p}`, async () => {
     const res = await fetch(base + p, { headers: { cookie } });
@@ -63,10 +63,12 @@ test('API Cockpit : clé requise, affaire créée, OF listés', async () => {
   setSetting('api_token', 'cle-de-test-123456');
   assert.strictEqual((await fetch(base + '/api/v1/ofs')).status, 401);
   const auth = { authorization: 'Bearer cle-de-test-123456', 'content-type': 'application/json' };
-  const res = await fetch(base + '/api/v1/affaires', { method: 'POST', headers: auth, body: JSON.stringify({ name: 'Buffet · noyer', client: { name: 'Client test', email: 'c@example.com' }, due_date: '2027-02-01' }) });
+  const res = await fetch(base + '/api/v1/affaires', { method: 'POST', headers: auth, body: JSON.stringify({ name: 'Buffet · noyer', client: { name: 'Client test', email: 'c@example.com' }, due_date: '2027-02-01', amount_ht: '8 400,00', family: 'Pièce signature', source: 'Site web' }) });
   assert.strictEqual(res.status, 201);
   const { ref } = await res.json();
   assert.match(ref, /^P\d{4}-\d{3}$/);
+  const saved = require('../src/db').q.get('SELECT amount_ht, family, source FROM projects WHERE ref = ?', ref);
+  assert.deepStrictEqual({ ...saved }, { amount_ht: 8400, family: 'Pièce signature', source: 'Site web' });
   assert.strictEqual((await fetch(`${base}/api/v1/affaires/${ref}/acompte`, { method: 'POST', headers: auth })).status, 200);
   const list = await (await fetch(base + '/api/v1/ofs', { headers: auth })).json();
   assert.ok(list.ofs.some((o) => o.ref === ref));
@@ -186,4 +188,29 @@ test('SMS : numéro, lien chiffré, regroupement des nouveautés, texte final', 
   assert.strictEqual(SMS.quietNow(new Date('2026-11-29T12:00:00+01:00')), true); // dimanche
   assert.strictEqual(SMS.quietNow(new Date('2026-11-26T10:00:00+01:00')), false);
   assert.strictEqual(SMS.quietNow(new Date('2026-11-26T22:00:00+01:00')), true);
+});
+
+test('analyse : chiffres de la démo, diagnostic classé, objectifs modifiables', async () => {
+  const A = require('../src/analyse');
+  const R = A.compute(365);
+  assert.ok(R.profit.rate > 0 && R.profit.rate < 200, 'taux horaire réel calculé');
+  assert.ok(R.ca.period > 0);
+  assert.ok(R.sales.n > 0 && R.sales.funnel[0][1] >= R.sales.funnel[4][1]);
+  assert.ok(R.estim.gap > 0, 'la démo dépasse le prévu');
+  const order = { ko: 0, wa: 1, idea: 2, ok: 3 };
+  R.findings.forEach((f, i) => { if (i) assert.ok(order[R.findings[i - 1].level] <= order[f.level]); assert.ok(f.title && f.action); });
+  const res = await fetch(base + '/analyse/objectifs', { method: 'POST', redirect: 'manual', headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' }, body: 'obj_rate=90&obj_ca_month=60000' });
+  assert.strictEqual(res.status, 302);
+  assert.strictEqual(A.objectives().rate, 90);
+  assert.strictEqual(A.objectives().ca_month, 60000);
+  const page = await (await fetch(base + '/analyse', { headers: { cookie } })).text();
+  assert.match(page, /objectif de 90 €/);
+});
+
+test('fiche projet : montant, matière, famille et origine enregistrés', async () => {
+  const res = await fetch(base + '/projets/1/infos', { method: 'POST', redirect: 'manual', headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ name: 'Table à manger · chêne', amount_ht: '7 200,50', material_ht: '1500', family: 'Pièce signature', source: 'Site web', lead_id: '' }).toString() });
+  assert.strictEqual(res.status, 302);
+  const p = require('../src/db').q.get('SELECT amount_ht, material_ht, family, source FROM projects WHERE id = 1');
+  assert.deepStrictEqual({ ...p }, { amount_ht: 7200.5, material_ht: 1500, family: 'Pièce signature', source: 'Site web' });
 });

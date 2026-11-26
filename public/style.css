@@ -696,3 +696,32 @@ h2{margin-bottom:14px}
 .tbl.dense td.ofname{white-space:normal;max-width:none;min-width:220px;overflow:visible}
 .dot-wa{white-space:nowrap}
 .shell .kpi-l{letter-spacing:.14em}
+
+/* Analyse : diagnostic, barres, colonnes, chiffres. */
+.an-per .btn{min-height:34px}
+.an-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:0 28px}
+.an-grid.one{grid-template-columns:1fr}
+.an-f{display:flex;flex-direction:column;gap:6px;padding:16px 0 16px 14px;border-top:1px solid var(--line2);border-left:3px solid var(--line)}
+.an-f.an-ko{border-left-color:var(--red)}.an-f.an-wa{border-left-color:#6B635A}.an-f.an-ok{border-left-color:var(--ink)}
+.an-split{display:grid;grid-template-columns:minmax(0,2fr) minmax(0,1fr);gap:20px 40px}.an-split.even{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
+@media (max-width:900px){.an-split,.an-split.even{grid-template-columns:1fr}}
+.an-ft{line-height:1.35}
+.an-bars{display:flex;flex-direction:column;gap:6px;margin-top:8px}
+.an-bar{display:grid;grid-template-columns:minmax(110px,26%) minmax(0,1fr) 205px;gap:12px;align-items:center;font-size:13px;padding:3px 0}
+.an-bar:hover{background:var(--gris)}
+.an-bl{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.an-bt{position:relative;height:12px;background:transparent;border-bottom:1px solid var(--line)}
+.an-bt i{position:absolute;left:0;top:1px;bottom:1px;background:var(--ink);border-radius:0 3px 3px 0}
+.an-bt i.bad{background:var(--red)}
+.an-tg{position:absolute;top:-4px;bottom:-4px;width:2px;background:var(--red);margin-left:-1px}
+.an-bv{text-align:right;font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap;font-size:12.5px}
+.legend i.an-lg{display:inline-block;width:2px;height:12px;background:var(--red)}
+.an-cols{width:100%;height:auto;display:block;margin-top:12px;font-family:'Montserrat',system-ui,sans-serif}
+.an-stats{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:14px 24px;margin-top:18px;padding-top:14px;border-top:1px solid var(--line2)}
+.an-stats>div{display:flex;flex-direction:column;gap:2px;min-width:0}
+.an-stats b{font-size:20px;font-weight:600;font-variant-numeric:tabular-nums}
+@media (max-width:640px){.an-bar{grid-template-columns:1fr auto}.an-bt{grid-column:1 / -1;grid-row:2}.an-grid{grid-template-columns:1fr}}
+
+.an-tbl{min-width:0}
+@media (max-width:640px){#objectifs .tbl td,#objectifs .tbl th{padding:10px 4px;font-size:13px}#objectifs .tbl .pill{white-space:normal}}
+.kpi-h{flex-wrap:wrap;row-gap:6px}

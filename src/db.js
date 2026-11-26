@@ -16,6 +16,10 @@ const PHASES = ['Conception', 'Accord', 'Bois', 'Débit', 'Assemblage', 'Finitio
 // Les gestes suivis dans « Pilotage ».
 const GESTES = ['Débit, corroyage', "Queues d'aronde", 'Assemblage', 'Collage', 'Ponçage', 'Vernis', 'Huile-cire', 'Contrôle', 'Pose', 'Autre'];
 const STOCK_CATS = ['Quincaillerie', 'Droguerie', 'Matériaux', 'Consommables'];
+// Familles de la stratégie 2027 (les trois premières sont le « cœur ») et origines des affaires.
+const FAMILIES = ['Pièce signature', 'Agencement sur mesure', 'Projet pro', 'Petite pièce', 'Hors positionnement'];
+const CORE_FAMILIES = FAMILIES.slice(0, 3);
+const SOURCES = ['Prescripteur (architecte, décorateur)', 'Client livré, parrainage', 'Site web', 'Instagram, Pinterest', 'Fiche Google', 'Salon, porte ouverte', 'Revendeur', 'Autre'];
 
 db.exec(`
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);
@@ -178,6 +182,14 @@ addColumn('projects', 'portal_opened_at', 'TEXT');
 addColumn('projects', 'portal_seen_at', 'TEXT');
 addColumn('projects', 'portal_views', 'INTEGER NOT NULL DEFAULT 0');
 addColumn('projects', 'portal_link_at', 'TEXT');
+// Analyse : montant vendu, matière, famille et origine de chaque affaire (pour le taux horaire réel et les sources).
+addColumn('projects', 'amount_ht', 'REAL');
+addColumn('projects', 'material_ht', 'REAL');
+addColumn('projects', 'family', "TEXT DEFAULT ''");
+addColumn('projects', 'source', "TEXT DEFAULT ''");
+addColumn('quotes', 'amount_ht', 'REAL');
+addColumn('quotes', 'source', "TEXT DEFAULT ''");
+addColumn('quotes', 'family', "TEXT DEFAULT ''");
 
 db.exec(`
 CREATE TABLE IF NOT EXISTS models (
@@ -340,4 +352,4 @@ const COMPANY_FIELDS = [['company_name', 'Raison sociale', 'Carchon Les Ateliers
   ['company_phone', 'Téléphone', ''], ['company_email', 'E-mail', ''], ['company_site', 'Site web', 'www.carchon.com']];
 const company = () => Object.fromEntries(COMPANY_FIELDS.map(([k, , d]) => [k.replace('company_', ''), setting(k, d) || d]));
 
-module.exports = { db, q, tx, setting, setSetting, logActivity, company, COMPANY_FIELDS, PHASES, GESTES, STOCK_CATS, DATA_DIR, UPLOAD_DIR };
+module.exports = { db, q, tx, setting, setSetting, logActivity, company, COMPANY_FIELDS, PHASES, GESTES, STOCK_CATS, FAMILIES, CORE_FAMILIES, SOURCES, DATA_DIR, UPLOAD_DIR };

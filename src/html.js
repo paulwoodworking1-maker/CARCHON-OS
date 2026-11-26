@@ -121,7 +121,7 @@ const SIDE = [
   ['Planifier', [['charge', 'Charge', '/charge', 'load', ['/charge']], ['planning', 'Planning', '/planning', 'cal', ['/planning']], ['poses', 'Livraisons et poses', '/poses', 'truck', ['/poses']]]],
   ['Approvisionner', [['stock', 'Matière et stock', '/stock', 'box', ['/stock', '/bois', '/pieces']], ['achats', 'Achats', '/achats', 'cart', ['/achats', '/commandes', '/fournisseurs']]]],
   ['Livrer et garantir', [['exp', 'Expéditions', '/expeditions', 'send', ['/expeditions']], ['sav', 'Qualité et SAV', '/sav', 'shield', ['/sav', '/unites']]]],
-  ['Piloter', [['pilot', 'Heures et coûts', '/pilotage', 'gauge', ['/pilotage']], ['machines', 'Machines', '/machines', 'gear', ['/machines']], ['auto', 'Automatisations', '/automatisations', 'bolt', ['/automatisations']], ['equipe', 'Équipe et réglages', '/equipe', 'users', ['/equipe', '/entreprise']]]],
+  ['Piloter', [['analyse', 'Analyse', '/analyse', 'dash', ['/analyse']], ['pilot', 'Heures et coûts', '/pilotage', 'gauge', ['/pilotage']], ['machines', 'Machines', '/machines', 'gear', ['/machines']], ['auto', 'Automatisations', '/automatisations', 'bolt', ['/automatisations']], ['equipe', 'Équipe et réglages', '/equipe', 'users', ['/equipe', '/entreprise']]]],
 ];
 const TABHOME = { aujourdhui: '/', projets: '/projets', planning: '/planning', stock: '/stock', achats: '/achats', pilotage: '/pilotage' };
 const SUBNAV = {

@@ -1,6 +1,7 @@
 'use strict';
 // Liaison avec Cockpit (ou tout autre logiciel) : API JSON protégée par une clé (Pilotage › Équipe et réglages › Entreprise).
 //   POST /api/v1/affaires            une affaire signée devient un OF (sur-mesure, ou lot depuis un modèle du catalogue)
+//                                    champs utiles à l'Analyse : amount_ht (€ HT), family, source
 //   POST /api/v1/affaires/:ref/acompte   l'acompte est encaissé : les achats bloqués se débloquent
 //   GET  /api/v1/ofs                 avancement, dates, heures et coût réel de chaque OF
 const express = require('express');
@@ -45,6 +46,10 @@ r.post('/affaires', (req, res) => {
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, 'Préparer le carnet')`, str(b.name), str(c.kind) || canal, canal, clientId, str(b.due_date) || null, L.patron().id, str(c.name),
           b.deposit_needed === false ? 0 : 1, b.deposit_received ? new Date().toISOString().slice(0, 10) : null).lastInsertRowid);
       }
+      const amt = Number(String(b.amount_ht ?? b.amount ?? '').replace(/[\s\u00a0\u202f€]/g, '').replace(',', '.'));
+      const { FAMILIES, SOURCES } = require('../db');
+      q.run('UPDATE projects SET amount_ht = ?, family = ?, source = ? WHERE id = ?', Number.isFinite(amt) && amt > 0 ? amt : null,
+        FAMILIES.includes(b.family) ? b.family : '', SOURCES.includes(b.source) ? b.source : '', projectId);
       logActivity(projectId, null, `Affaire signée reçue de Cockpit${str(b.reference) ? ` (réf. ${str(b.reference)})` : ''}${str(b.amount) ? ` · ${str(b.amount)}` : ''}`, 'Cockpit');
     });
   } catch (e) { return res.status(e.status || 500).json({ error: e.message }); }

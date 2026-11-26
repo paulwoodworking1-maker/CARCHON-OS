@@ -146,6 +146,7 @@ function projectFromQuote(quote) {
     projectId = Number(q.run("INSERT INTO projects (name, kind, client_id, next_action, deposit_asked_at, lead_id) VALUES (?, 'Particulier', ?, 'Lancer le projet', datetime('now'), ?)", name, clientId, patron().id).lastInsertRowid);
     q.run('UPDATE quotes SET project_id = ? WHERE id = ?', projectId, quote.id);
   }
+  q.run("UPDATE projects SET amount_ht = COALESCE(?, amount_ht), family = COALESCE(NULLIF(?, ''), family), source = COALESCE(NULLIF(?, ''), source) WHERE id = ?", quote.amount_ht ?? null, quote.family || '', quote.source || '', projectId);
   q.run("INSERT OR REPLACE INTO phase_overrides (project_id, phase, state, label) VALUES (?, 'Conception', 'c', 'À démarrer')", projectId);
   return projectId;
 }
