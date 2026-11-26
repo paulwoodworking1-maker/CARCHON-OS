@@ -143,7 +143,6 @@ const PlanCarnetSchema = z.object({
     remarque: z.string(),
   })),
   elements: z.array(z.object({ nom: z.string(), description: z.string() })),
-  sous_traitance: z.array(z.object({ prestation: z.string(), pieces: z.string(), specification: z.string() })),
   questions: z.array(z.string()),
   remarques: z.string(),
 });
@@ -170,7 +169,7 @@ function planBlocks(plans, readFile) {
   return { blocks, skipped };
 }
 
-async function carnetFromPlans({ project, plans, readFile, text, people, phases, gestes, averages, existing, suppliers }) {
+async function carnetFromPlans({ project, plans, readFile, text, people, phases, gestes, averages, existing, subcontracted = [] }) {
   const { blocks, skipped } = planBlocks(plans, readFile);
   if (!blocks.length && !String(text || '').trim()) throw new AIError(`Aucun plan lisible ni dictée : ${skipped.join(', ') || 'ajoute un plan PDF ou image, ou dicte le travail.'}`);
   const system = `Tu prépares le carnet de fabrication d'un projet d'ébénisterie pour l'atelier Carchon Les Ateliers, à partir des plans fournis et de ce que le patron dicte.
@@ -190,7 +189,7 @@ Règles :
 - Ordre logique de fabrication. N'ajoute pas les fiches qui existent déjà.
 - "debit" : la liste de débit lue sur les plans (une ligne par élément : quantité, longueur × largeur × épaisseur en mm telles qu'écrites, matière). Mets "" pour une cote illisible ou absente : n'en invente jamais.
 - "elements" : les grands éléments de l'ouvrage (caisson, plateau, façades…), 1 à 12, avec une description courte (dimensions hors tout si lisibles).
-- "sous_traitance" : seulement les prestations que le patron dit confier à l'extérieur, ou que les plans indiquent clairement comme hors atelier (laquage, verre, découpe numérique, métallerie, sellerie, pierre…). Liste vide sinon.
+- La sous-traitance est décidée par le patron seul : ne propose aucune prestation à confier à l'extérieur. Pour les prestations déjà sous-traitées (liste fournie), ne crée pas de fiche pour le travail fait dehors ; seulement, si utile, la préparation avant départ et le contrôle au retour.
 - "questions" : cotes manquantes, incohérences, choix à trancher avant de lancer (0 à 6 points).
 - "remarques" : une ou deux phrases sur ce qui paraît risqué (ou "").`;
   const content = [
@@ -200,7 +199,7 @@ Règles :
 Étapes de la frise : ${phases.join(', ')}
 Gestes : ${gestes.join(', ')}
 Moyennes réelles de l'atelier (heures par fiche) : ${Object.entries(averages).map(([g, h]) => `${g} ${h.toFixed(1)} h`).join(', ') || 'pas encore de données'}
-Sous-traitants connus : ${suppliers.join(', ') || 'aucun'}
+Prestations sous-traitées par le patron : ${subcontracted.join(' ; ') || 'aucune'}
 Fiches déjà dans le carnet : ${existing.join(' ; ') || 'aucune'}
 ${blocks.length ? '' : 'Aucun plan lisible : travaille seulement depuis la dictée, laisse "debit" vide.\n'}
 Ce que dicte le patron :

@@ -26,7 +26,7 @@ La fiche d’un projet est rangée en quatre onglets, sous la frise et un bandea
 - **Achats et sous-traitance** : les commandes aux sous-traitants (à commander → commandé → chez le sous-traitant → revenu → contrôlé), avec bon de commande imprimable, e-mail pré-rempli et devis joint ; les achats liés et le bois réservé. Un retour en retard remonte dans « À décider ».
 - **Client et documents** : journal photo, portail client, documents.
 
-**Générer le carnet** : coche les plans (PDF ou image JPG/PNG) et dicte le travail (bouton « Dicter » sur iPad/Chrome, ou la dictée du clavier). L’assistant (`AI_MODEL`, par défaut `claude-opus-5-5`) lit cotes, assemblages et matières et propose les fiches, la liste de débit, les éléments et les sous-traitances. Rien ne part à l’atelier avant « Envoyer à l’atelier ». Nécessite `ANTHROPIC_API_KEY`.
+**Générer le carnet** : coche les plans (PDF ou image JPG/PNG) et dicte le travail (bouton « Dicter » sur iPad/Chrome, ou la dictée du clavier). L’assistant (`AI_MODEL`, par défaut `claude-opus-5-5`) lit cotes, assemblages et matières et propose les fiches, la liste de débit et les éléments. La sous-traitance reste ta décision : il tient compte de celles que tu as saisies, sans en proposer. Rien ne part à l’atelier avant « Envoyer à l’atelier ». Nécessite `ANTHROPIC_API_KEY`.
 
 ## Démarrer
 

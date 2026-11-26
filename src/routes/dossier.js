@@ -83,7 +83,7 @@ function sstRow(p, s, i, supOpts) {
   const mail = s.semail ? `mailto:${encodeURIComponent(s.semail)}?subject=${encodeURIComponent(`Commande ${p.ref} · ${s.what}`)}&body=${encodeURIComponent(mailBody(p, s))}` : '';
   return h`<details class="sst${i ? '' : ' f'}${isLate(s) ? ' late' : ''}" id="sst${s.id}"><summary>
 <div class="grow"><b>${s.what}</b><span class="mut">${[s.sname || 'Sous-traitant à choisir', s.pieces, s.price ? `${String(s.price).replace('.', ',')} € HT` : ''].filter(Boolean).join(' · ')}</span></div>
-${isLate(s) ? pill('ko', `Retour en retard · prévu ${ddmm(s.due_at)}`) : s.due_at && !s.back_at ? h`<span class="mut t13">retour ${ddmm(s.due_at)}</span>` : ''}${pill(SST_PILL[s.status], SST_LABEL[s.status])}${s.ai ? pill('no', 'Proposé par l’IA') : ''}</summary>
+${isLate(s) ? pill('ko', `Retour en retard · prévu ${ddmm(s.due_at)}`) : s.due_at && !s.back_at ? h`<span class="mut t13">retour ${ddmm(s.due_at)}</span>` : ''}${pill(SST_PILL[s.status], SST_LABEL[s.status])}</summary>
 <ol class="sst-track">${steps}</ol>
 <div class="line mt12">${nx ? postBtn(`/projets/${p.id}/sous-traitance/${s.id}/etape`, nx[1], 'btn sm', { to: nx[0] }) : ''}
 <a class="btn alt sm" href="/projets/${p.id}/sous-traitance/${s.id}/bon">Bon de commande</a>
@@ -205,16 +205,16 @@ ${drafts ? h`<div class="line mt12">${postBtn(`/carnets/${p.id}/envoyer`, `Envoy
 </section>
 
 <section class="card" id="generer"><h2>Générer le carnet depuis les plans</h2>
-${ai.enabled() ? h`<p class="mut">L’assistant (${ai.MODEL}) lit les plans cochés — cotes, assemblages, matières — et ce que tu dictes, puis propose les fiches, la liste de débit et les prestations à sous-traiter. Rien ne part à l’atelier avant ton envoi.</p>
+${ai.enabled() ? h`<p class="mut">L’assistant (${ai.MODEL}) lit les plans cochés — cotes, assemblages, matières — et ce que tu dictes, puis propose les fiches et la liste de débit. Il tient compte des sous-traitances que tu as indiquées dans l’onglet « Achats et sous-traitance », sans en ajouter. Rien ne part à l’atelier avant ton envoi.</p>
 <form method="post" action="/projets/${p.id}/dossier/generer" class="form mt12" data-busy="Lecture des plans en cours… (1 à 3 minutes)">
 <fieldset class="plansel"><legend>Plans à lire</legend>${plans.length ? plans.map((x) => h`<label class="ck"><input type="checkbox" name="plan_ids" value="${x.id}" ${checked(x) ? 'checked' : ''} ${x.file ? '' : 'disabled'}> <b>${x.version}</b>${x.descr ? ` · ${x.descr}` : ''} <span class="mut t12">${x.status === 'validee' ? 'validée' : x.status === 'archivee' ? 'remplacée' : 'brouillon'}${x.file ? '' : ' · pas de fichier'}</span></label>`) : h`<p class="mut t12">Aucun plan dans le dossier : ajoute-le dans « Plans » ci-dessous, ou dicte seulement.</p>`}</fieldset>
-<label for="dictee">Ce que tu dictes <span class="mut t12">(qui fait quoi, consignes, ce qui part en sous-traitance, finitions…)</span></label>
-<div class="dictee"><textarea id="dictee" name="text" rows="6" placeholder="ex. Caissons en mélaminé blanc 19, chants ABS 1 mm. Plateau chêne massif 30 mm, c’est Nina qui le débite. Les façades partent au laquage chez Martin, blanc mat. Pose murale, prévoir tasseaux.">${preset}</textarea>
+<label for="dictee">Ce que tu dictes <span class="mut t12">(qui fait quoi, consignes, finitions…)</span></label>
+<div class="dictee"><textarea id="dictee" name="text" rows="6" placeholder="ex. Caissons en mélaminé blanc 19, chants ABS 1 mm. Plateau chêne massif 30 mm, c’est Nina qui le débite. Pose murale, prévoir tasseaux.">${preset}</textarea>
 <button type="button" class="btn alt sm" data-dictee="#dictee" hidden>● Dicter</button></div>
 <label class="ck"><input type="checkbox" name="replace" value="1" ${steps.some((s) => !s.sent && s.ai_generated) ? 'checked' : ''}> Remplacer les fiches proposées par l’IA pas encore envoyées</label>
-<label class="ck"><input type="checkbox" name="pieces" value="1" checked> Remplir « Éléments du projet » et les sous-traitances proposées</label>
+<label class="ck"><input type="checkbox" name="pieces" value="1" checked> Remplir « Éléments du projet »</label>
 <button class="btn">Générer le carnet</button></form>`
-  : h`<p class="mut">Avec l’assistant activé (clé ANTHROPIC_API_KEY chez l’hébergeur), il lit les plans du dossier et ta dictée, et prépare les fiches, la liste de débit et les sous-traitances. En attendant, écris les fiches dans le carnet.</p>`}
+  : h`<p class="mut">Avec l’assistant activé (clé ANTHROPIC_API_KEY chez l’hébergeur), il lit les plans du dossier et ta dictée, et prépare les fiches et la liste de débit. En attendant, écris les fiches dans le carnet.</p>`}
 </section>
 
 ${last ? h`<section class="card" id="debit"><div class="line"><h2>Liste de débit</h2><span class="mut t13">lue le ${ddmm(last.created_at)}${last.plans ? ` sur ${last.plans}` : ''}</span><a class="btn alt sm push" href="/projets/${p.id}/dossier/imprimer">Imprimer le dossier</a></div>
@@ -240,8 +240,8 @@ r.post('/projets/:id/dossier/generer', loadProject, async (req, res, next) => {
     const people = L.people();
     if (req.body.replace) q.run('DELETE FROM steps WHERE project_id = ? AND sent = 0 AND ai_generated = 1', p.id);
     const existing = q.all('SELECT title FROM steps WHERE project_id = ? ORDER BY ord', p.id).map((s) => s.title);
-    const suppliers = q.all('SELECT name FROM suppliers WHERE subcontractor = 1 ORDER BY name').map((s) => s.name);
-    const out = await ai.carnetFromPlans({ project: p, plans, readFile: (f) => fs.readFileSync(filePath(f)), text, people, phases: PHASES, gestes: GESTES, averages: auto.averages(), existing, suppliers });
+    const subcontracted = subcontracts(p.id).map((s) => `${s.what}${s.pieces ? ` (${s.pieces})` : ''}${s.sname ? ` chez ${s.sname}` : ''}`);
+    const out = await ai.carnetFromPlans({ project: p, plans, readFile: (f) => fs.readFileSync(filePath(f)), text, people, phases: PHASES, gestes: GESTES, averages: auto.averages(), existing, subcontracted });
     const byName = (n) => people.find((x) => x.name.toLowerCase() === String(n).trim().toLowerCase() || (x.role === 'patron' && /^(toi|patron|moi)$/i.test(String(n).trim())));
     const validated = plans.find((x) => x.status === 'validee') || plans[plans.length - 1];
     let ord = q.get('SELECT MAX(ord) m FROM steps WHERE project_id = ?', p.id).m || 0;
@@ -252,16 +252,12 @@ r.post('/projets/:id/dossier/generer', loadProject, async (req, res, next) => {
       if (req.body.pieces) {
         const have = new Set(q.all('SELECT lower(name) n FROM pieces WHERE project_id = ?', p.id).map((x) => x.n));
         out.elements.slice(0, 20).filter((e) => str(e.nom) && !have.has(str(e.nom).toLowerCase())).forEach((e) => q.run('INSERT INTO pieces (project_id, name, descr) VALUES (?, ?, ?)', p.id, str(e.nom), str(e.description)));
-        const known = new Set(q.all('SELECT lower(what) w FROM subcontracts WHERE project_id = ?', p.id).map((x) => x.w));
-        out.sous_traitance.slice(0, 10).filter((x) => str(x.prestation) && !known.has(str(x.prestation).toLowerCase()))
-          .forEach((x) => q.run('INSERT INTO subcontracts (project_id, what, pieces, spec, ai) VALUES (?, ?, ?, ?, 1)', p.id, str(x.prestation), str(x.pieces), str(x.specification)));
       }
       q.run('INSERT INTO carnet_runs (project_id, plans, dictation, remarks, questions, debit, n, model) VALUES (?, ?, ?, ?, ?, ?, ?, ?)', p.id, plans.map((x) => x.version).join(', '), text,
         str(out.remarques), JSON.stringify(out.questions.slice(0, 10)), JSON.stringify(out.debit.slice(0, 200)), out.fiches.length, ai.MODEL);
       logActivity(p.id, null, `Carnet généré depuis ${plans.length ? `les plans ${plans.map((x) => x.version).join(', ')}` : 'la dictée'} (${out.fiches.length} fiches proposées)`, 'Patron');
     });
-    const sst = req.body.pieces ? out.sous_traitance.length : 0;
-    res.flashTo(`/projets/${p.id}#carnet`, `${out.fiches.length} fiche(s) proposée(s)${out.debit.length ? `, ${out.debit.length} ligne(s) de débit` : ''}${sst ? `, ${sst} sous-traitance(s) à commander` : ''}. Relis puis « Envoyer à l’atelier ».${out.skipped.length ? ` Plans non lus : ${out.skipped.join(', ')}.` : ''}`);
+    res.flashTo(`/projets/${p.id}#carnet`, `${out.fiches.length} fiche(s) proposée(s)${out.debit.length ? `, ${out.debit.length} ligne(s) de débit` : ''}. Relis puis « Envoyer à l’atelier ».${out.skipped.length ? ` Plans non lus : ${out.skipped.join(', ')}.` : ''}`);
   } catch (e) {
     if (e instanceof ai.AIError) return res.flashTo(`/projets/${p.id}#generer`, e.message, 'ko');
     next(e);
