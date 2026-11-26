@@ -5,8 +5,8 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const { q, tx, setting, logActivity, company } = require('../db');
 const { h, page, ddmm, ddmmyyyy, dayMonth, today, hhmm } = require('../html');
-const { sha256, verify, hash } = require('../auth');
-const { filePath, isImage } = require('../uploads');
+const { sha256, verify, hash, throttle, fail } = require('../auth');
+const { filePath, isImage, sendUpload } = require('../uploads');
 const mail = require('../mail');
 const L = require('../logic');
 
@@ -86,6 +86,10 @@ r.post('/devis/:t/code', async (req, res, next) => {
   try {
     const x = findQuote(req);
     if (!x || x.status !== 'sent') return res.redirect(`/p/devis/${req.params.t}`);
+    // Au plus 8 codes par devis et 8 par adresse IP toutes les 10 minutes (pas d'inondation de la boîte du client).
+    const kq = `otp:${x.id}`, ki = `otp-ip:${req.ip}`;
+    if (throttle(kq) || throttle(ki)) return res.flashTo(`/p/devis/${req.params.t}`, 'Trop de codes demandés. Réessayez dans 10 minutes.', 'ko');
+    fail(kq); fail(ki);
     const code = String(crypto.randomInt(0, 1000000)).padStart(6, '0');
     q.run("UPDATE quotes SET otp_hash = ?, otp_expires = datetime('now', '+15 minutes'), otp_tries = 0 WHERE id = ?", hash(code), x.id);
     await mail.send({ to: x.signer_email, subject: `Votre code pour le devis ${x.number}`, text: `Bonjour,\n\nVotre code de vérification est : ${code}\nIl est valable 15 minutes.\n\nCarchon Les Ateliers` });
@@ -200,7 +204,7 @@ r.get('/espace/:t/f/:name', (req, res) => {
   const n = req.params.name;
   const ok = p && (q.get('SELECT id FROM photos WHERE project_id = ? AND file = ? AND shared_client = 1', p.id, n) || q.get('SELECT id FROM documents WHERE project_id = ? AND file = ? AND visible_client = 1', p.id, n));
   if (!ok || !fs.existsSync(filePath(n))) return res.status(404).send('Introuvable');
-  res.sendFile(filePath(n));
+  sendUpload(res, filePath(n));
 });
 for (const k of ['devis', 'cgv']) {
   r.get(`/espace/:t/${k}`, (req, res) => {

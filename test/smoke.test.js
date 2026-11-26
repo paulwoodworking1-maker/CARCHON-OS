@@ -101,3 +101,15 @@ test('assistant : chaque outil répond sur les données de démo', () => {
     JSON.stringify(out);
   }
 });
+
+test('les en-têtes de sécurité sont envoyés', async () => {
+  const res = await fetch(base + '/connexion');
+  assert.strictEqual(res.headers.get('x-content-type-options'), 'nosniff');
+  assert.match(res.headers.get('content-security-policy') || '', /script-src 'self'/);
+});
+
+test('une clé API fausse est refusée, puis bloquée après trop d’essais', async () => {
+  let last;
+  for (let i = 0; i < 9; i++) last = await fetch(base + '/api/v1/ofs', { headers: { authorization: 'Bearer faux' } });
+  assert.strictEqual(last.status, 429);
+});

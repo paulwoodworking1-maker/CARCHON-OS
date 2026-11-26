@@ -71,7 +71,7 @@ const pct = (x) => `${x > 0 ? '+' : x < 0 ? '−' : ''}${Math.abs(Math.round(x *
 function printPage(title, body, { ref = '', date = '' } = {}) {
   const c = require('./db').company();
   return page(title, h`<div class="doc">
-<div class="noprint doc-bar"><a href="javascript:history.back()" class="btn alt sm">‹ Retour</a><button type="button" class="btn sm" data-print>Imprimer / PDF</button></div>
+<div class="noprint doc-bar"><a href="/" data-back class="btn alt sm">‹ Retour</a><button type="button" class="btn sm" data-print>Imprimer / PDF</button></div>
 <header class="doc-head"><div><img src="/static/logo.png" alt="${c.name}" class="doc-logo"><div class="doc-co"><b>${c.name}</b>${c.address ? h`<br>${c.address}` : ''}${c.siret ? h`<br>SIRET ${c.siret}` : ''}<br>${[c.phone, c.email, c.site].filter(Boolean).join(' · ')}</div></div>
 <div class="doc-meta"><div class="doc-title">${title}</div>${ref ? h`<div>Réf. <b>${ref}</b></div>` : ''}<div>${date || ddmmyyyy(today())}</div></div></header>
 ${body}

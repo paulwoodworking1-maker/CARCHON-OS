@@ -24,6 +24,7 @@
       (navigator.clipboard ? navigator.clipboard.writeText(input.value) : Promise.resolve(document.execCommand('copy'))).then(function () { b.textContent = 'Copié ✓'; });
     }
     if (e.target.closest && e.target.closest('[data-print]')) window.print();
+    if (e.target.closest && e.target.closest('[data-back]') && history.length > 1) { e.preventDefault(); history.back(); }
   });
   // Un seul menu ouvert à la fois ; clic à l'extérieur = fermer.
   document.addEventListener('click', function (e) {

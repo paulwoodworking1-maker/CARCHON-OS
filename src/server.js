@@ -5,7 +5,7 @@ const express = require('express');
 const { q, setting, setSetting } = require('./db');
 const { sessionMiddleware, requirePatron, hash, verify, throttle, fail } = require('./auth');
 const { page, h, flashBox } = require('./html');
-const { filePath } = require('./uploads');
+const { filePath, sendUpload } = require('./uploads');
 
 const app = express();
 app.disable('x-powered-by');
@@ -16,6 +16,14 @@ app.use(sessionMiddleware);
 app.use((req, res, next) => {
   res.set('X-Frame-Options', 'SAMEORIGIN');
   res.set('Referrer-Policy', 'no-referrer');
+  res.set('X-Content-Type-Options', 'nosniff');
+  res.set('Permissions-Policy', 'camera=(self), microphone=(self), geolocation=()');
+  res.set('Content-Security-Policy', [
+    "default-src 'self'", "script-src 'self'", "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+    "font-src 'self' https://fonts.gstatic.com", "img-src 'self' data: blob:", "media-src 'self' blob:",
+    "connect-src 'self'", "object-src 'none'", "base-uri 'self'", "form-action 'self'", "frame-ancestors 'self'",
+  ].join('; '));
+  if (process.env.COOKIE_SECURE === '1') res.set('Strict-Transport-Security', 'max-age=31536000');
   next();
 });
 
@@ -144,7 +152,7 @@ app.get('/fichiers/:name', (req, res) => {
   if (req.session.role !== 'patron' && !req.session.atelier) return res.status(403).send('Accès refusé');
   const f = filePath(req.params.name);
   if (!fs.existsSync(f)) return res.status(404).send('Introuvable');
-  res.sendFile(f);
+  sendUpload(res, f);
 });
 
 // Après chaque modification faite dans le logiciel, le planning automatique se recalcule.
@@ -170,7 +178,9 @@ for (const m of ['patron', 'carnets', 'achats', 'planning', 'reglages', 'portail
 app.use((req, res) => res.status(404).send(page('Introuvable', h`<main class="login"><h1>Page introuvable</h1><p><a href="/">Revenir à l’accueil</a></p></main>`)));
 app.use((err, req, res, next) => {
   console.error(err);
-  res.status(500).send(page('Erreur', h`<main class="login"><h1>Un problème est survenu</h1><p class="mut">${err.message}</p><p><a href="javascript:history.back()">Revenir</a></p></main>`));
+  // Le détail technique n'est montré qu'au patron connecté ; le public voit un message neutre.
+  const detail = req.session?.role === 'patron' ? err.message : 'L’atelier a été prévenu. Réessayez dans un instant.';
+  res.status(500).send(page('Erreur', h`<main class="login"><h1>Un problème est survenu</h1><p class="mut">${detail}</p><p><a href="/" data-back>Revenir</a></p></main>`));
 });
 
 if (require.main === module) {
