@@ -285,11 +285,12 @@ ${draft?.pdf ? h`<p class="mut">PDF du devis déposé ✓ <a href="/portails/dev
 <p class="mut t12">Facultatif, mais conseillé : le client pourra ajuster chaque ligne (modifier, retirer, changer la quantité) au lieu d’écrire un long message.</p>
 <fieldset class="card warm m0"><legend class="b">Pour préparer la fabrication (facultatif)</legend>
 <p class="mut t13">À la signature, l’assistant lit le devis et ces fichiers, puis crée les pièces, le carnet de fabrication et la liste de matière à commander. Le planning démarre quand toute la matière est livrée.</p>
-<label>Vues 3D et plans : exports PDF ou images (Rhino, TopSolid…) <input type="file" name="plan3d" multiple accept=".pdf,.png,.jpg,.jpeg,.webp,.3dm,.step,.stp,.dxf"></label>
+<label>Modèle 3D : STEP (TopSolid, Rhino…) ou Rhino .3dm <input type="file" name="modele3d" multiple accept=".step,.stp,.3dm,.igs,.iges"></label>
+<label>Vues et plans : PDF ou images <input type="file" name="plan3d" multiple accept=".pdf,.png,.jpg,.jpeg,.webp"></label>
 <label>Nomenclature, liste de débit ou chiffrage : CSV, Excel ou PDF <input type="file" name="chiffrage" multiple accept=".csv,.xlsx,.txt,.pdf"></label>
 ${draft?.extra?.length ? h`<p class="mut t12">Déjà joints : ${draft.extra.map((f) => f.name).join(', ')}</p>` : ''}
 ${from ? (() => { const prevFiles = q.all('SELECT name FROM quote_files WHERE number = ?', from.number); return prevFiles.length ? h`<p class="mut t12">Fichiers de la version précédente repris : ${prevFiles.map((f) => f.name).join(', ')}</p>` : ''; })() : ''}
-<p class="mut t12">Les fichiers 3D natifs (.3dm, .step…) sont gardés mais l’assistant ne les lit pas : exporte aussi les vues en PDF et la nomenclature en CSV ou Excel.</p></fieldset>
+<p class="mut t12">Le modèle 3D est mesuré pièce par pièce (longueur × largeur × épaisseur) et affiché dans l’OF. Garde un nom par pièce et un calque (ou sous-ensemble) par ensemble : la nomenclature en sera plus juste.</p></fieldset>
 <label>Rattacher à un projet existant (nouvelle version) <select name="project_id"><option value="">Non : l’acceptation crée la commande</option>${options(q.all("SELECT id, name FROM projects WHERE status = 'en_cours' ORDER BY name").map((p) => [p.id, p.name]), draft?.project_id)}</select></label>
 <fieldset class="chips m0"><legend>Valable</legend>${['15', '30'].map((d) => h`<label class="chip"><input type="radio" name="days" value="${d}" ${d === '30' ? 'checked' : ''}>${d} jours</label>`)}</fieldset>
 <ul class="mut checklist"><li>PDF du devis repris tel quel, empreinte calculée</li><li>CGV jointes ${setting('cgv_file') ? '' : '(aucune CGV déposée : à ajouter dans Réglages)'}</li><li>Le client accepte exactement ce document</li><li>Même numéro qu’un devis déjà envoyé : l’ancien lien se ferme tout seul</li></ul>
@@ -328,9 +329,9 @@ r.get('/portails/devis/annuler', (req, res) => {
   res.redirect('/portails/envoyer');
 });
 
-r.post('/portails/devis', uploadDocs.fields([{ name: 'pdf', maxCount: 1 }, { name: 'plan3d', maxCount: 10 }, { name: 'chiffrage', maxCount: 6 }]), (req, res) => {
+r.post('/portails/devis', uploadDocs.fields([{ name: 'pdf', maxCount: 1 }, { name: 'modele3d', maxCount: 4 }, { name: 'plan3d', maxCount: 10 }, { name: 'chiffrage', maxCount: 6 }]), (req, res) => {
   const b = req.body;
-  const extra = [...(req.files?.plan3d || []).map((f) => ({ kind: 'plan3d', file: f.filename, name: f.originalname })), ...(req.files?.chiffrage || []).map((f) => ({ kind: 'chiffrage', file: f.filename, name: f.originalname }))];
+  const extra = [...(req.files?.modele3d || []).map((f) => ({ kind: 'modele3d', file: f.filename, name: f.originalname })), ...(req.files?.plan3d || []).map((f) => ({ kind: 'plan3d', file: f.filename, name: f.originalname })), ...(req.files?.chiffrage || []).map((f) => ({ kind: 'chiffrage', file: f.filename, name: f.originalname }))];
   req.file = req.files?.pdf?.[0];
   if (req.file && !/\.pdf$/i.test(req.file.originalname)) req.file = null;
   const draft = req.session.draftQuote;

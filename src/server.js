@@ -12,6 +12,7 @@ app.disable('x-powered-by');
 app.set('trust proxy', 1);
 app.use(express.urlencoded({ extended: false, limit: '5mb' }));
 app.use('/static', express.static(path.join(__dirname, '..', 'public'), { maxAge: '1h' }));
+app.use('/static/vendor/three', express.static(path.join(__dirname, '..', 'node_modules', 'three'), { maxAge: '7d' })); // visionneuse 3D
 app.use(sessionMiddleware);
 app.use((req, res, next) => {
   res.set('X-Frame-Options', 'SAMEORIGIN');

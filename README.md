@@ -70,7 +70,7 @@ Pour que les clients reçoivent leur code par e-mail, renseigner `SMTP_*` (l'adr
 ## Après la signature d'un devis
 
 1. **Cockpit est prévenu** (Réglages › Entreprise › adresse de Cockpit) : évènement `devis.accepte`, signé HMAC. Cockpit édite la facture d'acompte et la renvoie sur `POST /api/v1/affaires/{réf}/factures` ; elle est publiée sur le portail et le client reçoit un SMS. En secours, la facture se dépose à la main sur l'OF.
-2. **Chaîne de production** : l'assistant (API Claude) lit le devis, les vues 3D exportées (PDF, images) et la nomenclature ou le chiffrage (CSV, Excel, PDF) joints à l'envoi du devis. Il crée les pièces, les fiches du carnet (en brouillon, à vérifier puis envoyer) et la matière à commander ; un lot de bois libre qui suffit est réservé.
+2. **Chaîne de production** (Opus 5.5, réflexion maximale) : le modèle 3D (STEP ou Rhino .3dm) est mesuré pièce par pièce sur le serveur et affiché dans l'OF (visionneuse 3D). Au clic « Générer la production », quatre vues du modèle, la nomenclature mesurée, le devis, les plans et le chiffrage partent à l'assistant, qui rend l'analyse technique, la fiche de débit (cotes finies et brutes), la matière à commander et la gamme de fabrication (sans conception : elle est faite avant le chiffrage). Les fiches arrivent en brouillon.
 3. **Planning** : les fiches de fabrication ne sont pas placées avant la date où toute la matière est là (date de livraison des commandes, sinon délai habituel du fournisseur, plus un jour de réception).
 
 ## Sauvegardes

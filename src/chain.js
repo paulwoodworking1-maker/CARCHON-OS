@@ -9,14 +9,14 @@ const { today, addDays, parseDate, ddmm } = require('./html');
 const { filePath } = require('./uploads');
 
 const LEAD_DEFAULT = () => Number(setting('lead_days_default', '10')) || 10;
-const KINDS = { plan3d: 'Vues 3D et plans', chiffrage: 'Nomenclature et chiffrage' };
+const KINDS = { modele3d: 'Modèle 3D (STEP, Rhino)', plan3d: 'Vues et plans (PDF, images)', chiffrage: 'Nomenclature et chiffrage' };
 
 // Fichiers du projet : devis accepté + fichiers joints au devis ou déposés sur l'OF.
 function filesFor(projectId) {
   const numbers = q.all('SELECT DISTINCT number FROM quotes WHERE project_id = ?', projectId).map((x) => x.number);
   const quote = q.get("SELECT * FROM quotes WHERE project_id = ? ORDER BY status = 'accepted' DESC, version DESC LIMIT 1", projectId);
   const qf = numbers.length ? q.all(`SELECT * FROM quote_files WHERE number IN (${numbers.map(() => '?').join(',')}) ORDER BY id`, ...numbers) : [];
-  const docs = q.all("SELECT * FROM documents WHERE project_id = ? AND kind IN ('plan3d', 'chiffrage') ORDER BY id", projectId);
+  const docs = q.all("SELECT * FROM documents WHERE project_id = ? AND kind IN ('modele3d', 'plan3d', 'chiffrage', 'vue_auto') ORDER BY id", projectId);
   return { quote, files: [...qf.map((f) => ({ kind: f.kind, file: f.file, name: f.name })), ...docs.map((d) => ({ kind: d.kind, file: d.file, name: d.title }))] };
 }
 
@@ -48,9 +48,12 @@ async function toBlocks(list) {
     if (!fs.existsSync(p)) { skipped.push(`${f.name} (introuvable)`); continue; }
     const ext = path.extname(f.file).toLowerCase();
     const size = fs.statSync(p).size;
-    const label = `${KINDS[f.kind] || 'Devis'} : ${f.name || path.basename(f.file)}`;
+    const label = f.kind === 'vue_auto' ? `Vue du modèle 3D : ${f.name}` : `${KINDS[f.kind] || 'Devis'} : ${f.name || path.basename(f.file)}`;
     try {
-      if (ext === '.pdf') {
+      if (require('./model3d').is3D(f.file)) {
+        const M = require('./model3d');
+        blocks.push({ type: 'text', text: M.asText(f.name || path.basename(f.file), await M.analyze(p)) });
+      } else if (ext === '.pdf') {
         if (size > 30 * 1024 * 1024) { skipped.push(`${f.name} (PDF trop lourd)`); continue; }
         blocks.push({ type: 'text', text: label }, { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: fs.readFileSync(p).toString('base64') } });
       } else if (/\.(png|jpe?g|webp|gif)$/.test(ext)) {
@@ -62,7 +65,7 @@ async function toBlocks(list) {
       } else if (ext === '.xlsx') {
         blocks.push({ type: 'text', text: `${label}\n${await xlsxToText(p)}` });
       } else {
-        skipped.push(`${f.name || f.file} (format 3D natif : exporte les vues en PDF et la nomenclature en CSV ou Excel)`);
+        skipped.push(`${f.name || f.file} (format non lu : exporte la 3D en STEP ou .3dm, les vues en PDF, la nomenclature en CSV ou Excel)`);
       }
     } catch (e) { skipped.push(`${f.name} (illisible : ${e.message})`); }
   }
@@ -102,6 +105,7 @@ async function run(projectId, { ai = require('./ai') } = {}) {
     out = await ai.productionChain({
       project, files: blocks, people, phases: PHASES, gestes: GESTES, averages: auto.averages(),
       suppliers: q.all('SELECT name FROM suppliers ORDER BY name').map((s) => s.name),
+      machines: q.all("SELECT name FROM machines ORDER BY name").map((m) => m.name),
       stock: [...q.all("SELECT name FROM stock_items WHERE state = 0 ORDER BY name LIMIT 150").map((s) => s.name),
         ...q.all('SELECT essence, thickness, volume FROM wood_lots WHERE project_id IS NULL AND volume > 0').map((w) => `${w.essence} ${w.thickness} ${w.volume} m³ (lot libre)`)],
     });
@@ -112,20 +116,29 @@ async function run(projectId, { ai = require('./ai') } = {}) {
 // Écrit le résultat dans l'OF (aussi utilisé par les tests).
 function apply(project, out, people, skipped = []) {
   const byName = Object.fromEntries(people.map((p) => [p.name.toLowerCase(), p.id]));
-  const counts = { pieces: 0, fiches: 0, matiere: 0, reserve: 0 };
+  const counts = { pieces: 0, fiches: 0, matiere: 0, reserve: 0, debit: 0 };
   tx(() => {
     const knownPieces = new Set(q.all('SELECT lower(name) n FROM pieces WHERE project_id = ?', project.id).map((x) => x.n));
     for (const pc of out.pieces || []) {
       if (!pc.nom || knownPieces.has(pc.nom.toLowerCase())) continue;
       q.run('INSERT INTO pieces (project_id, name, descr) VALUES (?, ?, ?)', project.id, pc.nom, pc.description || ''); counts.pieces++;
     }
+    // Fiche de débit : remplacée à chaque génération.
+    if ((out.debit || []).length) {
+      q.run('DELETE FROM cut_list WHERE project_id = ?', project.id);
+      (out.debit || []).forEach((d, i) => q.run('INSERT INTO cut_list (project_id, ord, ensemble, piece, qty, material, l, w, t, bl, bw, bt, grain, note) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        project.id, i + 1, d.ensemble || '', d.piece || '?', Number(d.quantite) || 1, d.materiau || '', d.longueur_mm || null, d.largeur_mm || null, d.epaisseur_mm || null,
+        d.brut_longueur_mm || null, d.brut_largeur_mm || null, d.brut_epaisseur_mm || null, d.sens_du_fil || '', d.note || ''));
+      counts.debit = out.debit.length;
+    }
     let ord = q.get('SELECT COALESCE(MAX(ord), 0) m FROM steps WHERE project_id = ?', project.id).m;
     for (const f of out.fiches || []) {
+      if (['Conception', 'Accord'].includes(f.etape_frise)) continue; // la conception est faite avant le chiffrage
       const phase = PHASES.includes(f.etape_frise) ? f.etape_frise : 'Assemblage';
       const geste = GESTES.includes(f.geste) ? f.geste : 'Autre';
       const who = byName[String(f.qui || '').toLowerCase()] || whoFor(geste, people);
       q.run(`INSERT INTO steps (project_id, ord, title, piece, who_id, phase, geste, est_hours, note, checks, ai_generated) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
-        project.id, ++ord, f.titre, f.pieces || '', who, phase, geste, Math.max(0.5, Math.round((Number(f.heures) || 4) * 2) / 2), f.mot_du_patron || '',
+        project.id, ++ord, f.titre, f.pieces || '', who, phase, geste, Math.max(0.5, Math.round((Number(f.heures) || 4) * 2) / 2), [f.machine ? `Machine : ${f.machine}.` : '', f.mot_du_patron || '', phase === 'Débit' && counts.debit ? 'Cotes : voir la fiche de débit.' : ''].filter(Boolean).join(' '),
         JSON.stringify((f.reperes || []).slice(0, 6).map((t) => ({ t, done: false }))));
       counts.fiches++;
     }
@@ -145,8 +158,8 @@ function apply(project, out, people, skipped = []) {
       counts.matiere++;
     }
     const note = [out.remarques, skipped.length ? `Non lus : ${skipped.join(' ; ')}.` : ''].filter(Boolean).join(' ');
-    q.run("UPDATE projects SET prod_status = 'pret', prod_error = NULL, prod_note = ?, prod_at = datetime('now') WHERE id = ?", note, project.id);
-    logActivity(project.id, null, `Chaîne de production générée : ${counts.fiches} fiches, ${counts.pieces} pièces, ${counts.matiere} achats${counts.reserve ? `, ${counts.reserve} lot(s) de bois réservé(s)` : ''}`, 'Assistant');
+    q.run("UPDATE projects SET prod_status = 'pret', prod_error = NULL, prod_note = ?, prod_analysis = ?, prod_at = datetime('now') WHERE id = ?", note, out.analyse || '', project.id);
+    logActivity(project.id, null, `Chaîne de production générée : ${counts.fiches} fiches, ${counts.debit} lignes de débit, ${counts.pieces} pièces, ${counts.matiere} achats${counts.reserve ? `, ${counts.reserve} lot(s) de bois réservé(s)` : ''}`, 'Assistant');
   });
   require('./automations').changed();
   return counts;

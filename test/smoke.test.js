@@ -207,12 +207,15 @@ test('chaîne de production : l’assistant (simulé) crée pièces, fiches et m
     fiches: [{ titre: 'Plans de détail', pieces: 'Tout', qui: 'Lucas', etape_frise: 'Conception', geste: 'Autre', heures: 3, mot_du_patron: '', reperes: [] },
       { titre: 'Débit du chêne', pieces: 'Caisson', qui: 'Lucas', etape_frise: 'Débit', geste: 'Débit, corroyage', heures: 6, mot_du_patron: 'Garder les beaux fils', reperes: ['Débit à +5 mm'] },
       { titre: 'Assemblage', pieces: 'Caisson', qui: 'Inconnu', etape_frise: 'Assemblage', geste: 'Assemblage', heures: 8, mot_du_patron: '', reperes: [] }],
+    analyse: 'Caisson assemblé en queues d’aronde.', debit: [{ ensemble: 'Caisson', piece: 'Montant', quantite: 2, materiau: 'Chêne', longueur_mm: 2400, largeur_mm: 300, epaisseur_mm: 22, brut_longueur_mm: 2450, brut_largeur_mm: 315, brut_epaisseur_mm: 27, sens_du_fil: 'en long', note: '' }],
     remarques: 'Vérifier la hauteur sous plafond.' }; } };
   await C.run(pid, { ai: fakeAI });
   assert.ok(seen.files.some((b) => b.type === 'text' && /Montant;2400/.test(b.text)), 'la nomenclature CSV est transmise');
   const p = q.get('SELECT * FROM projects WHERE id = ?', pid);
   assert.strictEqual(p.prod_status, 'pret');
-  assert.strictEqual(q.get('SELECT COUNT(*) n FROM steps WHERE project_id = ? AND ai_generated = 1 AND sent = 0', pid).n, 3);
+  assert.strictEqual(q.get('SELECT COUNT(*) n FROM steps WHERE project_id = ? AND ai_generated = 1 AND sent = 0', pid).n, 2, 'pas de fiche de conception : elle est faite avant le chiffrage');
+  assert.strictEqual(q.get('SELECT COUNT(*) n FROM cut_list WHERE project_id = ?', pid).n, 1);
+  assert.match(q.get("SELECT note FROM steps WHERE project_id = ? AND title = 'Débit du chêne'", pid).note, /fiche de débit/);
   assert.ok(q.get("SELECT who_id FROM steps WHERE project_id = ? AND title = 'Assemblage'", pid).who_id, 'quelqu’un est désigné même si le prénom est inconnu');
   assert.strictEqual(q.get('SELECT COUNT(*) n FROM pieces WHERE project_id = ?', pid).n, 2);
   const needs = q.all('SELECT * FROM needs WHERE project_id = ?', pid);
@@ -269,4 +272,24 @@ test('Cockpit est prévenu (signé) quand un devis est accepté', async () => {
   assert.strictEqual(got.ev, 'devis.accepte');
   assert.strictEqual(got.sig, 'sha256=' + crypto.createHmac('sha256', setting('api_token')).update(got.body).digest('hex'));
   setSetting('cockpit_webhook_url', '');
+});
+
+test('modèle 3D STEP : pièces mesurées, regroupées et prêtes pour la visionneuse', async () => {
+  const fs = require('node:fs');
+  const { filePath } = require('../src/uploads');
+  const M = require('../src/model3d');
+  const src = require.resolve('occt-import-js/package.json').replace('package.json', 'test/testfiles/cax-if/as1-tu-203.stp');
+  if (!fs.existsSync(src)) return;
+  fs.copyFileSync(src, filePath('assemblage-test.stp'));
+  const a = await M.analyze(filePath('assemblage-test.stp'));
+  assert.strictEqual(a.parts, 18);
+  const plate = a.list.find((g) => g.name === 'plate');
+  assert.deepStrictEqual(plate.dims.map(Math.round), [180, 150, 20]);
+  assert.ok(a.list.find((g) => g.name === 'bolt').qty >= 2, 'pièces identiques regroupées');
+  assert.ok(fs.existsSync(filePath('assemblage-test.stp') + '.view.json'));
+  assert.match(M.asText('assemblage.stp', a), /plate · qté 1 · 180 × 150 × 20 mm/);
+  // Pièce tournée : la boîte orientée retrouve les vraies cotes.
+  const c = Math.cos(0.5), s = Math.sin(0.5), pts = [];
+  for (const x of [0, 2400]) for (const y of [0, 300]) for (const z of [0, 27]) pts.push(x * c - y * s, x * s + y * c, z);
+  assert.deepStrictEqual(M.obb(pts).size.map(Math.round).sort((x, y) => y - x), [2400, 300, 27]);
 });
