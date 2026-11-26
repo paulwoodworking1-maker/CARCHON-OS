@@ -7,6 +7,7 @@ const L = require('../logic');
 const { upload, fileUrl, isImage } = require('../uploads');
 const decideRow = (...a) => require('./decider').row(...a);
 const SMS = require('../sms');
+const Q = require('../qonto');
 
 const r = express.Router();
 const int = (v) => (v === undefined || v === '' || v === null ? null : Number(v));
@@ -374,6 +375,10 @@ ${p.client_id ? h`<section class="card"><div class="line"><h2>Portail client</h2
 <p class="mut">Ce que ${p.client.name} voit dans son espace. Tout part tout seul, sauf la date de pose.</p>
 <div class="who f"><span class="grow">Devis</span><b>${quote ? `Accepté le ${ddmm(quote.accepted_at)}` : '—'}</b></div>
 <div class="who"><span class="grow">Acompte</span><b>${p.deposit_at ? `Reçu le ${ddmm(p.deposit_at)}` : 'Attendu'}</b></div>
+<div class="who" id="facture"><span class="grow">Facture d’acompte${p.deposit_invoice_number ? h` <span class="mut">${p.deposit_invoice_number}</span>` : ''}${p.deposit_invoice_error ? h`<span class="mut t12 red">${p.deposit_invoice_error}</span>` : ''}</span>
+<b>${p.deposit_invoice_status === 'paid' || (p.deposit_invoice_id && p.deposit_at) ? 'Payée' : p.deposit_invoice_status === 'sent' ? `Envoyée le ${ddmm(p.deposit_invoice_sent_at)}` : p.deposit_invoice_status === 'created' ? 'Créée, pas envoyée' : p.deposit_invoice_status === 'creating' ? 'En cours…' : p.deposit_invoice_status === 'error' ? 'Échec' : '—'}</b></div>
+${p.deposit_invoice_url ? h`<a class="btn alt sm mt8" href="${p.deposit_invoice_url}" target="_blank" rel="noopener">Voir la facture</a>` : ''}
+${quote && !p.deposit_at && Q.configured() && p.deposit_invoice_status !== 'sent' && p.deposit_invoice_status !== 'creating' ? postBtn(`/projets/${p.id}/facture-acompte`, p.deposit_invoice_id ? 'Renvoyer la facture' : 'Créer et envoyer la facture d’acompte', 'btn alt sm mt8', {}, p.deposit_invoice_id ? '' : 'Créer la facture d’acompte dans Qonto et l’envoyer au client ?') : ''}
 <form method="post" action="/projets/${p.id}/infos" class="who"><label class="grow" for="rd">Prête à poser vers le</label><input id="rd" type="date" name="ready_date" value="${p.ready_date || ''}" data-auto><input type="hidden" name="only" value="ready_date"></form>
 <div class="who"><span class="grow">Photos partagées</span><b>${shared} sur ${photos.length}</b></div>
 <div class="line mt12"><a class="btn alt sm" href="/portails#p${p.id}">Gérer le portail</a><a class="btn alt sm" href="/projets/${p.id}/nouvelles">Donner des nouvelles</a></div>
@@ -428,6 +433,16 @@ r.post('/projets/:id/infos', loadProject, (req, res) => {
     if (str(b.due_date) && str(b.due_date) !== (p.due_date || '')) logActivity(p.id, null, `Date de livraison : ${ddmm(str(b.due_date))}${p.due_date ? ` (au lieu du ${ddmm(p.due_date)})` : ''}`, 'Patron');
   });
   res.flashTo(`/projets/${p.id}`, depositAt && !p.deposit_at ? 'Acompte noté. Les achats bloqués sont débloqués.' : 'Enregistré.');
+});
+
+// Facture d'acompte Qonto : créer, ou renvoyer si elle existe déjà.
+r.post('/projets/:id/facture-acompte', loadProject, async (req, res) => {
+  const p = req.project;
+  const back = String(req.body.back || '').startsWith('/') ? String(req.body.back) : `/projets/${p.id}#facture`;
+  try {
+    const out = p.deposit_invoice_id ? await Q.resend(p.id) : await Q.createDeposit(p.id);
+    res.flashTo(back, out.busy ? 'La facture est déjà en cours de création.' : p.deposit_invoice_id ? 'Facture d’acompte renvoyée au client par Qonto.' : `Facture d’acompte ${out.number || ''} créée et envoyée au client par Qonto.`);
+  } catch (e) { res.flashTo(back, e.message, 'ko'); }
 });
 
 // Acompte reçu en un clic (depuis À décider).

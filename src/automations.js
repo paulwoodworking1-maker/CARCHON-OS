@@ -123,6 +123,14 @@ function alerts() {
       FROM models WHERE active = 1 AND threshold > 0`)) {
     if (m.free + m.coming < m.threshold) out.push({ kind: 'wa', tag: 'Stock fini', title: `${m.name} : ${m.free} libre(s), seuil ${m.threshold}`, text: `${m.coming} en fabrication`, href: `/catalogue?m=${m.id}&qty=${Math.max(1, m.threshold * 2 - m.free - m.coming)}#lancer`, cta: 'Lancer un lot' });
   }
+  // Facture d'acompte Qonto : échec ou pas encore envoyée.
+  for (const p of q.all("SELECT * FROM projects WHERE status = 'en_cours' AND deposit_at IS NULL AND deposit_invoice_status IN ('error', 'created') AND COALESCE(deposit_invoice_error, '') != ''")) {
+    out.push({ kind: 'ko', tag: 'Facture d’acompte', title: `${p.name} · facture d’acompte ${p.deposit_invoice_id ? 'créée mais pas envoyée' : 'pas émise'}`, text: p.deposit_invoice_error, href: `/projets/${p.id}#facture`, cta: 'Ouvrir', act: `/projets/${p.id}/facture-acompte`, actLabel: 'Réessayer' });
+  }
+  if (require('./qonto').on()) for (const p of q.all(`SELECT p.* FROM projects p JOIN quotes x ON x.project_id = p.id AND x.status = 'accepted' AND x.test = 0
+      WHERE p.status = 'en_cours' AND p.deposit_at IS NULL AND p.deposit_invoice_id IS NULL AND COALESCE(p.deposit_invoice_status, '') = '' AND p.deposit_needed = 1 AND x.accepted_at <= datetime('now', '-10 minutes') GROUP BY p.id`)) {
+    out.push({ kind: 'wa', tag: 'Facture d’acompte', title: `${p.name} · facture d’acompte pas encore émise`, text: 'Devis accepté sans montant HT ou sans adresse de facturation.', href: `/projets/${p.id}#facture`, cta: 'Compléter' });
+  }
   out.push(...require('./machines').alerts());
   return out;
 }
@@ -173,6 +181,7 @@ async function tick() {
       await sendDigest(); setSetting('last_digest', t);
     }
     await poseReminders();
+    try { await require('./qonto').syncPaid(); } catch (e) { console.error('[qonto]', e.message); }
   } catch (e) { console.error('[automatisations]', e); }
 }
 let timer = null;

@@ -725,3 +725,57 @@ h2{margin-bottom:14px}
 .an-tbl{min-width:0}
 @media (max-width:640px){#objectifs .tbl td,#objectifs .tbl th{padding:10px 4px;font-size:13px}#objectifs .tbl .pill{white-space:normal}}
 .kpi-h{flex-wrap:wrap;row-gap:6px}
+
+/* Portail client · version allégée : texte plus petit, blocs nets, une action principale par écran. */
+body.client{font-size:14px;line-height:1.5}
+body.client .phone{max-width:520px}
+body.client .cl{padding:18px 20px 8px}
+body.client .cl-head{padding:12px 20px}body.client .cl-head img{height:30px}
+body.client .cl h1{font-size:21px;line-height:1.25;margin-top:6px}
+body.client .cl-meta{margin:4px 0 0;font-size:12.5px;color:var(--mut)}
+body.client .mut{font-size:13px}
+body.client .cl-eyebrow{font-size:11px;letter-spacing:.12em}
+body.client .cl-tabs{margin-top:14px}
+body.client .cl-tabs a{font-size:13px;padding:10px 0}
+body.client .cl-step{padding:16px 0 14px}
+body.client .cl-step h2{display:flex;align-items:center;gap:10px;font-size:12px;line-height:16px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;margin:0 0 10px}
+body.client .cl-step h2 .n{flex:none;width:22px;height:22px;border-radius:50%;background:var(--ink);color:#fff;display:inline-flex;align-items:center;justify-content:center;font-size:11px;letter-spacing:0}
+body.client .cl-step.ok h2 .n{background:var(--mut)}
+body.client .cl-step.dim{opacity:.5}
+body.client .cl-step p{margin:0 0 10px}
+body.client .btn{min-height:44px;font-size:14px;padding:10px 16px}
+body.client label{font-size:13px}
+body.client input:not([type=checkbox]):not([type=radio]),body.client select,body.client textarea{min-height:42px;font-size:15px}
+body.client .form{gap:10px}
+body.client .ck.top span{font-size:12.5px;line-height:1.5;color:var(--mut)}
+body.client .cl-btns{display:grid;gap:8px}
+body.client .cl-ok{font-weight:600}
+body.client .code-in{font-size:22px;letter-spacing:10px}
+.cl-sum{display:grid;grid-template-columns:repeat(auto-fit,minmax(0,1fr));grid-auto-flow:column;gap:0;margin:16px 0 0;border-top:1px solid var(--ink);border-bottom:1px solid var(--filet)}
+.cl-sum>div{padding:12px 12px 12px 0;min-width:0}.cl-sum>div+div{border-left:1px solid var(--filet);padding-left:12px}
+.cl-sum dt{font-size:10px;line-height:13px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--mut)}
+.cl-sum dd{margin:4px 0 0;font-size:15px;white-space:nowrap;font-weight:700;font-variant-numeric:tabular-nums}
+.cl-sum dd small{white-space:normal;display:block;font-size:12px;font-weight:400;color:var(--mut)}
+.cl-prog{list-style:none;display:flex;gap:0;margin:16px 0 0;padding:0;counter-reset:s}
+.cl-prog li{flex:1;display:flex;align-items:center;gap:8px;font-size:12px;font-weight:600;color:var(--mut);position:relative}
+.cl-prog li+li::before{content:"";position:absolute;left:-14%;width:12%;top:50%;height:1px;background:var(--filet)}
+.cl-prog span{flex:none;width:24px;height:24px;border-radius:50%;border:1px solid var(--filet);display:inline-flex;align-items:center;justify-content:center;font-size:11px}
+.cl-prog li.c{color:var(--ink)}.cl-prog li.c span{border-color:var(--ink);color:var(--ink)}
+.cl-prog li.d{color:var(--ink)}.cl-prog li.d span{background:var(--ink);border-color:var(--ink);color:#fff}
+body.client .howto{border:0;border-radius:0;background:var(--gris);padding:10px 14px;margin-top:14px;font-size:13px}
+body.client .howto summary{font-weight:600}body.client .howto p{margin:8px 0 2px}
+.cl-bill{border:0;padding:0;margin:4px 0 0;display:grid;gap:10px}
+.cl-bill legend{font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;padding:0;margin-bottom:6px}
+.cl-bill .grid2.cp{grid-template-columns:120px 1fr}
+body.client .next-box{border-radius:0;padding:16px 18px;margin-top:16px}
+body.client .next-box h2{font-size:17px;line-height:1.3;margin:6px 0 4px}
+body.client .next-box p{font-size:13.5px;margin:0 0 12px}
+body.client .next-box.you{background:var(--gris);border-left:3px solid var(--red)}
+body.client .next-box.you .cl-eyebrow{color:var(--ink)}
+body.client .vsteps li{padding:6px 0;grid-template-columns:26px 1fr auto;font-size:13px}
+body.client .vsteps li b{font-size:14px}
+body.client .vsteps .mk{width:20px;height:20px;font-size:10px}
+body.client .hrow{padding:9px 0;font-size:13.5px}body.client .hrow p{font-size:13px}
+body.client .docrow{padding:12px 0;font-size:14px}
+body.client .cl-foot{padding:16px 20px}
+@media (max-width:380px){.cl-prog li{font-size:11px;gap:5px}.cl-bill .grid2,.cl-bill .grid2.cp{grid-template-columns:1fr}}

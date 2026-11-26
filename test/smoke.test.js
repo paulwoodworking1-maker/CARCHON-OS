@@ -214,3 +214,92 @@ test('fiche projet : montant, matière, famille et origine enregistrés', async 
   const p = require('../src/db').q.get('SELECT amount_ht, material_ht, family, source FROM projects WHERE id = 1');
   assert.deepStrictEqual({ ...p }, { amount_ht: 7200.5, material_ht: 1500, family: 'Pièce signature', source: 'Site web' });
 });
+
+test('Qonto : à l’acceptation du devis, facture d’acompte créée, envoyée, puis acompte reçu quand elle est payée', async () => {
+  const http = require('node:http');
+  const { q, setSetting } = require('../src/db');
+  const { sha256 } = require('../src/auth');
+  const calls = [];
+  let status = 'unpaid';
+  const fake = http.createServer((req, res) => {
+    let b = ''; req.on('data', (c) => { b += c; }); req.on('end', () => {
+      calls.push({ m: req.method, u: req.url, auth: req.headers.authorization, body: b ? JSON.parse(b) : null });
+      const send = (code, o) => { res.writeHead(code, { 'content-type': 'application/json' }); res.end(o ? JSON.stringify(o) : ''); };
+      if (req.url === '/v2/organization') return send(200, { organization: { legal_name: 'Carchon', bank_accounts: [{ iban: 'FR7616958000010000000000001', main: true }] } });
+      if (req.url.startsWith('/v2/clients?')) return send(200, { clients: [] });
+      if (req.url === '/v2/clients') return send(200, { client: { id: 'c-1' } });
+      if (req.url.startsWith('/v2/quotes')) return send(200, { quotes: [{ id: 'q-1', number: 'D-QONTO-1' }], meta: { next_page: null } });
+      if (req.url === '/v2/client_invoices') return send(201, { client_invoice: { id: 'inv-1', number: 'F-2026-001', invoice_url: 'https://pay.example/inv-1', status: 'unpaid' } });
+      if (req.url === '/v2/client_invoices/inv-1/send') return send(204);
+      if (req.url === '/v2/client_invoices/inv-1') return send(200, { client_invoice: { id: 'inv-1', number: 'F-2026-001', status, invoice_url: 'https://pay.example/inv-1' } });
+      send(404, { errors: [{ code: 'not_found' }] });
+    });
+  });
+  await new Promise((r) => fake.listen(0, r));
+  Object.assign(process.env, { QONTO_BASE_URL: `http://127.0.0.1:${fake.address().port}`, QONTO_LOGIN: 'carchon-1', QONTO_SECRET_KEY: 'secret' });
+  try {
+    setSetting('portal_test_mode', '0');
+    // Un devis réel, adresse vérifiée, montant 10 000 € HT.
+    const t = 'jeton-qonto-test';
+    const id = Number(q.run(`INSERT INTO quotes (number, version, pdf, pdf_sha256, signer_name, signer_email, project_name, valid_until, token_hash, status, test, amount_ht, email_verified_at)
+      VALUES ('D-QONTO-1', 1, 'x.pdf', ?, 'Jeanne Martin', 'jeanne@example.com', 'Bibliothèque chêne', '2099-01-01', ?, 'sent', 0, 10000, datetime('now'))`, '', sha256(t)).lastInsertRowid);
+    const fs = require('node:fs'); const { filePath } = require('../src/uploads');
+    fs.writeFileSync(filePath('qonto-test.pdf'), 'pdf'); q.run('UPDATE quotes SET pdf = ?, pdf_sha256 = ? WHERE id = ?', 'qonto-test.pdf', sha256(Buffer.from('pdf')), id);
+    // La page du devis montre le montant et l'acompte.
+    const page = await (await fetch(`${base}/p/devis/${t}`)).text();
+    assert.match(page, /Acompte 40/); assert.match(page, /TTC à la commande/);
+    // Session client vérifiée : on passe par le code.
+    const cRes = await fetch(`${base}/p/devis/${t}`); const ck = cRes.headers.getSetCookie().map((c) => c.split(';')[0]).join('; ');
+    q.run("UPDATE quotes SET otp_hash = ?, otp_expires = datetime('now', '+10 minutes'), code_sent_at = datetime('now', '-5 minutes') WHERE id = ?", require('../src/auth').hash('123456'), id);
+    const v = await fetch(`${base}/p/devis/${t}/verifier`, { method: 'POST', redirect: 'manual', headers: { cookie: ck, 'content-type': 'application/x-www-form-urlencoded' }, body: 'code=123456' });
+    const ck2 = [ck, ...v.headers.getSetCookie().map((c) => c.split(';')[0])].join('; ');
+    // Sans adresse : refusé.
+    const noAddr = await fetch(`${base}/p/devis/${t}/accepter`, { method: 'POST', redirect: 'manual', headers: { cookie: ck2, 'content-type': 'application/x-www-form-urlencoded' }, body: 'name=Jeanne+Martin&consent=1' });
+    assert.strictEqual(noAddr.status, 302);
+    assert.strictEqual(q.get('SELECT status FROM quotes WHERE id = ?', id).status, 'sent');
+    const ok = await fetch(`${base}/p/devis/${t}/accepter`, { method: 'POST', redirect: 'manual', headers: { cookie: ck2, 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ name: 'Jeanne Martin', consent: '1', b_street: '3 rue des Forges', b_zip: '21160', b_city: 'Couternon' }).toString() });
+    assert.strictEqual(ok.status, 302);
+    const pid = q.get('SELECT project_id FROM quotes WHERE id = ?', id).project_id;
+    for (let i = 0; i < 50 && q.get('SELECT deposit_invoice_status s FROM projects WHERE id = ?', pid).s !== 'sent'; i++) await new Promise((r) => setTimeout(r, 20));
+    const p = q.get('SELECT * FROM projects WHERE id = ?', pid);
+    assert.strictEqual(p.deposit_invoice_status, 'sent');
+    assert.strictEqual(p.deposit_invoice_number, 'F-2026-001');
+    assert.strictEqual(p.deposit_invoice_ttc, 4800);
+    const inv = calls.find((c) => c.m === 'POST' && c.u === '/v2/client_invoices');
+    assert.strictEqual(inv.auth, 'carchon-1:secret');
+    assert.strictEqual(inv.body.client_id, 'c-1');
+    assert.strictEqual(inv.body.quote_id, 'q-1');
+    assert.strictEqual(inv.body.payment_methods.iban, 'FR7616958000010000000000001');
+    assert.deepStrictEqual(inv.body.items[0].unit_price, { value: '4000.00', currency: 'EUR' });
+    assert.strictEqual(inv.body.items[0].vat_rate, '0.2');
+    const cli = calls.find((c) => c.m === 'POST' && c.u === '/v2/clients').body;
+    assert.deepStrictEqual([cli.kind, cli.first_name, cli.last_name, cli.billing_address.city], ['individual', 'Jeanne', 'Martin', 'Couternon']);
+    const sent = calls.find((c) => c.u === '/v2/client_invoices/inv-1/send').body;
+    assert.deepStrictEqual(sent.send_to, ['jeanne@example.com']);
+    assert.match(sent.email_body, /4\s800,00 €|4 800,00 €/);
+    // Pas de deuxième facture.
+    assert.ok((await require('../src/qonto').createDeposit(pid)).already);
+    // Espace client : facture visible.
+    assert.match(await (await fetch(`${base}/p/devis/${t}`)).text(), /Voir la facture et payer/);
+    // Payée dans Qonto -> acompte reçu.
+    assert.strictEqual(await require('../src/qonto').syncPaid(), 0);
+    status = 'paid';
+    assert.strictEqual(await require('../src/qonto').syncPaid(), 1);
+    assert.ok(q.get('SELECT deposit_at FROM projects WHERE id = ?', pid).deposit_at);
+  } finally {
+    for (const k of ['QONTO_BASE_URL', 'QONTO_LOGIN', 'QONTO_SECRET_KEY']) delete process.env[k];
+    require('../src/db').setSetting('portal_test_mode', '1');
+    fake.close();
+  }
+});
+
+test('Qonto : un devis de test ne crée jamais de facture', async () => {
+  process.env.QONTO_LOGIN = 'x'; process.env.QONTO_SECRET_KEY = 'y';
+  try {
+    const { q } = require('../src/db');
+    const pid = Number(q.run("INSERT INTO projects (name) VALUES ('Test facture')").lastInsertRowid);
+    q.run("INSERT INTO quotes (project_id, number, pdf, pdf_sha256, signer_name, signer_email, valid_until, token_hash, status, test, amount_ht) VALUES (?, 'T-1', 'x', 'x', 'A B', 'a@b.c', '2099-01-01', 'zz', 'accepted', 1, 1000)", pid);
+    await assert.rejects(require('../src/qonto').createDeposit(pid), /test/);
+  } finally { delete process.env.QONTO_LOGIN; delete process.env.QONTO_SECRET_KEY; }
+});

@@ -190,6 +190,10 @@ addColumn('projects', 'source', "TEXT DEFAULT ''");
 addColumn('quotes', 'amount_ht', 'REAL');
 addColumn('quotes', 'source', "TEXT DEFAULT ''");
 addColumn('quotes', 'family', "TEXT DEFAULT ''");
+// Facture d'acompte émise dans Qonto à l'acceptation du devis.
+addColumn('quotes', 'billing_json', 'TEXT');
+for (const [c, d] of [['deposit_invoice_id', 'TEXT'], ['deposit_invoice_number', 'TEXT'], ['deposit_invoice_url', 'TEXT'], ['deposit_invoice_status', 'TEXT'], ['deposit_invoice_error', "TEXT DEFAULT ''"],
+  ['deposit_invoice_ttc', 'REAL'], ['deposit_invoice_due', 'TEXT'], ['deposit_invoice_sent_at', 'TEXT']]) addColumn('projects', c, d);
 
 db.exec(`
 CREATE TABLE IF NOT EXISTS models (

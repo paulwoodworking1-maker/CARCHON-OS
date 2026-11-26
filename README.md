@@ -67,6 +67,16 @@ Pour que les clients reçoivent leur code par e-mail, renseigner `SMTP_*` (l'adr
 - **SMS de suivi** : `BREVO_API_KEY` (compte Brevo avec un pack de SMS). Un SMS court part au client à chaque nouveauté de son portail, regroupé sur 15 minutes, jamais la nuit ni le dimanche. Modèles modifiables dans Portails clients › Réglages et e-mails.
 - **Brouillons Gmail** : « Créer le brouillon Gmail » ouvre un message rédigé dans Gmail (rangé dans Brouillons).
 
+## Facture d'acompte automatique (Qonto)
+
+Quand un client accepte son devis sur le portail (montant HT indiqué à l'envoi du devis), Carchon OS :
+1. crée ou retrouve le client dans Qonto (avec l'adresse de facturation saisie à l'acceptation) ;
+2. émet dans Qonto la facture d'acompte (40 % du HT par défaut, TVA 20 %, à régler sous 7 jours, reliée au devis Qonto du même numéro) ;
+3. la fait envoyer par e-mail par Qonto, et l'affiche dans l'espace du client (« Voir la facture et payer ») ;
+4. vérifie toutes les 10 minutes si elle est payée : l'acompte passe alors à « reçu » et les achats bloqués se débloquent.
+
+À régler une fois : dans Qonto, **Paramètres › Intégrations et partenariats › Clé API**, puis dans Render › Environment : `QONTO_LOGIN` (identifiant) et `QONTO_SECRET_KEY` (clé secrète). Pourcentage, TVA, échéance, IBAN et texte de l'e-mail : Portails clients › Réglages et e-mails. Les devis de test ne créent jamais de facture. En cas d'échec, « À décider » propose « Réessayer ».
+
 ## Sauvegardes
 
 Chaque nuit, une copie complète de la base est écrite dans `DATA_DIR/sauvegardes/` (les 14 dernières sont gardées). Dans Réglages › Entreprise › Sauvegardes, on peut en télécharger une à tout moment : en ranger une chaque semaine hors du serveur.

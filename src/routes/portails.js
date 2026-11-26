@@ -3,6 +3,7 @@
 const express = require('express');
 const fs = require('node:fs');
 const { q, tx, setting, setSetting, logActivity, FAMILIES, SOURCES } = require('../db');
+const Q = require('../qonto');
 const { h, layout, pill, postBtn, options, ddmm, ddmmyyyy, addDays, today, rel } = require('../html');
 const { token, sha256 } = require('../auth');
 const { upload, filePath } = require('../uploads');
@@ -224,6 +225,21 @@ ${Object.entries(SMS.EVENTS).map(([k, [label, def]]) => h`<fieldset class="smsev
 <div class="line"><button class="btn sm">Enregistrer</button></div></form>
 ${SMS.configured() ? h`<form method="post" action="/portails/sms/test" class="line mt12"><label class="sr" for="smsto">Portable</label><input id="smsto" name="to" type="tel" placeholder="Ton portable" required style="max-width:220px"><button class="btn alt sm">M’envoyer un SMS de test</button></form>` : ''}</section>
 
+<section class="card mt20 mw680" id="qonto"><h2>Facture d’acompte automatique (Qonto)</h2>
+${Q.configured() ? h`<p class="mt8">${pill('ok', 'Relié à Qonto')} Dès qu’un client accepte son devis sur le portail, la facture d’acompte est créée dans Qonto (numéro automatique) et envoyée au client par e-mail depuis Qonto. Quand Qonto la voit payée, l’acompte passe à « reçu » et les achats bloqués se débloquent.</p>
+<form method="post" action="/portails/qonto/test" class="line mt12"><button class="btn alt sm">Tester la liaison</button></form>`
+  : h`<p class="mt8">${pill('ko', 'Pas encore relié')} Pour que la facture parte toute seule :</p>
+<ol class="steps mt8"><li>Dans Qonto (app.qonto.com) : <b>Paramètres › Intégrations et partenariats › Clé API</b>. Note ton <b>identifiant</b> et génère la <b>clé secrète</b>.</li>
+<li>Dans Render › carchon-os › <b>Environment</b> : <code>QONTO_LOGIN</code> = l’identifiant, <code>QONTO_SECRET_KEY</code> = la clé secrète. Save, rebuild and deploy.</li></ol>`}
+<form method="post" action="/portails/qonto" class="form mt12">
+<label class="ck"><input type="checkbox" name="auto" value="1" ${setting('qonto_auto_deposit', '1') === '1' ? 'checked' : ''}> Créer et envoyer la facture d’acompte dès l’acceptation du devis</label>
+<div class="grid2"><label>Acompte (% du montant HT) <input name="percent" inputmode="decimal" value="${Q.opts().percent}"></label><label>TVA (%) <input name="vat" inputmode="decimal" value="${Q.opts().vat}"></label></div>
+<div class="grid2"><label>À régler sous (jours) <input name="due" inputmode="numeric" value="${Q.opts().dueDays}"></label><label>IBAN (vide = compte principal Qonto) <input name="iban" value="${setting('qonto_iban', '')}"></label></div>
+<label>Objet de l’e-mail <input name="title" value="${Q.opts().title}"></label>
+<label>Message <textarea name="body" rows="7">${Q.opts().body}</textarea></label>
+<p class="mut t12">Mots remplacés : {prenom} {projet} {devis} {pourcent} {montant} {echeance} {entreprise}. Le montant HT doit être indiqué à l’envoi du devis. Les devis de test ne créent jamais de facture.</p>
+<button class="btn sm">Enregistrer</button></form></section>
+
 <section class="card mt20 mw680"><h2>${testMode() ? 'Mode test' : 'Mode réel'}</h2>
 <form method="post" action="/portails/reglages" enctype="multipart/form-data" class="form mt12"><label class="ck"><input type="checkbox" name="test" value="1" ${testMode() ? 'checked' : ''}> Mode test (pages marquées « sans valeur contractuelle », seules les adresses de test reçoivent un lien)</label>
 <label>Adresses de test, séparées par des virgules <input name="emails" value="${setting('portal_test_emails') || ''}"></label>
@@ -232,6 +248,21 @@ ${setting('cgv_file') ? h`<p class="mut">CGV actuelles : <a href="/fichiers/${se
 <button class="btn sm">Enregistrer</button></form>
 <p class="mut t12 mt8">Le passage en réel se fait après l'avis de ton juriste.</p></section>`;
   res.send(layout({ title: 'Réglages des portails', heading: 'Portails clients', tab: SUB, sub: '/portails/reglages', body, flash: req.flash }));
+});
+r.post('/portails/qonto', (req, res) => {
+  const b = req.body; const n = (v) => Number(String(v ?? '').replace(',', '.'));
+  setSetting('qonto_auto_deposit', b.auto ? '1' : '0');
+  if (n(b.percent) > 0 && n(b.percent) <= 100) setSetting('deposit_percent', String(n(b.percent)));
+  if (n(b.vat) >= 0 && n(b.vat) <= 30 && str(b.vat) !== '') setSetting('deposit_vat', String(n(b.vat)));
+  if (n(b.due) >= 0 && str(b.due) !== '') setSetting('deposit_due_days', String(Math.round(n(b.due))));
+  setSetting('qonto_iban', str(b.iban).replace(/\s/g, '').toUpperCase());
+  setSetting('deposit_mail_title', str(b.title).slice(0, 200));
+  setSetting('deposit_mail_body', String(b.body || '').trim().slice(0, 3000));
+  res.flashTo('/portails/reglages#qonto', 'Réglages de la facture d’acompte enregistrés.');
+});
+r.post('/portails/qonto/test', async (req, res) => {
+  try { const t = await Q.test(); res.flashTo('/portails/reglages#qonto', `Liaison Qonto OK : ${t.name}${t.iban ? ` · IBAN ${t.iban.slice(0, 4)}…${t.iban.slice(-4)}` : ''}.`); }
+  catch (e) { res.flashTo('/portails/reglages#qonto', e.message, 'ko'); }
 });
 r.post('/portails/sms', (req, res) => {
   const b = req.body;
