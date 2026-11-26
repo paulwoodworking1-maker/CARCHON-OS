@@ -184,7 +184,7 @@ function afterAccept(quoteId) {
     if (!x?.project_id) return;
     require('../cockpit').notify('devis.accepte', require('../cockpit').quotePayload(x));
     const p = q.get('SELECT * FROM projects WHERE id = ?', x.project_id);
-    if (setting('chain_auto', '1') === '1' && require('../ai').enabled() && !p.prod_status && !q.get('SELECT id FROM steps WHERE project_id = ?', p.id)) require('../chain').start(p.id);
+    if (setting('chain_auto', '0') === '1' && require('../ai').enabled() && !p.prod_status && !q.get('SELECT id FROM steps WHERE project_id = ?', p.id)) require('../chain').start(p.id);
   } catch (e) { console.error('[après signature]', e); }
 }
 
