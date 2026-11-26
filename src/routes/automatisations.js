@@ -21,7 +21,7 @@ r.get('/automatisations', (req, res) => {
 <h2>Interrupteurs</h2>
 ${toggle('auto_plan', '1', 'Planning automatique', 'Les fiches envoyées à l’atelier se posent toutes seules dans le planning de chacun, jour après jour, d’après les heures prévues (ou la moyenne réelle du geste). Recalculé à chaque changement et chaque nuit. Tes barres posées à la main (rendez-vous, congé) sont respectées.')}
 ${toggle('digest_email', '1', 'Résumé du matin par e-mail', 'Chaque jour vers 7 h : ce qui est à décider, qui fait quoi, les problèmes signalés.')}
-<label>Adresse qui reçoit le résumé <input type="email" name="patron_email" value="${setting('patron_email') || ''}" placeholder="toi@carchon.com"></label>
+<label>Adresse e-mail du patron (résumé du matin et « mot de passe oublié ») <input type="email" name="patron_email" value="${setting('patron_email') || ''}" placeholder="toi@carchon.com"></label>
 ${toggle('auto_reminder_pose', '0', 'Rappel automatique au client deux jours avant une livraison', 'Un e-mail court part au client à J-2 (adresse, accès dégagé). Désactivé par défaut.')}
 <button class="btn">Enregistrer</button></form>
 

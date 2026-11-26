@@ -71,3 +71,21 @@ test('API Cockpit : clé requise, affaire créée, OF listés', async () => {
   const list = await (await fetch(base + '/api/v1/ofs', { headers: auth })).json();
   assert.ok(list.ofs.some((o) => o.ref === ref));
 });
+
+test('mot de passe oublié : lien valable, nouveau mot de passe, anciennes sessions déconnectées', async () => {
+  assert.strictEqual((await fetch(base + '/mot-de-passe-oublie')).status, 200);
+  const { setSetting } = require('../src/db');
+  const { sha256 } = require('../src/auth');
+  setSetting('reset_token', sha256('jeton-test'));
+  setSetting('reset_expires', String(Date.now() + 60000));
+  assert.strictEqual((await fetch(base + '/mot-de-passe/mauvais')).status, 200);
+  const r = await fetch(base + '/mot-de-passe/jeton-test', { method: 'POST', redirect: 'manual', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: 'password=nouveau-mdp-1&confirm=nouveau-mdp-1' });
+  assert.strictEqual(r.status, 302);
+  assert.strictEqual(r.headers.get('location'), '/');
+  const old = await fetch(base + '/projets', { headers: { cookie }, redirect: 'manual' });
+  assert.match(old.headers.get('location') || '', /connexion/);
+  const login = await fetch(base + '/connexion', { method: 'POST', redirect: 'manual', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: 'password=nouveau-mdp-1&suite=/' });
+  assert.strictEqual(login.headers.get('location'), '/');
+  const again = await fetch(base + '/mot-de-passe/jeton-test');
+  assert.match(await again.text(), /plus valable/);
+});

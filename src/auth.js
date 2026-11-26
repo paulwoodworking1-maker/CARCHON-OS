@@ -63,7 +63,7 @@ const sha256 = (buf) => crypto.createHash('sha256').update(buf).digest('hex');
 // Le patron est connecté ?
 function requirePatron(req, res, next) {
   if (!setting('patron_password')) return res.redirect('/installation');
-  if (req.session.role === 'patron') return next();
+  if (req.session.role === 'patron' && String(req.session.gen ?? '0') === setting('session_gen', '0')) return next();
   return res.redirect('/connexion?suite=' + encodeURIComponent(req.originalUrl));
 }
 // Un ouvrier (ou le patron) est connecté sur l'iPad ?
