@@ -201,7 +201,7 @@ async function streamStructured({ system, content, schema, effort = 'max', maxTo
   catch { throw new AIError('Réponse de l’assistant illisible : relance la génération.'); }
 }
 
-async function productionChain({ project, files, people, phases, gestes, averages, suppliers, stock, machines }) {
+function chainPrompt({ project, people, phases, gestes, averages, suppliers, stock, machines }) {
   const system = `Tu es chef d'atelier et méthodiste dans une ébénisterie haut de gamme (mobilier et luminaires en bois massif, série et sur-mesure). Un projet vient d'être signé. À partir du devis accepté, du modèle 3D (nomenclature mesurée solide par solide), des vues 3D et de la nomenclature ou du chiffrage de l'atelier, tu prépares tout ce qu'il faut pour fabriquer, comme le ferait un méthodiste exigeant. La conception est terminée (elle a été faite avant le chiffrage) : ne crée aucune fiche de conception, de dessin ou de validation de plans.
 
 Ce que tu rends :
@@ -237,7 +237,11 @@ Fournisseurs connus : ${suppliers.join(', ') || 'aucun'}
 En stock : ${stock.join(', ') || 'rien de suivi'}
 
 Documents du projet ci-dessous.`;
-  return streamStructured({ system, content: [{ type: 'text', text: intro }, ...files], schema: ChainSchema });
+  return { system, intro };
+}
+async function productionChain(ctx) {
+  const { system, intro } = chainPrompt(ctx);
+  return streamStructured({ system, content: [{ type: 'text', text: intro }, ...ctx.files], schema: ChainSchema });
 }
 
-module.exports = { enabled, carnetFromText, readQuotePdf, clientUpdate, productionChain, ChainSchema, AIError, MODEL };
+module.exports = { enabled, carnetFromText, readQuotePdf, clientUpdate, productionChain, chainPrompt, ChainSchema, AIError, MODEL };

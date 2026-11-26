@@ -99,18 +99,105 @@ async function run(projectId, { ai = require('./ai') } = {}) {
   const { blocks, skipped } = await toBlocks(list);
   if (!blocks.length) return fail('aucun document lisible (devis, vues 3D ou nomenclature).');
   const people = q.all('SELECT * FROM people WHERE active = 1 ORDER BY id');
-  const auto = require('./automations');
   let out;
-  try {
-    out = await ai.productionChain({
-      project, files: blocks, people, phases: PHASES, gestes: GESTES, averages: auto.averages(),
-      suppliers: q.all('SELECT name FROM suppliers ORDER BY name').map((s) => s.name),
-      machines: q.all("SELECT name FROM machines ORDER BY name").map((m) => m.name),
-      stock: [...q.all("SELECT name FROM stock_items WHERE state = 0 ORDER BY name LIMIT 150").map((s) => s.name),
-        ...q.all('SELECT essence, thickness, volume FROM wood_lots WHERE project_id IS NULL AND volume > 0').map((w) => `${w.essence} ${w.thickness} ${w.volume} m³ (lot libre)`)],
-    });
-  } catch (e) { return fail(e.message || 'erreur de l’assistant'); }
+  try { out = await ai.productionChain({ project, files: blocks, ...context(people) }); }
+  catch (e) { return fail(e.message || 'erreur de l’assistant'); }
   apply(project, out, people, skipped);
+}
+
+// Ce que l'assistant doit savoir de l'atelier (équipe, machines, stock, fournisseurs, moyennes).
+function context(people) {
+  return {
+    people, phases: PHASES, gestes: GESTES, averages: require('./automations').averages(),
+    suppliers: q.all('SELECT name FROM suppliers ORDER BY name').map((s) => s.name),
+    machines: q.all('SELECT name FROM machines ORDER BY name').map((m) => m.name),
+    stock: [...q.all('SELECT name FROM stock_items WHERE state = 0 ORDER BY name LIMIT 150').map((s) => s.name),
+      ...q.all('SELECT essence, thickness, volume FROM wood_lots WHERE project_id IS NULL AND volume > 0').map((w) => `${w.essence} ${w.thickness} ${w.volume} m³ (lot libre)`)],
+  };
+}
+
+// --- Avec le forfait Claude : dossier à déposer dans claude.ai, puis réponse recollée ici ---
+function zip(entries) {
+  const zlib = require('node:zlib');
+  const parts = [], central = [];
+  let offset = 0;
+  for (const { name, data } of entries) {
+    const n = Buffer.from(name, 'utf8');
+    const crc = zlib.crc32(data) >>> 0;
+    const local = Buffer.alloc(30); local.writeUInt32LE(0x04034b50, 0); local.writeUInt16LE(20, 4); local.writeUInt16LE(0x0800, 6);
+    local.writeUInt32LE(crc, 14); local.writeUInt32LE(data.length, 18); local.writeUInt32LE(data.length, 22); local.writeUInt16LE(n.length, 26);
+    const c = Buffer.alloc(46); c.writeUInt32LE(0x02014b50, 0); c.writeUInt16LE(20, 4); c.writeUInt16LE(20, 6); c.writeUInt16LE(0x0800, 8);
+    c.writeUInt32LE(crc, 16); c.writeUInt32LE(data.length, 20); c.writeUInt32LE(data.length, 24); c.writeUInt16LE(n.length, 28); c.writeUInt32LE(offset, 42);
+    parts.push(local, n, data); central.push(c, n);
+    offset += 30 + n.length + data.length;
+  }
+  const cd = Buffer.concat(central);
+  const end = Buffer.alloc(22); end.writeUInt32LE(0x06054b50, 0); end.writeUInt16LE(entries.length, 8); end.writeUInt16LE(entries.length, 10);
+  end.writeUInt32LE(cd.length, 12); end.writeUInt32LE(offset, 16);
+  return Buffer.concat([...parts, cd, end]);
+}
+const safe = (s) => String(s || 'fichier').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^\w.-]+/g, '_').slice(0, 60);
+
+async function claudePackage(projectId) {
+  const ai = require('./ai');
+  const project = q.get('SELECT * FROM projects WHERE id = ?', projectId);
+  const { quote, files } = filesFor(projectId);
+  const list = [...(quote ? [{ kind: 'devis', file: quote.pdf, name: `Devis n° ${quote.number} v${quote.version}` }] : []), ...files];
+  const { blocks, skipped } = await toBlocks(list);
+  const people = q.all('SELECT * FROM people WHERE active = 1 ORDER BY id');
+  const { system, intro } = ai.chainPrompt({ project, ...context(people) });
+  const texts = blocks.filter((b) => b.type === 'text' && b.text.includes('\n')).map((b) => b.text);
+  const attach = [];
+  let k = 0;
+  for (let i = 0; i < blocks.length; i++) {
+    const b = blocks[i];
+    if (b.type !== 'document' && b.type !== 'image') continue;
+    const label = blocks[i - 1]?.type === 'text' ? blocks[i - 1].text : `Document ${k + 1}`;
+    const ext = b.type === 'document' ? '.pdf' : ({ 'image/png': '.png', 'image/jpeg': '.jpg', 'image/webp': '.webp', 'image/gif': '.gif' }[b.source.media_type] || '.jpg');
+    attach.push({ name: `${String(++k).padStart(2, '0')}_${safe(label.replace(/^[^:]*:\s*/, ''))}${ext}`, label, data: Buffer.from(b.source.data, 'base64') });
+  }
+  const schema = JSON.stringify(require('zod').z.toJSONSchema(ai.ChainSchema), null, 1);
+  const instructions = `# Préparation de la production · ${project.name} (${project.ref})
+
+${system}
+
+${intro}
+
+Fichiers joints à cette conversation :
+${attach.map((a) => `- ${a.name} : ${a.label}`).join('\n') || '- aucun'}
+
+${texts.join('\n\n')}
+${skipped.length ? `\nNon lus par Carchon OS : ${skipped.join(' ; ')}.` : ''}
+
+# Format de ta réponse
+
+Prends le temps de bien étudier tous les documents. Puis réponds UNIQUEMENT par un bloc de code JSON (\`\`\`json … \`\`\`), sans texte avant ni après, conforme à ce schéma JSON. Tous les champs sont obligatoires (chaîne vide "" ou 0 si l'information manque) :
+
+\`\`\`json
+${schema}
+\`\`\`
+`;
+  const name = `Production_${safe(project.ref)}_${safe(project.name)}`;
+  return { zip: zip([{ name: '00_INSTRUCTIONS.md', data: Buffer.from(instructions, 'utf8') }, ...attach.map((a) => ({ name: a.name, data: a.data }))]), name, instructions, attach };
+}
+
+// Réponse de Claude recollée : on garde le JSON (même entouré de texte) et on le vérifie.
+function importAnswer(projectId, text) {
+  const ai = require('./ai');
+  let raw = String(text || '');
+  const fence = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (fence) raw = fence[1];
+  const a = raw.indexOf('{'), b = raw.lastIndexOf('}');
+  if (a < 0 || b < a) throw new ai.AIError('Je ne trouve pas de JSON dans ce texte : copie toute la réponse de Claude.');
+  let data;
+  try { data = JSON.parse(raw.slice(a, b + 1)); } catch { throw new ai.AIError('Le JSON est incomplet : la réponse de Claude a peut-être été coupée. Demande-lui « continue » puis recopie tout.'); }
+  const res = ai.ChainSchema.safeParse(data);
+  if (!res.success) {
+    const first = res.error.issues[0];
+    throw new ai.AIError(`La réponse ne suit pas le format attendu (${first.path.join('.') || 'racine'} : ${first.message}). Redemande à Claude en lui rappelant le schéma.`);
+  }
+  const project = q.get('SELECT * FROM projects WHERE id = ?', projectId);
+  return apply(project, res.data, q.all('SELECT * FROM people WHERE active = 1 ORDER BY id'));
 }
 
 // Écrit le résultat dans l'OF (aussi utilisé par les tests).
@@ -184,5 +271,5 @@ function material(projectId) {
   return { date: date ? addWorkdays(date, 1) : null, items, waiting: waiting.length, estimated: waiting.some((i) => !i.expected_at) };
 }
 
-module.exports = { start, run, apply, filesFor, toBlocks, material, addWorkdays, KINDS, running, LEAD_DEFAULT };
+module.exports = { start, run, apply, claudePackage, importAnswer, zip, filesFor, toBlocks, material, addWorkdays, KINDS, running, LEAD_DEFAULT };
 void ddmm;

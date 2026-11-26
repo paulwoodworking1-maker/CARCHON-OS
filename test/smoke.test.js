@@ -293,3 +293,31 @@ test('modèle 3D STEP : pièces mesurées, regroupées et prêtes pour la vision
   for (const x of [0, 2400]) for (const y of [0, 300]) for (const z of [0, 27]) pts.push(x * c - y * s, x * s + y * c, z);
   assert.deepStrictEqual(M.obb(pts).size.map(Math.round).sort((x, y) => y - x), [2400, 300, 27]);
 });
+
+test('forfait Claude : dossier .zip à déposer dans claude.ai, réponse recollée → production créée', async () => {
+  const { q } = require('../src/db');
+  const C = require('../src/chain');
+  const pid = Number(q.run("INSERT INTO projects (name, kind) VALUES ('Console forfait', 'Particulier')").lastInsertRowid);
+  const res = await fetch(`${base}/projets/${pid}/claude`, { headers: { cookie } });
+  assert.strictEqual(res.status, 200);
+  assert.match(await res.text(), /Télécharger le dossier/);
+  const z = await fetch(`${base}/projets/${pid}/claude/dossier.zip`, { headers: { cookie } });
+  assert.strictEqual(z.headers.get('content-type'), 'application/zip');
+  const buf = Buffer.from(await z.arrayBuffer());
+  assert.strictEqual(buf.readUInt32LE(0), 0x04034b50);
+  assert.match(buf.toString('utf8'), /00_INSTRUCTIONS\.md[\s\S]*Format de ta réponse/);
+  const answer = { analyse: 'Console en chêne.', pieces: [{ nom: 'Plateau', description: '1200 × 400' }],
+    debit: [{ ensemble: 'Console', piece: 'Plateau', quantite: 1, materiau: 'Chêne', longueur_mm: 1200, largeur_mm: 400, epaisseur_mm: 30, brut_longueur_mm: 1250, brut_largeur_mm: 420, brut_epaisseur_mm: 34, sens_du_fil: 'en long', note: '' }],
+    matiere: [{ categorie: 'Bois massif', designation: 'Chêne 34 mm (chute 30 %)', essence: 'Chêne rare', epaisseur: '34 mm', quantite: 0.03, unite: 'm³', fournisseur: '', avant_fabrication: true }],
+    fiches: [{ titre: 'Débit du plateau', pieces: 'Plateau', qui: '', etape_frise: 'Débit', geste: 'Débit, corroyage', machine: 'Dégauchisseuse', heures: 3, mot_du_patron: '', reperes: [] }],
+    remarques: '' };
+  // Réponse telle que copiée depuis claude.ai : texte autour + bloc de code.
+  const pasted = 'Voici la production :\n```json\n' + JSON.stringify(answer, null, 2) + '\n```\nBonne fabrication.';
+  const r = await post(`/projets/${pid}/claude/import`, { answer: pasted });
+  assert.strictEqual(r.status, 302);
+  assert.strictEqual(q.get('SELECT prod_status FROM projects WHERE id = ?', pid).prod_status, 'pret');
+  assert.strictEqual(q.get('SELECT COUNT(*) n FROM cut_list WHERE project_id = ?', pid).n, 1);
+  assert.match(q.get('SELECT note FROM steps WHERE project_id = ?', pid).note, /Dégauchisseuse/);
+  assert.throws(() => C.importAnswer(pid, 'pas de json ici'), /JSON/);
+  assert.throws(() => C.importAnswer(pid, '{"analyse": "x"}'), /format attendu/);
+});
