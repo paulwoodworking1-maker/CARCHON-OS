@@ -104,6 +104,11 @@ function toDecide() {
   for (const m of q.all('SELECT messages.*, steps.title st, steps.project_id pid, people.name pname FROM messages JOIN steps ON steps.id = messages.step_id LEFT JOIN people ON people.id = messages.person_id WHERE read_by_patron = 0 ORDER BY messages.created_at DESC')) {
     items.push({ kind: 'no', tag: 'Message', title: `${m.pname} · ${m.st}`, text: `« ${m.body} »`, href: `/carnets/${m.pid}?fiche=${m.step_id}`, cta: 'Répondre' });
   }
+  // Sous-traitance : retour en retard, ou prestation proposée encore à commander alors que la livraison approche.
+  for (const s of q.all(`SELECT subcontracts.*, projects.name pname, suppliers.name sname FROM subcontracts JOIN projects ON projects.id = subcontracts.project_id
+    LEFT JOIN suppliers ON suppliers.id = subcontracts.supplier_id WHERE projects.status = 'en_cours' AND subcontracts.back_at IS NULL AND subcontracts.status != 'a_commander' AND subcontracts.due_at < ?`, today())) {
+    items.push({ kind: 'ko', tag: 'Sous-traitance', title: `${s.pname} · ${s.what}`, text: `Retour prévu le ${ddmm(s.due_at)}${s.sname ? ` chez ${s.sname}` : ''} · pas encore revenu`, href: `/projets/${s.project_id}#sst${s.id}`, cta: 'Ouvrir' });
+  }
   const all = [...items, ...require('./automations').alerts()];
   const later = new Set(q.all('SELECT key FROM snoozes WHERE until > ?', today()).map((x) => x.key));
   const order = { ko: 0, wa: 1, ok: 2, no: 3 };

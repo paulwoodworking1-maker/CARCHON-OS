@@ -18,6 +18,16 @@ Le logiciel de l'atelier, construit d'après les maquettes « Carchon OS · vers
 
 Ce qui est encore **manuel** dans cette première version : le PDF du devis est déposé à la main (export Qonto), l'acompte se note dans la fiche projet, les commandes fournisseurs partent par un e-mail pré-rempli.
 
+## Fiche projet et dossier de production
+
+La fiche d’un projet est rangée en quatre onglets, sous la frise et un bandeau « À suivre » (carnet, sous-traitance, achats, livraison) :
+- **Vue d’ensemble** : prochaine action, infos du projet, acompte, temps passé, historique.
+- **Dossier de production** : le carnet de fabrication, sa génération depuis les plans, la liste de débit, les dictées, les plans, les éléments, le contrôle. « Imprimer le dossier » sort tout sur papier.
+- **Achats et sous-traitance** : les commandes aux sous-traitants (à commander → commandé → chez le sous-traitant → revenu → contrôlé), avec bon de commande imprimable, e-mail pré-rempli et devis joint ; les achats liés et le bois réservé. Un retour en retard remonte dans « À décider ».
+- **Client et documents** : journal photo, portail client, documents.
+
+**Générer le carnet** : coche les plans (PDF ou image JPG/PNG) et dicte le travail (bouton « Dicter » sur iPad/Chrome, ou la dictée du clavier). L’assistant (`AI_MODEL`, par défaut `claude-opus-5-5`) lit cotes, assemblages et matières et propose les fiches, la liste de débit, les éléments et les sous-traitances. Rien ne part à l’atelier avant « Envoyer à l’atelier ». Nécessite `ANTHROPIC_API_KEY`.
+
 ## Démarrer
 
 Il faut Node.js 22.13 ou plus récent (la base SQLite est intégrée, rien d'autre à installer).

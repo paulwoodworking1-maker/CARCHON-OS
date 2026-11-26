@@ -18,7 +18,7 @@ function api() {
 class AIError extends Error {}
 
 // Un appel avec réponse structurée (JSON validé par le schéma).
-async function structured({ system, content, schema, effort = 'medium', maxTokens = 16000 }) {
+async function structured({ system, content, schema, effort = 'medium', maxTokens = 16000, timeout }) {
   if (!enabled()) throw new AIError('L’assistant n’est pas activé (clé ANTHROPIC_API_KEY absente).');
   let res;
   try {
@@ -30,7 +30,7 @@ async function structured({ system, content, schema, effort = 'medium', maxToken
       output_config: { effort, format: zodOutputFormat(schema) },
       system,
       messages: [{ role: 'user', content }],
-    });
+    }, timeout ? { timeout } : undefined);
   } catch (e) {
     if (e instanceof Anthropic.AuthenticationError) throw new AIError('La clé de l’assistant est refusée : vérifie ANTHROPIC_API_KEY.');
     if (e instanceof Anthropic.RateLimitError) throw new AIError('L’assistant est très demandé : réessaie dans une minute.');
@@ -128,4 +128,86 @@ N'annonce que les faits fournis ; ne promets aucune date qui n'est pas dans les 
   });
 }
 
-module.exports = { enabled, carnetFromText, readQuotePdf, clientUpdate, AIError, MODEL };
+
+// --- 4. Carnet de fabrication lu dans les plans + ce que le patron dicte ---
+// Les plans (PDF ou images) sont envoyés tels quels : le modèle lit les cotes, les assemblages, les matières.
+const PlanCarnetSchema = z.object({
+  fiches: StepsSchema.shape.fiches,
+  debit: z.array(z.object({
+    piece: z.string(),
+    quantite: z.string(),
+    longueur: z.string(),
+    largeur: z.string(),
+    epaisseur: z.string(),
+    matiere: z.string(),
+    remarque: z.string(),
+  })),
+  elements: z.array(z.object({ nom: z.string(), description: z.string() })),
+  sous_traitance: z.array(z.object({ prestation: z.string(), pieces: z.string(), specification: z.string() })),
+  questions: z.array(z.string()),
+  remarques: z.string(),
+});
+
+const PLAN_IMG = { '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.webp': 'image/webp', '.gif': 'image/gif' };
+// Transforme les fichiers de plans en blocs lisibles par l'API. Renvoie aussi ceux qui ont été écartés (format, taille).
+function planBlocks(plans, readFile) {
+  const path = require('node:path');
+  const blocks = [], skipped = [];
+  let total = 0;
+  for (const pl of plans) {
+    if (!pl.file) { skipped.push(`${pl.version} (pas de fichier)`); continue; }
+    const ext = path.extname(pl.file).toLowerCase();
+    let buf;
+    try { buf = readFile(pl.file); } catch { skipped.push(`${pl.version} (fichier introuvable)`); continue; }
+    const limit = ext === '.pdf' ? 24 * 1024 * 1024 : 5 * 1024 * 1024;
+    if (buf.length > limit || total + buf.length > 24 * 1024 * 1024) { skipped.push(`${pl.version} (trop lourd)`); continue; }
+    if (ext === '.pdf') blocks.push({ type: 'document', title: `Plan ${pl.version}`, source: { type: 'base64', media_type: 'application/pdf', data: buf.toString('base64') } });
+    else if (PLAN_IMG[ext]) blocks.push({ type: 'image', source: { type: 'base64', media_type: PLAN_IMG[ext], data: buf.toString('base64') } });
+    else { skipped.push(`${pl.version} (format ${ext} non lu : exporter en PDF ou JPG)`); continue; }
+    blocks.push({ type: 'text', text: `↑ Plan ${pl.version}${pl.descr ? ` · ${pl.descr}` : ''}${pl.status === 'validee' ? ' (version validée, fait foi)' : ''}` });
+    total += buf.length;
+  }
+  return { blocks, skipped };
+}
+
+async function carnetFromPlans({ project, plans, readFile, text, people, phases, gestes, averages, existing, suppliers }) {
+  const { blocks, skipped } = planBlocks(plans, readFile);
+  if (!blocks.length && !String(text || '').trim()) throw new AIError(`Aucun plan lisible ni dictée : ${skipped.join(', ') || 'ajoute un plan PDF ou image, ou dicte le travail.'}`);
+  const system = `Tu prépares le carnet de fabrication d'un projet d'ébénisterie pour l'atelier Carchon Les Ateliers, à partir des plans fournis et de ce que le patron dicte.
+Le carnet = la suite de fiches que l'équipe suit sur l'iPad. Chaque fiche = une étape de travail concrète, faite par une personne, en quelques heures à 2 jours.
+
+Lis les plans attentivement : vues, cotes, nomenclature, cartouche, matières, chants, quincaillerie, assemblages, finitions.
+La dictée du patron prime sur les plans quand ils divergent (c'est la décision la plus récente) ; signale l'écart dans "questions".
+
+Règles :
+- Français d'atelier, court et concret. Titre de 2 à 6 mots ("Débit des caissons", "Placage des chants").
+- "qui" : exactement un des prénoms fournis, ou "" si rien ne permet de choisir.
+- "etape_frise" : exactement une des étapes fournies. "geste" : exactement un des gestes fournis.
+- "heures" : estimation réaliste ; pars de la moyenne de l'atelier pour ce geste si elle existe.
+- "mot_du_patron" : les consignes dictées ou lues sur le plan qui concernent cette fiche (vide sinon). N'invente aucune consigne technique.
+- "reperes" : 0 à 4 points de contrôle courts (cotes clés, sens du fil, équerrage…), tirés des plans.
+- "pieces" : les éléments concernés, avec leur repère du plan s'il existe.
+- Ordre logique de fabrication. N'ajoute pas les fiches qui existent déjà.
+- "debit" : la liste de débit lue sur les plans (une ligne par élément : quantité, longueur × largeur × épaisseur en mm telles qu'écrites, matière). Mets "" pour une cote illisible ou absente : n'en invente jamais.
+- "elements" : les grands éléments de l'ouvrage (caisson, plateau, façades…), 1 à 12, avec une description courte (dimensions hors tout si lisibles).
+- "sous_traitance" : seulement les prestations que le patron dit confier à l'extérieur, ou que les plans indiquent clairement comme hors atelier (laquage, verre, découpe numérique, métallerie, sellerie, pierre…). Liste vide sinon.
+- "questions" : cotes manquantes, incohérences, choix à trancher avant de lancer (0 à 6 points).
+- "remarques" : une ou deux phrases sur ce qui paraît risqué (ou "").`;
+  const content = [
+    ...blocks,
+    { type: 'text', text: `Projet : ${project.name}${project.ref ? ` (dossier ${project.ref})` : ''}${project.wood ? `\nBois / matière : ${project.wood}` : ''}${project.due_date ? `\nLivraison prévue : ${project.due_date}` : ''}${project.notes ? `\nNotes du dossier : ${project.notes}` : ''}
+Équipe : ${people.map((p) => `${p.name} (${p.sub || 'atelier'})`).join(', ')}
+Étapes de la frise : ${phases.join(', ')}
+Gestes : ${gestes.join(', ')}
+Moyennes réelles de l'atelier (heures par fiche) : ${Object.entries(averages).map(([g, h]) => `${g} ${h.toFixed(1)} h`).join(', ') || 'pas encore de données'}
+Sous-traitants connus : ${suppliers.join(', ') || 'aucun'}
+Fiches déjà dans le carnet : ${existing.join(' ; ') || 'aucune'}
+${blocks.length ? '' : 'Aucun plan lisible : travaille seulement depuis la dictée, laisse "debit" vide.\n'}
+Ce que dicte le patron :
+"""${String(text || '').trim() || '(rien : pars uniquement des plans)'}"""` },
+  ];
+  const out = await structured({ system, content, schema: PlanCarnetSchema, effort: 'high', maxTokens: 32000, timeout: 10 * 60 * 1000 });
+  return { ...out, skipped };
+}
+
+module.exports = { enabled, carnetFromText, carnetFromPlans, planBlocks, readQuotePdf, clientUpdate, AIError, MODEL };

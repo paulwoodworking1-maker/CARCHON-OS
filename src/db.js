@@ -242,6 +242,26 @@ CREATE TABLE IF NOT EXISTS client_log (
 );
 `);
 
+// Sous-traitance : une prestation confiée à un autre atelier (laquage, découpe numérique, verre, sellerie…).
+// Statuts : a_commander → commande → envoye (pièces parties chez lui) → recu → controle.
+db.exec(`
+CREATE TABLE IF NOT EXISTS subcontracts (
+  id INTEGER PRIMARY KEY, project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  supplier_id INTEGER REFERENCES suppliers(id) ON DELETE SET NULL, what TEXT NOT NULL, pieces TEXT DEFAULT '', qty TEXT DEFAULT '',
+  spec TEXT DEFAULT '', price REAL, quote_ref TEXT DEFAULT '', file TEXT, status TEXT NOT NULL DEFAULT 'a_commander',
+  ordered_at TEXT, sent_at TEXT, due_at TEXT, back_at TEXT, controlled_at TEXT, note TEXT DEFAULT '',
+  ai INTEGER NOT NULL DEFAULT 0, created_at TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS subcontracts_project ON subcontracts(project_id, status);
+-- Dossier de production : chaque génération du carnet (plans lus + dictée du patron), gardée pour s'y retrouver.
+CREATE TABLE IF NOT EXISTS carnet_runs (
+  id INTEGER PRIMARY KEY, project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  plans TEXT DEFAULT '', dictation TEXT DEFAULT '', remarks TEXT DEFAULT '', questions TEXT NOT NULL DEFAULT '[]',
+  debit TEXT NOT NULL DEFAULT '[]', n INTEGER NOT NULL DEFAULT 0, model TEXT DEFAULT '', created_at TEXT DEFAULT (datetime('now'))
+);
+`);
+addColumn('suppliers', 'subcontractor', 'INTEGER NOT NULL DEFAULT 0');
+
 // Référence de dossier : P2026-001, P2026-002… attribuée à la création.
 db.exec(`
 CREATE TRIGGER IF NOT EXISTS projects_ref AFTER INSERT ON projects WHEN NEW.ref IS NULL BEGIN
