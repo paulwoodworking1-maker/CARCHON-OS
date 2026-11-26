@@ -87,7 +87,8 @@ function projectedEnds() {
 }
 
 // --- Alertes calculées (s'ajoutent à « À décider ») ---
-const mailto = (to, subject, body) => `mailto:${encodeURIComponent(to || '')}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+// Le message s'ouvre dans Carchon OS et part directement de la boîte Gmail de l'atelier.
+const mailto = (to, subject, body) => `/mail/nouveau?${new URLSearchParams({ to: to || '', subject, body }).toString()}`;
 function alerts() {
   const out = [];
   const t = today();
@@ -143,7 +144,7 @@ function digestText() {
   ].join('\n');
 }
 async function sendDigest() {
-  const to = setting('patron_email');
+  const to = setting('patron_email') || require('./mail').gmailUser();
   if (!to) return { skipped: 'pas d’adresse' };
   return mail.send({ to, subject: `Carchon OS · ta journée du ${ddmm(today())}`, text: digestText() });
 }

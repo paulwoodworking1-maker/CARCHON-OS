@@ -2,7 +2,7 @@
 // Pilotage (heures réelles vs chiffrées, par geste) et réglages de l'équipe.
 const express = require('express');
 const { q, setting, setSetting, COMPANY_FIELDS } = require('../db');
-const { h, layout, pill, avatar, options, hoursLabel, today } = require('../html');
+const { h, layout, pill, avatar, options, hoursLabel, today, rel } = require('../html');
 const B = require('../backup');
 const { hash, verify } = require('../auth');
 const L = require('../logic');
@@ -100,7 +100,12 @@ ${COMPANY_FIELDS.map(([k, label, def]) => h`<label>${label} <input name="${k}" v
 <section class="card mt20 mw680" id="cockpit"><h2>Liaison avec Cockpit</h2>
 <p class="mut mt8">Cockpit envoie les affaires signées et les acomptes à Carchon OS, et lit l'avancement, les dates et le coût réel des OF. Adresse : <b>${process.env.PUBLIC_URL || ''}/api/v1</b> · clé : ${setting('api_token') ? 'créée (masquée)' : 'pas encore créée'}.</p>
 <form method="post" action="/entreprise/cle" data-confirm="Créer une nouvelle clé ? L’ancienne ne marchera plus."><button class="btn alt sm">${setting('api_token') ? 'Créer une nouvelle clé' : 'Créer la clé'}</button></form>
-<p class="mut t12 mt8">Détail technique pour Cockpit : POST /api/v1/affaires, POST /api/v1/affaires/{réf}/acompte, GET /api/v1/ofs, en-tête « Authorization: Bearer &lt;clé&gt; ».</p></section>
+<h3 class="mt20">Base clientèle</h3>
+<p class="mut mt8">Les clients des projets viennent de Cockpit. ${q.get('SELECT COUNT(*) n FROM clients WHERE cockpit_id IS NOT NULL').n} client(s) synchronisé(s)${setting('cockpit_synced_at') ? `, dernière mise à jour ${rel(setting('cockpit_synced_at'))}` : ''}.${setting('cockpit_error') ? ` Dernière erreur : ${setting('cockpit_error')}.` : ''}</p>
+<form method="post" action="/entreprise/cockpit" class="form mt12"><div class="grid2"><label>Adresse de Cockpit <input name="cockpit_url" value="${setting('cockpit_url') || ''}" placeholder="https://cockpit.carchon.com"></label>
+<label>Clé d’accès à Cockpit <input type="password" name="cockpit_key" autocomplete="new-password" placeholder="${setting('cockpit_key') ? 'enregistrée · vide pour la garder' : 'facultative'}"></label></div>
+<div class="line"><button class="btn sm" name="act" value="save">Enregistrer</button><button class="btn alt sm" name="act" value="sync">Synchroniser les clients maintenant</button></div></form>
+<p class="mut t12 mt8">Détail technique pour Cockpit : POST /api/v1/affaires, POST /api/v1/affaires/{réf}/acompte, POST /api/v1/clients (sa base clientèle), GET /api/v1/ofs, en-tête « Authorization: Bearer &lt;clé&gt; ». Carchon OS lit aussi GET {Cockpit}/api/v1/clients toutes les heures.</p></section>
 <section class="card mt20 mw680" id="sauvegardes"><h2>Sauvegardes</h2>
 <p class="mut mt8">Chaque nuit, une copie complète de la base est faite sur le disque du serveur ; les ${B.KEEP} dernières sont gardées. Télécharge-en une de temps en temps (par exemple chaque lundi) et range-la sur ton ordinateur ou ton cloud : c'est ta garantie si l'hébergeur a un souci.</p>
 <div class="line mt12"><a class="btn" href="/sauvegarde/maintenant">Télécharger une sauvegarde maintenant</a></div>
@@ -119,6 +124,13 @@ r.get('/sauvegarde/:name', (req, res) => {
   res.download(f, req.params.name.replace('carchon-', 'carchon-os-'));
 });
 
+r.post('/entreprise/cockpit', async (req, res) => {
+  setSetting('cockpit_url', String(req.body.cockpit_url || '').trim());
+  if (String(req.body.cockpit_key || '').trim()) setSetting('cockpit_key', String(req.body.cockpit_key).trim());
+  if (req.body.act !== 'sync') return res.flashTo('/entreprise#cockpit', 'Liaison Cockpit enregistrée.');
+  try { const n = await require('../cockpit').pull(); res.flashTo('/entreprise#cockpit', `${n} client(s) repris de Cockpit.`); }
+  catch (e) { res.flashTo('/entreprise#cockpit', `Synchronisation impossible : ${e.message}`, 'ko'); }
+});
 // Clé de la liaison avec Cockpit (montrée une fois à la création).
 r.post('/entreprise/cle', (req, res) => {
   const key = require('node:crypto').randomBytes(24).toString('base64url');

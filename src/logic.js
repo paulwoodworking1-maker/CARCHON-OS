@@ -147,8 +147,20 @@ function projectFromQuote(quote) {
     q.run('UPDATE quotes SET project_id = ? WHERE id = ?', projectId, quote.id);
   }
   q.run("INSERT OR REPLACE INTO phase_overrides (project_id, phase, state, label) VALUES (?, 'Conception', 'c', 'À démarrer')", projectId);
+  syncProjectName(projectId);
   return projectId;
 }
+
+// Le titre d'un projet est le nom du client, en majuscules ; ce qu'on fabrique passe en description.
+const upperName = (s) => String(s || '').trim().toLocaleUpperCase('fr-FR');
+function syncProjectName(projectId) {
+  const p = q.get('SELECT projects.*, clients.name cname FROM projects LEFT JOIN clients ON clients.id = projects.client_id WHERE projects.id = ?', projectId);
+  if (!p || !p.cname) return;
+  const title = upperName(p.cname);
+  if (p.name === title) return;
+  q.run("UPDATE projects SET name = ?, descr = CASE WHEN COALESCE(descr, '') = '' AND ? NOT LIKE 'Commande %' THEN ? ELSE descr END WHERE id = ?", title, p.name, p.name, p.id);
+}
+function syncAllProjectNames() { for (const p of q.all('SELECT id FROM projects WHERE client_id IS NOT NULL')) syncProjectName(p.id); }
 
 // Fiches de l'atelier pour une personne, dans l'ordre du carnet.
 function stepsFor(personId) {
@@ -161,4 +173,4 @@ function stepsFor(personId) {
 const PCOLORS = ['#1A1714', '#6B635A', '#4A443E', '#8C8279', '#2E2925', '#5A534B'];
 const projectColor = (id) => PCOLORS[id % PCOLORS.length];
 
-module.exports = { people, peopleMap, patron, personName, frise, currentPhase, slack, workdays, projectSummary, toDecide, groupDecide, projectFromQuote, stepsFor, projectColor, relDays, iso, addDays };
+module.exports = { upperName, syncProjectName, syncAllProjectNames, people, peopleMap, patron, personName, frise, currentPhase, slack, workdays, projectSummary, toDecide, groupDecide, projectFromQuote, stepsFor, projectColor, relDays, iso, addDays };

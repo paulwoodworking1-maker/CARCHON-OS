@@ -130,3 +130,29 @@
     });
   }
 })();
+
+// Mode nuit : bouton dans la colonne, choix gardé sur cet appareil.
+(function () {
+  var root = document.documentElement;
+  var label = function () { document.querySelectorAll('[data-theme-label]').forEach(function (s) { s.textContent = root.getAttribute('data-theme') === 'dark' ? 'Mode jour' : 'Mode nuit'; }); };
+  label();
+  document.addEventListener('click', function (e) {
+    var b = e.target.closest && e.target.closest('[data-theme-toggle]');
+    if (!b) return;
+    var dark = root.getAttribute('data-theme') !== 'dark';
+    if (dark) root.setAttribute('data-theme', 'dark'); else root.removeAttribute('data-theme');
+    try { localStorage.setItem('theme', dark ? 'dark' : 'light'); } catch (x) {}
+    label();
+  });
+})();
+
+// Expédition : en cochant une pièce, destinataire et adresse se remplissent depuis la fiche client.
+document.addEventListener('change', function (e) {
+  var el = e.target;
+  if (!el.matches || !el.matches('input[data-recipient]') || !el.checked || !el.form) return;
+  var f = el.form;
+  [['recipient', 'data-recipient'], ['address', 'data-address']].forEach(function (p) {
+    var inp = f.querySelector('[name=' + p[0] + ']');
+    if (inp && !inp.value) inp.value = el.getAttribute(p[1]) || '';
+  });
+});

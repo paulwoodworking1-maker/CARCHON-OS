@@ -16,7 +16,7 @@ const friseBar = (fr) => h`<div class="bar" aria-hidden="true">${fr.map((f) => h
 
 function projectCard(p) {
   return h`<a class="proj" href="/projets/${p.id}">
-<div class="line"><span class="ref">${p.ref}</span><b class="t16">${p.name}</b>${pill('no', p.kind)}<span class="mut">${p.client ? p.client.name : 'hors commande client'}</span>
+<div class="line"><span class="ref">${p.ref}</span><b class="t16">${p.name}</b>${p.descr ? h`<span class="mut">${p.descr}</span>` : ''}${pill('no', p.kind)}<span class="mut">${p.client ? p.client.name : 'hors commande client'}</span>
 <span class="mut push">${p.due_date ? `Livraison ${ddmm(p.due_date)} · ` : ''}<b style="color:${p.slack.color}">${p.slack.text}</b></span></div>
 ${friseBar(p.frise)}
 <div class="line"><span class="mut"><b class="ink">${p.cur.phase}</b> · ${p.next}</span><span class="push">${avatar(p.lead, 28)}</span></div></a>`;
@@ -171,10 +171,10 @@ ${p.frise.map((c) => h`<td><span class="c ${CELL[c.state]}">${c.label}</span></t
   : h`<div class="tablebox mt12"><table class="tbl dense" id="oftable">
 <thead><tr>${done ? '' : h`<th class="ck"><input type="checkbox" data-lot-all aria-label="Tout sélectionner"></th>`}<th data-sort>Réf.</th><th data-sort>OF</th><th data-sort>Canal</th><th data-sort>Étape</th><th data-sort class="num">Avancement</th><th data-sort>Resp.</th><th data-sort>Échéance</th><th data-sort>Marge</th></tr></thead>
 <tbody>${rows.map((p) => { const g = prog[p.id] || { n: 0, d: 0 }; const pc = g.n ? Math.round(g.d / g.n * 100) : 0; const urgv = p.slack.text === 'en retard' ? -1000 : p.slack.text === 'tendu' ? -500 : parseInt(p.slack.text, 10) || 9999;
-    return h`<tr data-q="${[p.ref, p.name, p.client ? p.client.name : '', p.for_whom, p.canal, p.cur.phase].join(' ').toLowerCase()}">
+    return h`<tr data-q="${[p.ref, p.name, p.descr, p.client ? p.client.name : '', p.for_whom, p.canal, p.cur.phase].join(' ').toLowerCase()}">
 ${done ? '' : h`<td class="ck"><input type="checkbox" name="ids" value="${p.id}" form="lot" aria-label="Sélectionner ${p.name}"></td>`}
 <td class="ref" data-v="${p.ref}">${p.ref}</td>
-<td class="ofname" data-v="${p.name}"><a class="b" href="/projets/${p.id}">${p.name}</a> <span class="mut">${p.client ? p.client.name : p.for_whom || ''}</span>${(g.unsent || 0) > 0 && !done ? h` <span class="dot-wa" title="Carnet à envoyer à l’atelier">à envoyer</span>` : ''}</td>
+<td class="ofname" data-v="${p.name}"><a class="b" href="/projets/${p.id}">${p.name}</a> <span class="mut">${p.descr || (p.client ? '' : p.for_whom || '')}</span>${(g.unsent || 0) > 0 && !done ? h` <span class="dot-wa" title="Carnet à envoyer à l’atelier">à envoyer</span>` : ''}</td>
 <td data-v="${p.canal}">${p.canal}</td>
 <td data-v="${PHASES.indexOf(p.cur.phase)}">${pill(p.cur.state === 'p' ? 'ko' : 'no', p.cur.phase)}</td>
 <td class="num" data-v="${pc}"><span class="mini"><i style="width:${pc}%"></i></span> ${pc} %</td>
@@ -235,14 +235,14 @@ r.post('/projets/lot', (req, res) => {
 r.get('/projets/nouveau', (req, res) => {
   const body = h`<div class="eb"><a href="/projets">Projets</a></div><h1>Nouveau projet</h1>
 <form method="post" action="/projets/nouveau" class="card form mt20" style="max-width:640px">
-<label>Nom du projet <input name="name" required placeholder="ex. Maggio, Série de tabourets…"></label>
+<label>Ce qu'on fabrique <input name="descr" placeholder="ex. Agencement bureau · mélaminé blanc et chêne"></label>
+<p class="mut">Le titre du projet est le nom du client, en majuscules. Sans client (stock, salon…), indique un nom :</p><label>Nom (projets sans client) <input name="name" placeholder="ex. Série de tabourets"></label>
 <p class="mut">Pour une pièce du catalogue, lance plutôt un lot depuis le <a href="/catalogue">catalogue</a> : nomenclature, carnet et numéros sont repris.</p>
 <div class="grid2"><label>Canal <select name="canal">${options(['Sur-mesure', 'Boutique', 'Revendeur', 'Salon', 'Stock'], 'Sur-mesure')}</select></label>
 <label>Type <select name="kind">${options(['Particulier', 'Architecte', 'Professionnel', 'Atelier', 'Reprise'], 'Particulier')}</select></label></div>
 <label>Pour (client, revendeur, salon…) <input name="for_whom"></label>
-<label>Client existant (facultatif) <select name="client_id"><option value="">—</option>${options(q.all('SELECT id, name FROM clients ORDER BY name').map((c) => [c.id, c.name]))}</select></label>
-<div class="grid2"><label>Ou nouveau client : nom <input name="client_name" placeholder="ex. M. et Mme Martin"></label><label>Son e-mail <input type="email" name="client_email"></label></div>
-<label>Son portable (SMS de suivi, facultatif) <input type="tel" name="client_phone" placeholder="06 12 34 56 78"></label>
+<label>Client (base Cockpit) <input name="client_pick" list="clientbase" placeholder="Tape le nom, l’e-mail ou la ville" autocomplete="off"></label>
+<datalist id="clientbase">${q.all('SELECT id, name, email, address FROM clients ORDER BY name').map((c) => h`<option value="${c.name}${c.email ? ` · ${c.email}` : ''} #${c.id}">${c.address || ''}</option>`)}</datalist>
 <label>Échéance <input type="date" name="due_date"></label>
 <label>Responsable <select name="lead_id">${options(L.people().map((p) => [p.id, p.role === 'patron' ? 'Toi' : p.name]))}</select></label>
 <button class="btn">Créer le projet</button></form>`;
@@ -250,6 +250,9 @@ r.get('/projets/nouveau', (req, res) => {
 });
 // Client choisi, ou créé à la volée (nom + e-mail).
 function clientFrom(b) {
+  const pick = /#(\d+)\s*$/.exec(str(b.client_pick));
+  if (pick) return Number(pick[1]);
+  if (str(b.client_pick)) { const c = q.get('SELECT id FROM clients WHERE lower(name) = lower(?)', str(b.client_pick)); if (c) return c.id; }
   if (str(b.client_name)) {
     const ex = str(b.client_email) ? q.get('SELECT id FROM clients WHERE lower(email) = lower(?)', str(b.client_email)) : null;
     return ex ? ex.id : Number(q.run('INSERT INTO clients (name, email, phone, kind) VALUES (?, ?, ?, ?)', str(b.client_name), str(b.client_email), str(b.client_phone), str(b.kind) || 'Particulier').lastInsertRowid);
@@ -258,8 +261,10 @@ function clientFrom(b) {
 }
 r.post('/projets/nouveau', (req, res) => {
   const b = { ...req.body, client_id: clientFrom(req.body) };
-  const id = q.run('INSERT INTO projects (name, kind, canal, for_whom, client_id, due_date, lead_id, deposit_needed) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-    str(b.name), str(b.kind), str(b.canal) || 'Sur-mesure', str(b.for_whom), int(b.client_id), str(b.due_date) || null, int(b.lead_id), b.client_id ? 1 : 0).lastInsertRowid;
+  if (!b.client_id && !str(b.name) && !str(b.descr)) return res.flashTo('/projets/nouveau', 'Choisis un client (le titre du projet sera son nom) ou indique un nom.', 'ko');
+  const id = q.run('INSERT INTO projects (name, descr, kind, canal, for_whom, client_id, due_date, lead_id, deposit_needed) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    str(b.name) || str(b.descr), str(b.descr), str(b.kind), str(b.canal) || 'Sur-mesure', str(b.for_whom), int(b.client_id), str(b.due_date) || null, int(b.lead_id), b.client_id ? 1 : 0).lastInsertRowid;
+  L.syncProjectName(Number(id));
   logActivity(Number(id), null, 'Projet créé', 'Patron');
   res.flashTo(`/projets/${id}`, 'Projet créé. Prépare son carnet de fabrication quand tu es prêt.');
 });
@@ -271,10 +276,56 @@ function loadProject(req, res, next) {
   req.project = p; next();
 }
 
+// Accès à la chaîne de production du projet (cotes → devis, plans, débit, commandes, planning).
+function chainCard(p) {
+  const C = require('../chaine');
+  const c = C.get(p.id);
+  const x = c ? C.compute(p.id, c.params) : null;
+  const eur = (v) => `${Math.round(v).toLocaleString('fr-FR')} €`;
+  return h`<section class="card" id="chaine"><div class="line"><h2>Chaîne de production</h2>${c ? pill(c.frozen_at ? 'ok' : 'wa', c.frozen_at ? `Indice ${c.indice} figé` : 'Chiffrage') : pill('no', 'À démarrer')}${c?.consumed_at ? pill('ok', 'Débit fait') : ''}</div>
+<p class="mut">Une seule saisie, les cotes et les choix du client : prix, plans, débit et calepinage, commandes, quincaillerie, planning et pose en découlent.</p>
+${x ? h`<div class="ch-mini-kpis mt12"><div><b>${eur(x.ht)}</b><span>prix HT</span></div><div><b>${Math.round(x.marge * 100)} %</b><span>marge</span></div><div><b>${x.pieces}</b><span>pièces · ${x.panelsCount} panneaux</span></div><div><b>${Math.round(x.hours)} h</b><span>atelier et pose</span></div><div><b>${ddmm(x.plan.poseDate)}</b><span>pose au plus tôt</span></div></div>` : ''}
+<div class="line mt12"><a class="btn" href="/projets/${p.id}/chaine">${c ? 'Ouvrir la chaîne de production' : 'Démarrer la chaîne de production'}</a>${c ? h`<a class="btn alt sm" href="/projets/${p.id}/chaine#03">Débit</a><a class="btn alt sm" href="/projets/${p.id}/chaine#04">Commandes</a><a class="btn alt sm" href="/projets/${p.id}/chaine#05">Planning</a>` : ''}</div></section>`;
+}
+
+// Livraisons et poses : plusieurs dates, décidées ici, infos pratiques reprises de la fiche client.
+function tripsCard(p) {
+  const LV = require('../livraisons');
+  const trips = q.all('SELECT * FROM trips WHERE project_id = ? ORDER BY date', p.id);
+  const auto = LV.autoInfo(p);
+  return h`<section class="card" id="livraisons"><div class="line"><h2>Livraisons et poses</h2><span class="count">${trips.length}</span></div>
+<p class="mut">Ajoute autant de dates que nécessaire (livraison partielle, pose, reprise…). Adresse, contact, accès et équipe sont repris tout seuls ; chaque date entre dans le planning et sur le portail du client.</p>
+${trips.map((t, i) => h`<details class="row${i ? '' : ' f'}"><summary class="line grow"><b style="width:70px">${ddmm(t.date)}</b><div class="grow"><b>${t.kind || t.what}</b><span class="mut">${[t.place, t.access, t.team].filter(Boolean).join(' · ')}</span></div>${t.pv_signed_at ? pill('ok', 'PV signé') : t.done_at ? pill('ok', 'Fait') : pill('wa', 'Prévue')}</summary>
+<form method="post" action="/projets/${p.id}/livraisons/${t.id}" class="form grid2 mt8">
+<label>Date <input type="date" name="date" value="${t.date}" required></label><label>Type <select name="kind">${options(LV.KINDS, t.kind)}</select></label>
+<label>Adresse <input name="place" value="${t.place}"></label><label>Accès <input name="access" value="${t.access}"></label>
+<label>Contact <input name="contact" value="${t.contact}"></label><label>Équipe <input name="team" value="${t.team}"></label>
+<div class="line"><button class="btn sm">Enregistrer</button><button class="btn alt sm" name="del" value="1" data-confirm-btn="Supprimer cette date ?">Supprimer</button><a class="btn alt sm" href="/poses/${t.id}/pv">PV</a></div></form></details>`)}
+${trips.length ? '' : h`<p class="mut mt8">Aucune date pour l’instant.</p>`}
+<form method="post" action="/projets/${p.id}/livraisons" class="form mt12">
+<div class="grid2"><label>Date <input type="date" name="date" required></label><label>Type <select name="kind">${options(LV.KINDS)}</select></label></div>
+<div class="grid2"><label>Durée sur place (h) <input name="hours" inputmode="decimal" placeholder="ex. 4"></label><label>Équipe <input name="team" placeholder="${auto.team || 'ex. Lucas + toi'}"></label></div>
+<p class="mut t12">Repris automatiquement : ${[auto.place || 'adresse à compléter dans la fiche client', auto.contact, auto.access].filter(Boolean).join(' · ')}</p>
+<button class="btn sm">+ Ajouter la date</button></form></section>`;
+}
+
+r.post('/projets/:id/livraisons', loadProject, (req, res) => {
+  const id = require('../livraisons').addTrip(req.project, req.body);
+  res.flashTo(`/projets/${req.project.id}#livraisons`, id ? 'Date ajoutée : elle est dans le planning, sur la frise et sur le portail.' : 'Indique une date.', id ? 'ok' : 'ko');
+});
+r.post('/projets/:id/livraisons/:tid', loadProject, (req, res) => {
+  const b = req.body, p = req.project;
+  if (b.del) q.run('DELETE FROM trips WHERE id = ? AND project_id = ?', req.params.tid, p.id);
+  else q.run('UPDATE trips SET date = ?, kind = ?, what = ?, place = ?, access = ?, contact = ?, team = ? WHERE id = ? AND project_id = ?',
+    str(b.date), str(b.kind), str(b.kind), str(b.place), str(b.access), str(b.contact), str(b.team), req.params.tid, p.id);
+  const last = q.get('SELECT MAX(date) d FROM trips WHERE project_id = ?', p.id).d;
+  if (last) q.run('UPDATE projects SET due_date = ? WHERE id = ?', last, p.id);
+  res.flashTo(`/projets/${p.id}#livraisons`, b.del ? 'Date supprimée.' : 'Date mise à jour (planning compris).');
+});
+
 r.get('/projets/:id', loadProject, (req, res) => {
   const p = L.projectSummary(req.project);
   const pm = L.peopleMap();
-  const pieces = q.all('SELECT * FROM pieces WHERE project_id = ? ORDER BY id', p.id);
   const plans = q.all('SELECT * FROM plans WHERE project_id = ? ORDER BY id DESC', p.id);
   const photos = q.all('SELECT * FROM photos WHERE project_id = ? ORDER BY created_at DESC', p.id);
   const issues = q.all("SELECT * FROM issues WHERE project_id = ? AND status = 'open' ORDER BY created_at DESC", p.id);
@@ -286,6 +337,8 @@ r.get('/projets/:id', loadProject, (req, res) => {
   const shared = photos.filter((x) => x.shared_client).length;
   const units = q.all('SELECT * FROM units WHERE project_id = ? ORDER BY serial', p.id);
   const lots = q.all('SELECT * FROM wood_lots WHERE project_id = ? ORDER BY code', p.id);
+  const resAll = require('../chaine').reservations();
+  const panelRes = Object.entries(resAll).flatMap(([rid, o]) => o.projects.filter((x) => x.id === p.id && x.frozen).map((x) => ({ ...x, name: (q.get('SELECT name, thickness FROM panel_refs WHERE id = ?', rid) || {}).name || '' })));
   const pneeds = q.all("SELECT * FROM needs WHERE project_id = ? AND status != 'arrived' ORDER BY id", p.id);
   const model = p.model_id ? q.get('SELECT * FROM models WHERE id = ?', p.model_id) : null;
   const ustate = { a_faire: '', en_stock: 'done', expediee: 'done', livree: 'done' };
@@ -293,7 +346,7 @@ r.get('/projets/:id', loadProject, (req, res) => {
   const people = L.people();
   const body = h`
 <div class="mut"><a href="/projets">Projets</a> › ${p.name}</div>
-<div class="head mt4"><div><div class="ref">Dossier ${p.ref}</div><h1 class="m0">${p.name}</h1>
+<div class="head mt4"><div><div class="ref">Dossier ${p.ref}</div><h1 class="m0">${p.name}</h1>${p.descr ? h`<div class="t16 mt4">${p.descr}</div>` : ''}
 <div class="line mt8">${pill('no', p.kind)}<span class="mut">${p.client ? p.client.name : 'hors commande client'}${p.due_date ? ` · Livraison ${ddmm(p.due_date)}` : ''}</span><b style="color:${p.slack.color}" class="t13">${p.slack.text}</b>${p.portal_state === 'open' ? pill('ok', 'Visible sur le portail client') : ''}${p.status === 'termine' ? pill('no', 'Terminé') : ''}</div></div>
 <div class="push line"><a class="btn alt" href="#photos">Ajouter une photo</a><a class="btn alt" href="/carnets/${p.id}/imprimer">Imprimer le carnet</a><a class="btn" href="/carnets/${p.id}">Ouvrir le carnet</a></div></div>
 
@@ -314,19 +367,15 @@ ${issues.map((s) => {
 <section class="card mt20"><div class="line"><h2>Pièces et matière</h2>${pill('no', p.canal)}${model ? h`<a class="mut" href="/catalogue?m=${model.id}">modèle ${model.name}</a>` : ''}${p.for_whom ? h`<span class="mut">pour ${p.for_whom}</span>` : ''}
 <span class="push line">${units.some((u) => u.status === 'a_faire') || !units.length ? postBtn(`/projets/${p.id}/controle`, units.length > 1 ? 'Contrôler la pièce suivante' : 'Contrôle final', 'btn sm') : ''}<a class="btn alt sm" href="/carnets/${p.id}/imprimer">Imprimer le carnet</a></span></div>
 ${units.length ? h`<div class="h3 mt12">Pièces · ${units.filter((u) => u.status !== 'a_faire').length} contrôlée(s) sur ${units.length}</div><div class="unitgrid">${units.map((u) => h`<a class="unit ${ustate[u.status]}" href="/unites/${u.id}"><b>${u.serial}</b>${ulabel[u.status]}</a>`)}</div>` : h`<p class="mut mt8">La pièce reçoit son numéro (${p.ref}) au contrôle final.</p>`}
-<div class="line" style="align-items:flex-start;gap:40px;margin-top:12px"><div style="flex:1 1 340px;min-width:0"><div class="h3">Bois réservé</div>${lots.map((l) => h`<div class="row"><b>${l.code}</b><span class="grow">${l.essence} ${l.thickness}</span><span>${String(l.volume).replace('.', ',')} m³</span></div>`)}${lots.length ? '' : h`<p class="mut">Aucun lot réservé. <a href="/bois">Réserver un lot</a></p>`}</div>
+<div class="line" style="align-items:flex-start;gap:40px;margin-top:12px"><div style="flex:1 1 340px;min-width:0"><div class="h3">Panneaux réservés</div>${panelRes.map((l) => h`<div class="row"><span class="grow">${l.name}</span><span>${String(Math.round(l.m2 * 10) / 10).replace('.', ',')} m² · ${l.panels} panneau${l.panels > 1 ? 'x' : ''}</span></div>`)}${lots.map((l) => h`<div class="row"><b>${l.code}</b><span class="grow">${l.essence} ${l.thickness}</span><span>${String(l.volume).replace('.', ',')} m³</span></div>`)}${panelRes.length || lots.length ? '' : h`<p class="mut">Rien de réservé. Les panneaux se réservent quand la <a href="/projets/${p.id}/chaine">chaîne de production</a> est figée.</p>`}</div>
 <div style="flex:1 1 340px;min-width:0"><div class="h3">Achats liés</div>${pneeds.map((n) => h`<div class="row"><span class="grow">${n.text}</span>${pill(n.status === 'ordered' ? 'wa' : n.needs_deposit && !n.force ? 'ko' : 'no', n.status === 'ordered' ? 'Commandé' : n.needs_deposit && !n.force ? 'Attend l’acompte' : 'À commander')}</div>`)}${pneeds.length ? '' : h`<p class="mut">Rien à acheter.</p>`}</div></div>
 </section>
 
 <div class="cols mt20">
 <div class="main-col">
-<section class="card"><div class="line"><h2>Pièces du projet</h2></div>
-${pieces.map((x, i) => h`<details class="row${i ? '' : ' f'}"><summary class="line grow"><div class="grow"><b>${x.name}</b><span class="mut">${x.descr}</span></div>${x.status ? pill('no', x.status) : ''}${avatar(pm[x.who_id], 28)}</summary>
-<form method="post" action="/projets/${p.id}/pieces/${x.id}" class="form grid2 mt8"><label>Nom <input name="name" value="${x.name}"></label><label>Description <input name="descr" value="${x.descr}"></label>
-<label>État <input name="status" value="${x.status}" placeholder="ex. Finition 2/3"></label><label>Qui <select name="who_id"><option value="">—</option>${options(people.map((pp) => [pp.id, pp.name]), x.who_id)}</select></label>
-<div class="line"><button class="btn sm">Enregistrer</button><button class="btn alt sm" name="del" value="1">Retirer</button></div></form></details>`)}
-<details class="mt12"><summary class="btn alt sm">+ Pièce</summary><form method="post" action="/projets/${p.id}/pieces" class="form grid2 mt8"><label>Nom <input name="name" required></label><label>Description <input name="descr"></label><button class="btn sm">Ajouter</button></form></details>
-</section>
+${chainCard(p)}
+
+${tripsCard(p)}
 
 <section class="card"><div class="line"><h2>Plans</h2></div>
 ${plans.map((x, i) => h`<div class="row${i ? '' : ' f'}"><div class="grow"><b>${x.version}${x.descr ? ` · ${x.descr}` : ''}</b><span class="mut">${x.status === 'validee' ? `Validée${x.validated_at ? ` le ${ddmm(x.validated_at)}` : ''} · fait foi pour l'atelier` : x.status === 'archivee' ? `${ddmm(x.created_at)} · remplacée` : `${ddmm(x.created_at)} · à valider`}</span></div>
@@ -353,7 +402,8 @@ ${time.map((t, i) => h`<div class="who${i ? '' : ' f'}"><span class="grow">${t.g
 
 <section class="card" id="acompte"><h2>Projet</h2>
 <form method="post" action="/projets/${p.id}/infos" class="form">
-<label>Nom <input name="name" value="${p.name}"></label>
+${p.client_id ? h`<p class="mut">Titre : nom du client.</p>` : h`<label>Nom <input name="name" value="${p.name}"></label>`}
+<label>Ce qu'on fabrique <input name="descr" value="${p.descr || ''}"></label>
 <label>Échéance (livraison) <input type="date" name="due_date" value="${p.due_date || ''}"></label>
 <label>Responsable <select name="lead_id"><option value="">—</option>${options(people.map((pp) => [pp.id, pp.role === 'patron' ? 'Toi' : pp.name]), p.lead_id)}</select></label>
 <label>Prochaine action (vide = automatique) <input name="next_action" value="${p.next_action}"></label>
@@ -366,18 +416,19 @@ ${p.client_id ? h`<label class="ck"><input type="checkbox" name="deposit_needed"
 </section>
 
 ${p.client_id ? h`<section class="card"><div class="line"><h2>Portail client</h2>${pill(p.portal_state === 'open' ? 'ok' : 'no', p.portal_state === 'open' ? 'Ouvert' : p.portal_state === 'cut' ? 'Accès coupé' : 'Pas ouvert')}</div>
-<p class="mut">Ce que ${p.client.name} voit dans son espace. Tout part tout seul, sauf la date de pose.</p>
+<p class="mut">Ce que ${p.client.name} voit dans son espace. Tout part tout seul, dates de livraison comprises.</p>
 <div class="who f"><span class="grow">Devis</span><b>${quote ? `Accepté le ${ddmm(quote.accepted_at)}` : '—'}</b></div>
 <div class="who"><span class="grow">Acompte</span><b>${p.deposit_at ? `Reçu le ${ddmm(p.deposit_at)}` : 'Attendu'}</b></div>
 <form method="post" action="/projets/${p.id}/infos" class="who"><label class="grow" for="rd">Prête à poser vers le</label><input id="rd" type="date" name="ready_date" value="${p.ready_date || ''}" data-auto><input type="hidden" name="only" value="ready_date"></form>
 <div class="who"><span class="grow">Photos partagées</span><b>${shared} sur ${photos.length}</b></div>
 <div class="line mt12"><a class="btn alt sm" href="/portails#p${p.id}">Gérer le portail</a><a class="btn alt sm" href="/projets/${p.id}/nouvelles">Donner des nouvelles</a></div>
 ${p.portal_state !== 'open' ? postBtn(`/portails/espace/${p.id}/ouvrir`, 'Ouvrir l’espace client', 'btn sm mt12') : ''}</section>`
-    : h`<section class="card" id="client"><h2>Client et portail</h2><p class="mut">Rattache un client à cet OF pour lui ouvrir un espace de suivi (avancement, photos partagées, documents, date de pose).</p>
+    : h`<section class="card" id="client"><h2>Client</h2><p class="mut">Choisis le client dans la base clientèle de Cockpit. Le projet prend son nom, et tu pourras lui ouvrir un espace de suivi (avancement, photos, documents, dates de livraison).</p>
 <form method="post" action="/projets/${p.id}/client" class="form mt12">
-<label>Client existant <select name="client_id"><option value="">—</option>${options(q.all('SELECT id, name FROM clients ORDER BY name').map((c) => [c.id, c.name]))}</select></label>
-<label>Ou nouveau client : nom <input name="client_name"></label><label>Son e-mail <input type="email" name="client_email"></label><label>Téléphone <input name="client_phone"></label>
-<button class="btn sm">Rattacher le client</button></form></section>`}
+<label>Client (base Cockpit) <input name="client_pick" list="clientbase" required placeholder="Tape le nom, l’e-mail ou la ville" autocomplete="off"></label>
+<datalist id="clientbase">${q.all('SELECT id, name, email, address FROM clients ORDER BY name').map((c) => h`<option value="${c.name}${c.email ? ` · ${c.email}` : ''} #${c.id}">${c.address || ''}</option>`)}</datalist>
+<button class="btn sm">Rattacher le client</button></form>
+<p class="mut t12 mt8">${require('../cockpit').configured() ? h`${q.get('SELECT COUNT(*) n FROM clients').n} clients dans la base. ${postBtn('/clients/synchroniser', 'Mettre à jour depuis Cockpit', 'linkbtn', { back: `/projets/${p.id}#client` })}` : h`Liaison Cockpit à régler dans <a href="/entreprise#cockpit">Équipe et réglages › Entreprise</a>.`}</p></section>`}
 
 <section class="card" id="historique"><h2>Historique</h2><p class="mut">Tout ce qui s’est passé sur ce dossier, daté.</p>
 <ol class="timeline mt8">${history.map((a) => h`<li><time datetime="${a.created_at}">${ddmm(a.created_at)} · ${hhmm(a.created_at)}</time><span>${a.text}${a.who ? h` <span class="mut">· ${a.who}</span>` : ''}</span></li>`)}</ol>
@@ -400,10 +451,16 @@ r.post('/projets/:id/phase', loadProject, (req, res) => {
   res.redirect(`/projets/${req.project.id}`);
 });
 
+r.post('/clients/synchroniser', async (req, res) => {
+  const back = String(req.body.back || '/').startsWith('/') ? String(req.body.back) : '/';
+  try { const n = await require('../cockpit').pull(); res.flashTo(back, `Base clientèle à jour : ${n} client(s) de Cockpit.`); }
+  catch (e) { res.flashTo(back, `Cockpit injoignable : ${e.message}`, 'ko'); }
+});
 r.post('/projets/:id/client', loadProject, (req, res) => {
   const cid = clientFrom(req.body);
-  if (!cid) return res.flashTo(`/projets/${req.project.id}#client`, 'Choisis un client ou indique son nom.', 'ko');
+  if (!cid) return res.flashTo(`/projets/${req.project.id}#client`, 'Client introuvable dans la base : choisis-le dans la liste proposée.', 'ko');
   q.run('UPDATE projects SET client_id = ?, for_whom = COALESCE(NULLIF(for_whom, \'\'), (SELECT name FROM clients WHERE id = ?)) WHERE id = ?', cid, cid, req.project.id);
+  L.syncProjectName(req.project.id);
   logActivity(req.project.id, null, 'Client rattaché', 'Patron');
   res.flashTo(`/projets/${req.project.id}`, 'Client rattaché. Tu peux maintenant lui ouvrir son espace (bloc « Portail client »).');
 });
@@ -415,8 +472,8 @@ r.post('/projets/:id/infos', loadProject, (req, res) => {
   }
   const depositAt = str(b.deposit_at) || null;
   tx(() => {
-    q.run('UPDATE projects SET name = ?, due_date = ?, lead_id = ?, next_action = ?, wood = ?, notes = ?, deposit_needed = ?, deposit_at = ? WHERE id = ?',
-      str(b.name) || p.name, str(b.due_date) || null, int(b.lead_id), str(b.next_action), str(b.wood), str(b.notes), p.client_id ? (b.deposit_needed ? 1 : 0) : 0, depositAt, p.id);
+    q.run('UPDATE projects SET name = ?, descr = ?, due_date = ?, lead_id = ?, next_action = ?, wood = ?, notes = ?, deposit_needed = ?, deposit_at = ? WHERE id = ?',
+      p.client_id ? p.name : str(b.name) || p.name, str(b.descr), str(b.due_date) || null, int(b.lead_id), str(b.next_action), str(b.wood), str(b.notes), p.client_id ? (b.deposit_needed ? 1 : 0) : 0, depositAt, p.id);
     // Acompte reçu : les achats qui l'attendaient se débloquent.
     if (depositAt && !p.deposit_at) { q.run('UPDATE needs SET needs_deposit = 0 WHERE project_id = ?', p.id); logActivity(p.id, null, `Acompte reçu le ${ddmm(depositAt)}`, 'Patron'); SMS.notify('acompte', { projectId: p.id }); }
     if (str(b.due_date) && str(b.due_date) !== (p.due_date || '')) logActivity(p.id, null, `Date de livraison : ${ddmm(str(b.due_date))}${p.due_date ? ` (au lieu du ${ddmm(p.due_date)})` : ''}`, 'Patron');
@@ -527,12 +584,10 @@ r.get('/projets/:id/nouvelles', loadProject, async (req, res, next) => {
     try { const m = await ai.clientUpdate({ project: p, clientName: p.client.name, facts }); subject = m.objet; text = m.message; note = 'Rédigé par l’assistant à partir de l’avancement réel. Relis avant d’envoyer.'; }
     catch (e) { if (!(e instanceof ai.AIError)) return next(e); note = `${e.message} Voici un modèle simple.`; }
   }
-  const mail = `mailto:${encodeURIComponent(p.client.email || '')}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(text)}`;
   const body = h`<div class="mut"><a href="/projets/${p.id}">${p.name}</a></div><h1>Donner des nouvelles à ${p.client.name}</h1>
-<section class="card mt20 mw680 form"><p class="mut">${note}</p>
-<label>Objet <input value="${subject}" readonly></label><label>Message <textarea id="newsmsg" rows="12">${text}</textarea></label>
-<div class="line"><a class="btn" href="${mail}">Ouvrir dans ma messagerie</a><button type="button" class="btn alt" data-copy="#newsmsg">Copier</button></div>
-<p class="mut t12">Faits utilisés : ${facts.join(' · ')}</p></section>`;
+<section class="card mt20 mw680"><p class="mut">${note}</p>
+${require('./mail').composeForm({ to: p.client.email || '', subject, body: text, back: `/projets/${p.id}`, projectId: p.id, id: 'newsmsg' })}
+<p class="mut t12 mt12">Faits utilisés : ${facts.join(' · ')}</p></section>`;
   res.send(layout({ title: 'Nouvelles', tab: 'projets', sub: '/projets', body }));
 });
 

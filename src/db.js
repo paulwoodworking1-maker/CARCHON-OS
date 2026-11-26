@@ -178,6 +178,11 @@ addColumn('projects', 'portal_opened_at', 'TEXT');
 addColumn('projects', 'portal_seen_at', 'TEXT');
 addColumn('projects', 'portal_views', 'INTEGER NOT NULL DEFAULT 0');
 addColumn('projects', 'portal_link_at', 'TEXT');
+addColumn('projects', 'descr', "TEXT DEFAULT ''");          // ce qu'on fabrique (le titre, lui, est le nom du client)
+addColumn('clients', 'cockpit_id', 'TEXT');                  // fiche client de Cockpit
+addColumn('clients', 'synced_at', 'TEXT');
+addColumn('trips', 'kind', "TEXT DEFAULT 'Livraison et pose'");
+addColumn('trips', 'hours', 'REAL DEFAULT 0');
 
 db.exec(`
 CREATE TABLE IF NOT EXISTS models (
@@ -322,6 +327,28 @@ function bootstrap() {
     setSetting('stock_seeded', '1');
   }
   if (setting('portal_test_mode') === null) setSetting('portal_test_mode', '1');
+  // Inventaire réel de l'atelier (quincaillerie, droguerie, consommables), sans quantités : chacun en OK / Bientôt / Vide.
+  if (setting('stock_atelier_v2') !== '1') {
+    const REAL = {
+      Quincaillerie: [
+        'Vis SPAX-M 4 × 50 mm, empreinte T20, Wirox (boîte de 500)', 'Vis SPAX 4 × 30 mm, empreinte T20 (boîte de 200)',
+        'Vis de liaison de meubles (assemblage de caissons)', 'Charnières en applique', 'Charnières pour porte encastrée',
+        'Charnières Blum droites (en applique), grises', 'Charnières Blum encastrées, grises', 'Embases droites Blum, grises',
+        'Pieds et embases de meuble réglables, 75 mm', 'Clips de plinthes',
+        'Connecteurs Lamello Clamex P', 'Connecteurs Lamello Tenso', 'Lamelles bois Lamello, taille 20',
+        'Dominos Festool 4 × 20 mm', 'Dominos Festool 5 × 30 mm', 'Dominos Festool 6 × 40 mm', 'Dominos Festool 8 × 40 mm', 'Dominos Festool 10 × 50 mm',
+      ],
+      Droguerie: ['Rouleaux de peinture', 'Bacs à peinture'],
+      Consommables: ['Cartouches de masque, filtre standard', 'Cartouches de masque, filtre vernis et solvants', 'Sacs d’aspirateur'],
+    };
+    // Les intitulés trop vagues sont remplacés par les dénominations précises.
+    for (const old of ['Charnières', 'Vis SPAX', 'Cartouches de masque', 'Bacs à peinture']) q.run('DELETE FROM stock_items WHERE name = ?', old);
+    for (const [cat, items] of Object.entries(REAL)) {
+      let ord = (q.get('SELECT MAX(ord) m FROM stock_items WHERE category = ?', cat)?.m ?? -1) + 1;
+      for (const n of items) if (!q.get('SELECT id FROM stock_items WHERE name = ?', n)) q.run('INSERT INTO stock_items (category, name, state, ord) VALUES (?, ?, 0, ?)', cat, n, ord++);
+    }
+    setSetting('stock_atelier_v2', '1');
+  }
 }
 // Index : les listes restent rapides avec beaucoup de dossiers.
 db.exec(`

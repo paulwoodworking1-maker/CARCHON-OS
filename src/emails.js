@@ -24,16 +24,10 @@ Vous n'avez pas demandé ce code ? Ignorez simplement cet e-mail : rien ne sera 
 
 Bien cordialement,
 ${sign(c)}`;
-  const html = `<!doctype html><html lang="fr"><body style="margin:0;padding:0;background:#F2EFEA">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#F2EFEA;padding:32px 12px"><tr><td align="center">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;background:#ffffff;font-family:Helvetica,Arial,sans-serif;color:#1A1714">
-<tr><td style="padding:28px 32px 8px;font-size:13px;letter-spacing:3px;text-transform:uppercase;font-weight:bold">${esc(c.name)}</td></tr>
-<tr><td style="padding:8px 32px 0;font-size:15px;line-height:1.6">${esc(hello(x.signer_name))}<br><br>Voici votre code de validation pour accepter le devis n°&nbsp;<b>${esc(x.number)}</b>&nbsp;:</td></tr>
-<tr><td style="padding:22px 32px"><div style="font-size:34px;letter-spacing:10px;font-weight:bold;background:#F2EFEA;padding:18px 0;text-align:center">${code}</div></td></tr>
-<tr><td style="padding:0 32px;font-size:14px;line-height:1.6;color:#4A443E">Recopiez ces 6 chiffres sur la page du devis, dans la case «&nbsp;Code reçu&nbsp;», puis cliquez sur «&nbsp;Valider le code&nbsp;».<br>Le code est valable 15&nbsp;minutes.</td></tr>
-<tr><td style="padding:18px 32px 0;font-size:13px;line-height:1.6;color:#6B635A">Vous n'avez pas demandé ce code&nbsp;? Ignorez simplement cet e-mail&nbsp;: rien ne sera validé sans lui.</td></tr>
-<tr><td style="padding:26px 32px 30px;font-size:13px;line-height:1.6;color:#6B635A;border-top:1px solid #D9D4CC">${[c.name, c.address, c.phone, c.email, c.site].filter(Boolean).map(esc).join('<br>')}</td></tr>
-</table></td></tr></table></body></html>`;
+  const html = require('./mail').brand(`${esc(hello(x.signer_name))}<br><br>Voici votre code de validation pour accepter le devis n°&nbsp;<b>${esc(x.number)}</b>&nbsp;:
+<div style="font-size:34px;letter-spacing:10px;font-weight:bold;background:#F2EFEA;padding:18px 0;text-align:center;margin:22px 0">${code}</div>
+<span style="font-size:14px;color:#4A443E">Recopiez ces 6 chiffres sur la page du devis, dans la case «&nbsp;Code reçu&nbsp;», puis cliquez sur «&nbsp;Valider le code&nbsp;».<br>Le code est valable 15&nbsp;minutes.</span>
+<p style="font-size:13px;color:#6B635A;margin:18px 0 0">Vous n'avez pas demandé ce code&nbsp;? Ignorez simplement cet e-mail&nbsp;: rien ne sera validé sans lui.</p>`);
   return { subject, text, html };
 }
 
@@ -110,13 +104,10 @@ ${sign(c)}`,
   };
 }
 
-// Brouillon Gmail : ouvre une nouvelle fenêtre de rédaction déjà remplie, enregistrée dans « Brouillons ».
-function gmailUrl(to, { subject, body }) {
-  const acct = setting('gmail_account') || setting('patron_email') || '';
-  const p = new URLSearchParams({ view: 'cm', fs: '1', to: to || '', su: subject, body });
-  if (acct) p.set('authuser', acct);
-  return `https://mail.google.com/mail/?${p.toString()}`;
-}
-const mailto = (to, { subject, body }) => `mailto:${encodeURIComponent(to || '')}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+// Plus de brouillon dans une messagerie externe : le message s'ouvre dans Carchon OS, prêt à partir
+// directement depuis la boîte Gmail de l'atelier.
+const composeUrl = (to, { subject, body }, back = '') => `/mail/nouveau?${new URLSearchParams({ to: to || '', subject, body, ...(back ? { back } : {}) }).toString()}`;
+const gmailUrl = composeUrl;
+const mailto = composeUrl;
 
-module.exports = { otp, quote, relance, space, gmailUrl, mailto };
+module.exports = { otp, quote, relance, space, gmailUrl, mailto, composeUrl };
