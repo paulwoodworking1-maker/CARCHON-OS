@@ -63,7 +63,7 @@ Pour que les clients reçoivent leur code par e-mail, renseigner `SMTP_*` (l'adr
 
 ## E-mails et SMS aux clients
 
-- **Codes de validation des devis** : `GMAIL_USER` et `GMAIL_APP_PASSWORD` (mot de passe d'application Google, 16 lettres). Les e-mails partent de ce Gmail.
+- **Codes de validation des devis** : soit `BREVO_API_KEY` + `MAIL_FROM` (adresse validée comme expéditeur dans Brevo), soit `GMAIL_USER` + `GMAIL_APP_PASSWORD` (mot de passe d'application Google).
 - **SMS de suivi** : `BREVO_API_KEY` (compte Brevo avec un pack de SMS). Un SMS court part au client à chaque nouveauté de son portail, regroupé sur 15 minutes, jamais la nuit ni le dimanche. Modèles modifiables dans Portails clients › Réglages et e-mails.
 - **Brouillons Gmail** : « Créer le brouillon Gmail » ouvre un message rédigé dans Gmail (rangé dans Brouillons).
 

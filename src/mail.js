@@ -17,9 +17,27 @@ if (process.env.SMTP_HOST) {
     auth: process.env.SMTP_USER ? { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS } : undefined,
   });
 }
-const configured = () => !!transport;
+// Autre solution, sans Google : la même clé Brevo que pour les SMS (expéditeur validé dans Brevo).
+const brevo = () => !transport && !!process.env.BREVO_API_KEY;
+const sender = () => {
+  const { setting, company } = require('./db');
+  return process.env.MAIL_FROM || setting('mail_from') || company().email || '';
+};
+const configured = () => !!transport || (brevo() && !!sender());
+const via = () => (transport ? (process.env.SMTP_HOST === 'smtp.gmail.com' ? 'gmail' : 'smtp') : brevo() && sender() ? 'brevo' : '');
+const fromAddress = () => (transport ? process.env.SMTP_USER : sender());
+
+async function viaBrevo({ to, subject, text, html, replyTo }) {
+  const co = require('./db').company();
+  const body = { sender: { name: co.name, email: sender() }, to: [{ email: to }], subject, textContent: text, ...(html ? { htmlContent: html } : {}),
+    ...(replyTo || (co.email && co.email !== sender()) ? { replyTo: { email: replyTo || co.email } } : {}) };
+  const r = await fetch('https://api.brevo.com/v3/smtp/email', { method: 'POST', headers: { 'api-key': process.env.BREVO_API_KEY, 'content-type': 'application/json', accept: 'application/json' }, body: JSON.stringify(body) });
+  if (!r.ok) throw new Error(`Brevo ${r.status} : ${(await r.text()).slice(0, 200)}`);
+  return { sent: true };
+}
 
 async function send({ to, subject, text, html, replyTo }) {
+  if (!transport && brevo() && sender()) return viaBrevo({ to, subject, text, html, replyTo });
   if (!transport) {
     console.log(`[e-mail non envoyé : SMTP absent] À ${to} · ${subject}\n${text}\n`);
     return { logged: true };
@@ -31,4 +49,4 @@ async function send({ to, subject, text, html, replyTo }) {
   return { sent: true };
 }
 
-module.exports = { send, configured };
+module.exports = { send, configured, via, fromAddress, sender };

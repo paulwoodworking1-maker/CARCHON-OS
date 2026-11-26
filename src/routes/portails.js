@@ -189,15 +189,20 @@ r.get('/portails/reglages', (req, res) => {
   const configured = mail.configured();
   const body = h`
 <section class="card mw680" id="emails" style="border-top:0;padding-top:0"><h2>E-mails aux clients</h2>
-${configured ? h`<p class="mt8">${pill('ok', 'Branché')} Les codes de validation partent de <b>${process.env.SMTP_USER || ''}</b>.</p>
+${configured ? h`<p class="mt8">${pill('ok', 'Branché')} Les codes de validation partent de <b>${mail.fromAddress()}</b> ${mail.via() === 'brevo' ? '(via Brevo)' : mail.via() === 'gmail' ? '(via Gmail)' : ''}.</p>
 <form method="post" action="/portails/test-email" class="line mt12"><button class="btn alt sm">M’envoyer un e-mail de test</button><span class="mut t12">à l’adresse du patron (Automatisations)</span></form>`
-  : h`<p class="mt8">${pill('ko', 'Pas encore branché')} Sans cela, le client ne reçoit pas son code et ne peut pas signer en mode réel.</p>
-<ol class="steps mt12">
-<li>Sur ton compte Google, active la <b>validation en deux étapes</b> si ce n’est pas déjà fait : <a href="https://myaccount.google.com/signinoptions/twosv" target="_blank" rel="noopener">myaccount.google.com › Sécurité</a>.</li>
-<li>Crée un <b>mot de passe d’application</b> : <a href="https://myaccount.google.com/apppasswords" target="_blank" rel="noopener">myaccount.google.com/apppasswords</a>, nom « Carchon OS ». Google affiche 16 lettres : copie-les.</li>
-<li>Dans Render › carchon-os › <b>Environment</b>, ajoute deux variables : <code>GMAIL_USER</code> = ton adresse Gmail, et <code>GMAIL_APP_PASSWORD</code> = les 16 lettres. Clique <b>Save, rebuild and deploy</b>.</li>
-<li>Reviens ici et clique « M’envoyer un e-mail de test ».</li></ol>
-<p class="mut t12 mt8">Les e-mails partent vraiment de ton Gmail : ils sont signés par Google, ce qui évite les indésirables, et tu les retrouves dans « Messages envoyés ».</p>`}
+  : h`<p class="mt8">${pill('ko', 'Pas encore branché')} Sans cela, le client ne reçoit pas son code et ne peut pas signer en mode réel. Deux solutions, une seule suffit :</p>
+<h3 class="mt12">Solution A · Brevo (la même clé que pour les SMS)</h3>
+<ol class="steps mt8">
+<li>Dans Brevo : menu en haut à droite › <b>Expéditeurs, domaines et IP dédiées</b> › <b>Expéditeurs</b> › Ajouter un expéditeur : nom « ${require('../db').company().name} », et l’adresse qui enverra les codes. Brevo t’envoie un code pour la valider.</li>
+<li>Idéal contre les indésirables : une adresse de ton domaine (ex. contact@carchon.com) et, dans <b>Domaines</b>, « Authentifier le domaine » (Brevo donne 2 ou 3 lignes à copier chez l’hébergeur du site).</li>
+<li>Dans Render › Environment : <code>BREVO_API_KEY</code> (si ce n’est pas déjà fait) et <code>MAIL_FROM</code> = l’adresse validée. Save, rebuild and deploy.</li></ol>
+${process.env.BREVO_API_KEY && !mail.sender() ? h`<p class="flash ko mt8">La clé Brevo est là, il ne manque que l’adresse d’expédition (MAIL_FROM, ou l’e-mail dans Réglages › Entreprise).</p>` : ''}
+<h3 class="mt12">Solution B · Gmail</h3>
+<ol class="steps mt8">
+<li>Validation en deux étapes activée sur ton compte Google.</li>
+<li>Mot de passe d’application : <a href="https://myaccount.google.com/apppasswords" target="_blank" rel="noopener">myaccount.google.com/apppasswords</a> (vérifie en haut à droite que c’est le bon compte Google), nom « Carchon OS ». Copie les 16 lettres.</li>
+<li>Dans Render › Environment : <code>GMAIL_USER</code> = ton adresse Gmail, <code>GMAIL_APP_PASSWORD</code> = les 16 lettres. Save, rebuild and deploy.</li></ol>`}
 <form method="post" action="/portails/gmail" class="form mt20"><label>Compte Gmail où ranger les brouillons (devis, relances, liens de suivi) <input type="email" name="gmail_account" value="${setting('gmail_account') || ''}" placeholder="ton.adresse@gmail.com"></label>
 <p class="mut t12">Si tu es connecté à plusieurs comptes Google dans ton navigateur, c’est celui-ci qui s’ouvrira.</p><button class="btn sm">Enregistrer</button></form></section>
 
