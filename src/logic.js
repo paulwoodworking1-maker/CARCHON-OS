@@ -99,12 +99,33 @@ function toDecide() {
   for (const p of q.all("SELECT * FROM projects WHERE status = 'en_cours' AND client_id IS NOT NULL AND deposit_needed = 1 AND deposit_at IS NULL")) {
     const since = p.deposit_asked_at || p.created_at;
     const blocks = q.get("SELECT COUNT(*) n FROM needs WHERE project_id = ? AND status = 'todo' AND needs_deposit = 1", p.id).n;
-    items.push({ kind: 'ko', tag: 'Acompte', title: `${p.name} · acompte non reçu`, text: `Demandé ${relDays(since)}${blocks ? ' · bloque des achats' : ''}`, href: `/projets/${p.id}#acompte`, cta: 'Noter reçu' });
+    items.push({ kind: 'ko', tag: 'Acompte', title: `${p.name} · acompte non reçu`, text: `Demandé ${relDays(since)}${blocks ? ' · bloque des achats' : ''}`, href: `/projets/${p.id}#acompte`, cta: 'Ouvrir', act: `/projets/${p.id}/acompte`, actLabel: 'Reçu aujourd’hui' });
   }
   for (const m of q.all('SELECT messages.*, steps.title st, steps.project_id pid, people.name pname FROM messages JOIN steps ON steps.id = messages.step_id LEFT JOIN people ON people.id = messages.person_id WHERE read_by_patron = 0 ORDER BY messages.created_at DESC')) {
     items.push({ kind: 'no', tag: 'Message', title: `${m.pname} · ${m.st}`, text: `« ${m.body} »`, href: `/carnets/${m.pid}?fiche=${m.step_id}`, cta: 'Répondre' });
   }
-  return [...items, ...require('./automations').alerts()];
+  const all = [...items, ...require('./automations').alerts()];
+  const later = new Set(q.all('SELECT key FROM snoozes WHERE until > ?', today()).map((x) => x.key));
+  const order = { ko: 0, wa: 1, ok: 2, no: 3 };
+  return all.map((d) => ({ ...d, key: `${d.tag}|${d.href}|${d.title}` }))
+    .filter((d) => !later.has(d.key))
+    .sort((a, b) => (b.primary ? 1 : 0) - (a.primary ? 1 : 0) || (order[a.kind] ?? 9) - (order[b.kind] ?? 9));
+}
+// Au-delà de 3 alertes du même genre, une seule ligne les résume (le détail est sur la page À décider).
+const GROUP_LINK = { Acompte: '/projets?f=acompte', Relance: '/projets?f=acompte', 'Retard prévu': '/projets?f=retard', Entretien: '/machines' };
+function groupDecide(items, max = 3) {
+  const byTag = {};
+  for (const d of items) (byTag[d.tag] = byTag[d.tag] || []).push(d);
+  const out = [], seen = new Set();
+  for (const d of items) {
+    const g = byTag[d.tag];
+    if (g.length <= max) { out.push(d); continue; }
+    if (seen.has(d.tag)) continue;
+    seen.add(d.tag);
+    out.push({ kind: d.kind, tag: d.tag, group: g.length, title: `${g.length} × ${d.tag.toLowerCase()}`, text: g.slice(0, 3).map((x) => x.title.split(' · ')[0]).join(', ') + (g.length > 3 ? '…' : ''),
+      href: GROUP_LINK[d.tag] || `/decider?tag=${encodeURIComponent(d.tag)}`, cta: 'Voir la liste' });
+  }
+  return out;
 }
 function relDays(s) {
   const n = Math.round((parseDate(today()) - parseDate(String(s).slice(0, 10))) / 86400000);
@@ -140,4 +161,4 @@ function stepsFor(personId) {
 const PCOLORS = ['#1A1714', '#6B635A', '#4A443E', '#8C8279', '#2E2925', '#5A534B'];
 const projectColor = (id) => PCOLORS[id % PCOLORS.length];
 
-module.exports = { people, peopleMap, patron, personName, frise, currentPhase, slack, workdays, projectSummary, toDecide, projectFromQuote, stepsFor, projectColor, relDays, iso, addDays };
+module.exports = { people, peopleMap, patron, personName, frise, currentPhase, slack, workdays, projectSummary, toDecide, groupDecide, projectFromQuote, stepsFor, projectColor, relDays, iso, addDays };

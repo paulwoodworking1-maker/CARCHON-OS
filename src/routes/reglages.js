@@ -2,7 +2,8 @@
 // Pilotage (heures réelles vs chiffrées, par geste) et réglages de l'équipe.
 const express = require('express');
 const { q, setting, setSetting, COMPANY_FIELDS } = require('../db');
-const { h, layout, pill, avatar, options, hoursLabel } = require('../html');
+const { h, layout, pill, avatar, options, hoursLabel, today } = require('../html');
+const B = require('../backup');
 const { hash, verify } = require('../auth');
 const L = require('../logic');
 
@@ -99,9 +100,25 @@ ${COMPANY_FIELDS.map(([k, label, def]) => h`<label>${label} <input name="${k}" v
 <section class="card mt20 mw680" id="cockpit"><h2>Liaison avec Cockpit</h2>
 <p class="mut mt8">Cockpit envoie les affaires signées et les acomptes à Carchon OS, et lit l'avancement, les dates et le coût réel des OF. Adresse : <b>${process.env.PUBLIC_URL || ''}/api/v1</b> · clé : ${setting('api_token') ? 'créée (masquée)' : 'pas encore créée'}.</p>
 <form method="post" action="/entreprise/cle" data-confirm="Créer une nouvelle clé ? L’ancienne ne marchera plus."><button class="btn alt sm">${setting('api_token') ? 'Créer une nouvelle clé' : 'Créer la clé'}</button></form>
-<p class="mut t12 mt8">Détail technique pour Cockpit : POST /api/v1/affaires, POST /api/v1/affaires/{réf}/acompte, GET /api/v1/ofs, en-tête « Authorization: Bearer &lt;clé&gt; ».</p></section>`;
+<p class="mut t12 mt8">Détail technique pour Cockpit : POST /api/v1/affaires, POST /api/v1/affaires/{réf}/acompte, GET /api/v1/ofs, en-tête « Authorization: Bearer &lt;clé&gt; ».</p></section>
+<section class="card mt20 mw680" id="sauvegardes"><h2>Sauvegardes</h2>
+<p class="mut mt8">Chaque nuit, une copie complète de la base est faite sur le disque du serveur ; les ${B.KEEP} dernières sont gardées. Télécharge-en une de temps en temps (par exemple chaque lundi) et range-la sur ton ordinateur ou ton cloud : c'est ta garantie si l'hébergeur a un souci.</p>
+<div class="line mt12"><a class="btn" href="/sauvegarde/maintenant">Télécharger une sauvegarde maintenant</a></div>
+${B.list().length ? h`<div class="mt12">${B.list().map((f) => h`<div class="who"><span class="grow">${f.name.replace('carchon-', 'Copie du ').replace('.db', '')}</span><span class="mut t12">${Math.max(1, Math.round(f.size / 1024))} Ko</span><a class="btn alt sm" href="/sauvegarde/${f.name}">Télécharger</a></div>`)}</div>` : h`<p class="mut mt8">Première copie automatique cette nuit.</p>`}
+<p class="mut t12 mt8">Les photos et plans joints restent dans le dossier des fichiers du serveur ; la base contient tout le reste (OF, carnets, heures, stock, clients, réglages).</p></section>`;
   res.send(layout({ title: 'Entreprise', tab: 'pilotage', sub: '/entreprise', body, flash: req.flash }));
 });
+// Sauvegardes : copie fraîche ou copie de nuit.
+r.get('/sauvegarde/maintenant', (req, res) => {
+  const file = B.make(require('node:path').join(B.DIR, 'tmp', `carchon-${today()}-${Date.now()}.db`));
+  res.download(file, `carchon-os-${today()}.db`, () => { try { require('node:fs').unlinkSync(file); } catch {} });
+});
+r.get('/sauvegarde/:name', (req, res) => {
+  const f = B.fileOf(req.params.name);
+  if (!f || !require('node:fs').existsSync(f)) return res.status(404).send('Introuvable');
+  res.download(f, req.params.name.replace('carchon-', 'carchon-os-'));
+});
+
 // Clé de la liaison avec Cockpit (montrée une fois à la création).
 r.post('/entreprise/cle', (req, res) => {
   const key = require('node:crypto').randomBytes(24).toString('base64url');

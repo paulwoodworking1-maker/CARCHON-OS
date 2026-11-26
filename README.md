@@ -61,6 +61,10 @@ Pour que les clients reçoivent leur code par e-mail, renseigner `SMTP_*` (l'adr
 - Les liens ne sont montrés qu'une fois (seule leur empreinte est gardée). Un lien perdu se recrée.
 - Le client ne voit jamais de prix de revient, de fournisseur ni de note interne : seulement l'avancement, les photos cochées « Partagée au client » et les documents cochés « Client ».
 
+## Sauvegardes
+
+Chaque nuit, une copie complète de la base est écrite dans `DATA_DIR/sauvegardes/` (les 14 dernières sont gardées). Dans Réglages › Entreprise › Sauvegardes, on peut en télécharger une à tout moment : en ranger une chaque semaine hors du serveur.
+
 ## Tests
 
 ```bash

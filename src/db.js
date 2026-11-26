@@ -9,7 +9,7 @@ const UPLOAD_DIR = path.join(DATA_DIR, 'uploads');
 fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
 const db = new DatabaseSync(process.env.DB_FILE || path.join(DATA_DIR, 'carchon.db'));
-db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');
+db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000; PRAGMA synchronous = NORMAL;');
 
 // Les 9 étapes de la frise d'un projet.
 const PHASES = ['Conception', 'Accord', 'Bois', 'Débit', 'Assemblage', 'Finition', 'Contrôle', 'Livraison', 'Réception'];
@@ -213,6 +213,7 @@ CREATE TABLE IF NOT EXISTS machine_events (
 CREATE TABLE IF NOT EXISTS absences (
   id INTEGER PRIMARY KEY, person_id INTEGER NOT NULL REFERENCES people(id) ON DELETE CASCADE, start_date TEXT NOT NULL, end_date TEXT NOT NULL, label TEXT DEFAULT 'Congé'
 );
+CREATE TABLE IF NOT EXISTS snoozes (key TEXT PRIMARY KEY, until TEXT NOT NULL);
 `);
 
 // Référence de dossier : P2026-001, P2026-002… attribuée à la création.
@@ -261,9 +262,22 @@ function setSetting(key, value) {
   q.run('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value', key, String(value));
 }
 
+// Transactions imbriquables : une action peut en appeler une autre sans erreur.
+let depth = 0;
 function tx(fn) {
-  db.exec('BEGIN');
-  try { const r = fn(); db.exec('COMMIT'); return r; } catch (e) { db.exec('ROLLBACK'); throw e; }
+  const sp = `sp${depth}`;
+  db.exec(depth ? `SAVEPOINT ${sp}` : 'BEGIN IMMEDIATE');
+  depth++;
+  try {
+    const r = fn();
+    depth--;
+    db.exec(depth ? `RELEASE ${sp}` : 'COMMIT');
+    return r;
+  } catch (e) {
+    depth--;
+    try { db.exec(depth ? `ROLLBACK TO ${sp}; RELEASE ${sp}` : 'ROLLBACK'); } catch {}
+    throw e;
+  }
 }
 
 // Premier démarrage : le patron et une liste de stock de départ (à adapter).
@@ -283,6 +297,16 @@ function bootstrap() {
   }
   if (setting('portal_test_mode') === null) setSetting('portal_test_mode', '1');
 }
+// Index : les listes restent rapides avec beaucoup de dossiers.
+db.exec(`
+CREATE INDEX IF NOT EXISTS steps_project ON steps(project_id);
+CREATE INDEX IF NOT EXISTS steps_who ON steps(who_id, status);
+CREATE INDEX IF NOT EXISTS needs_project ON needs(project_id);
+CREATE INDEX IF NOT EXISTS activity_project ON activity(project_id);
+CREATE INDEX IF NOT EXISTS units_project ON units(project_id);
+CREATE INDEX IF NOT EXISTS projects_status ON projects(status, due_date);
+`);
+
 bootstrap();
 
 // Coordonnées de l'entreprise (documents imprimés, e-mails, portail client).

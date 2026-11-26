@@ -19,7 +19,7 @@ app.use((req, res, next) => {
   next();
 });
 
-app.get('/sante', (req, res) => res.type('text').send('ok'));
+app.get('/sante', (req, res) => { try { require('./db').q.get('SELECT 1'); res.type('text').send('ok'); } catch (e) { res.status(500).type('text').send('base indisponible'); } });
 
 // --- Installation (premier démarrage) et connexion du patron ---
 const loginPage = (title, intro, form, flash) => page(title, h`
@@ -165,12 +165,12 @@ app.use((req, res, next) => {
 app.use('/api/v1', require('./routes/api'));       // liaison Cockpit (clé API)
 app.use('/p', require('./routes/client'));          // portail client (liens privés)
 app.use('/atelier', require('./routes/atelier'));   // iPad
-for (const m of ['patron', 'carnets', 'achats', 'planning', 'reglages', 'portails', 'automatisations', 'catalogue', 'machines', 'charge', 'matiere', 'livraison', 'assistant']) app.use('/', requirePatron, require(`./routes/${m}`));
+for (const m of ['decider', 'patron', 'carnets', 'achats', 'planning', 'reglages', 'portails', 'automatisations', 'catalogue', 'machines', 'charge', 'matiere', 'livraison', 'assistant']) app.use('/', requirePatron, require(`./routes/${m}`));
 
 app.use((req, res) => res.status(404).send(page('Introuvable', h`<main class="login"><h1>Page introuvable</h1><p><a href="/">Revenir à l’accueil</a></p></main>`)));
 app.use((err, req, res, next) => {
   console.error(err);
-  res.status(500).send(page('Erreur', h`<main class="login"><h1>Un problème est survenu</h1><p class="mut">${err.message}</p><p><a href="javascript:history.back()">Revenir</a></p></main>`));
+  res.status(500).send(page('Erreur', h`<main class="login"><h1>Un problème est survenu</h1><p class="mut">L'action n'a pas abouti. Reviens en arrière et réessaie ; si ça recommence, note l'heure et ce que tu faisais.</p><p class="mut t12">Détail : ${err.message}</p><p><a class="btn" href="javascript:history.back()">Revenir</a> <a class="btn alt" href="/">Tableau de bord</a></p></main>`));
 });
 
 if (require.main === module) {

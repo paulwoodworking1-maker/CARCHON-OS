@@ -5,6 +5,7 @@ const { q, tx, PHASES, logActivity } = require('../db');
 const { icon, h, raw, layout, pill, avatar, postBtn, options, hidden, ddmm, longDate, today, addDays, rel, hoursLabel, dayMonth, hhmm } = require('../html');
 const L = require('../logic');
 const { upload, fileUrl, isImage } = require('../uploads');
+const decideRow = (...a) => require('./decider').row(...a);
 
 const r = express.Router();
 const int = (v) => (v === undefined || v === '' || v === null ? null : Number(v));
@@ -46,7 +47,12 @@ r.get('/', (req, res) => {
     return { p, line: doing ? doing.pname : next ? next.pname : 'Rien de prévu', sub: doing ? doing.title : next ? `Prochaine fiche : ${next.title}` : '', load: x.cells[0].pct };
   });
   const head = decide[0];
-  const ofs = projects.slice(0, 8).map((p) => {
+  const grouped = L.groupDecide(decide.slice(1));
+  const shown = grouped.slice(0, 8);
+  // Les OF les plus urgents d'abord : retard, puis marge la plus faible, puis échéance.
+  const urg = (p) => (p.slack.text === 'en retard' ? 0 : p.slack.text === 'tendu' ? 1 : p.due_date ? 2 : 3);
+  const urgent = [...projects].sort((a, b) => urg(a) - urg(b) || String(a.due_date || '9').localeCompare(String(b.due_date || '9')));
+  const ofs = urgent.slice(0, 10).map((p) => {
     const hrs = q.get('SELECT COALESCE(SUM(declared_hours), 0) d, COALESCE(SUM(est_hours), 0) e, SUM(status = \'done\') nd, COUNT(*) n FROM steps WHERE project_id = ?', p.id);
     const pctv = hrs.n ? Math.round((hrs.nd || 0) / hrs.n * 100) : 0;
     return { p, hrs, pct: pctv };
@@ -75,13 +81,13 @@ ${crew.map((c, i) => h`<div class="who${i ? '' : ' f'}" style="margin-top:${i ? 
 ${issues.map((s) => h`<div class="who">${pill('ko', 'Signalé')}<div class="grow"><b class="t14">${s.body}</b><span class="mut t12">${s.pname || ''} · ${s.who || ''} · ${rel(s.created_at)}</span></div><a class="btn alt sm" href="/projets/${s.project_id}#probleme">Traiter</a></div>`)}
 ${machDue.slice(0, 3).map((x) => h`<div class="who">${pill(x.down ? 'ko' : 'wa', x.down ? 'Panne' : 'Entretien')}<div class="grow"><b class="t14">${x.m.name} : ${x.t.title}</b><span class="mut t12">${x.t.st.label}</span></div><a class="btn alt sm" href="/machines?m=${x.m.id}">Voir</a></div>`)}
 </section></div>
-<section class="card" id="decider"><div class="line"><h2>À décider</h2>${pill(decide.length ? 'ko' : 'ok', decide.length)}<span class="mut push">Tout ce qui attend ta réponse</span></div>
-${decide.length ? decide.map((d, i) => h`<div class="row${i ? '' : ' f'}"><span class="kind">${pill(d.kind, d.tag)}</span><div class="grow"><b>${d.title}</b><span class="mut">${d.text}</span></div>
-${d.href2 ? h`<a class="btn sm" href="${d.href2}">${d.cta2}</a>` : ''}${d.ack ? postBtn(`/achats/besoin/${d.ack}/valider`, 'Valider', 'btn alt sm') : h`<a class="btn ${d.primary ? '' : 'alt '}sm" href="${d.href}">${d.cta}</a>`}</div>`) : h`<p class="mut">Rien n'attend ta réponse.</p>`}
+<section class="card" id="decider"><div class="line"><h2>À décider</h2>${pill(decide.length ? 'ko' : 'ok', decide.length)}<span class="mut push">Le plus urgent en haut</span>${decide.length ? h`<a class="btn alt sm" href="/decider">Tout voir</a>` : ''}</div>
+${shown.length ? shown.map((d, i) => decideRow(d, i, { back: '/' })) : h`<p class="mut">Rien n'attend ta réponse.</p>`}
+${grouped.length > shown.length ? h`<div class="line mt12"><a class="btn alt sm" href="/decider">${grouped.length - shown.length} autre${grouped.length - shown.length > 1 ? 's' : ''} sujet${grouped.length - shown.length > 1 ? 's' : ''} · tout voir</a></div>` : ''}
 </section>
-<section class="band" style="border-bottom:0"><h2>Ordres de fabrication</h2><span class="count">${projects.length}</span><span class="count">sur-mesure, boutique, revendeurs et salons</span>
+<section class="band" style="border-bottom:0"><h2>Ordres de fabrication</h2><span class="count">${projects.length}</span><span class="count">${projects.length > ofs.length ? `les ${ofs.length} plus urgents` : 'sur-mesure, boutique, revendeurs et salons'}</span>
 <span class="line push"><a class="btn" href="/projets">Voir tous les OF</a><a class="btn dark" href="/catalogue">+ Lancer un OF</a></span></section>
-<div class="tablebox"><table class="tbl" style="min-width:960px"><thead><tr><th>OF</th><th>Pièce</th><th>Canal et étape</th><th>Responsable</th><th class="num">Heures</th><th>Avancement</th><th>Fin prévue</th></tr></thead><tbody>
+<div class="tablebox"><table class="tbl dense" style="min-width:960px"><thead><tr><th>OF</th><th>Pièce</th><th>Canal et étape</th><th>Responsable</th><th class="num">Heures</th><th>Avancement</th><th>Fin prévue</th></tr></thead><tbody>
 ${ofs.map(({ p, hrs, pct: pc }) => h`<tr><td class="ref">${p.ref}</td><td><a class="b" href="/projets/${p.id}">${p.name}</a><div class="mut t12">${p.client ? p.client.name : p.for_whom || 'atelier'}</div></td>
 <td>${pill('no', p.canal)} ${pill(p.cur.state === 'p' ? 'ko' : 'wa', p.cur.phase)}</td><td>${p.lead ? h`<span class="line" style="gap:8px"><span class="ini" style="width:26px;height:26px">${p.lead.ini}</span><b class="t14">${p.lead.role === 'patron' ? 'Toi' : p.lead.name}</b></span>` : '—'}</td>
 <td class="num">${String(Math.round(hrs.d)).replace('.', ',')} / ${Math.round(hrs.e)} h</td>
@@ -113,34 +119,115 @@ ${s ? h`<div class="stack12 mt20">
 const CELL = { d: 'd', c: 'cc', p: 'p', w: 'w', n: 'n' };
 r.get('/projets', (req, res) => {
   const done = req.query.vue === 'termines';
+  const frise = req.query.vue === 'frise';
+  const t = today(), week = addDays(t, 7), monthEnd = t.slice(0, 7) + '-31';
   const all = q.all(`SELECT * FROM projects WHERE status = ? ORDER BY ${done ? 'finished_at DESC' : 'due_date IS NULL, due_date'}`, done ? 'termine' : 'en_cours').map(L.projectSummary);
-  const tag = (p) => {
-    const t = [];
-    if (p.frise.some((f) => f.state === 'p')) t.push('bloque');
-    if (p.frise.find((f) => f.phase === 'Finition' && f.state === 'c')) t.push('finition');
-    if (p.due_date && p.due_date.slice(0, 7) === today().slice(0, 7)) t.push('livrer');
-    return t;
+  // Avancement de tous les OF en une seule requête.
+  const prog = Object.fromEntries(q.all("SELECT project_id, COUNT(*) n, SUM(status = 'done') d, SUM(sent = 0 OR changed = 1) unsent FROM steps GROUP BY project_id").map((x) => [x.project_id, x]));
+  const FILTERS = {
+    all: ['Tous', () => true],
+    retard: ['En retard', (p) => p.slack.text === 'en retard'],
+    tendu: ['Tendus', (p) => p.slack.text === 'tendu'],
+    semaine: ['À livrer sous 7 j', (p) => p.due_date && p.due_date <= week],
+    livrer: ['Ce mois', (p) => p.due_date && p.due_date <= monthEnd],
+    bloque: ['À débloquer', (p) => p.frise.some((f) => f.state === 'p')],
+    acompte: ['Acompte attendu', (p) => p.client_id && p.deposit_needed && !p.deposit_at],
+    envoyer: ['Carnet à envoyer', (p) => (prog[p.id] || {}).unsent > 0],
+    sansdate: ['Sans échéance', (p) => !p.due_date],
   };
-  all.forEach((p) => { p.tags = tag(p); });
-  const f = done ? 'all' : (req.query.f || 'all');
-  const canal = req.query.canal || '';
-  const rows = (f === 'all' ? all : all.filter((p) => p.tags.includes(f))).filter((p) => !canal || p.canal === canal);
-  const n = (k) => all.filter((p) => p.tags.includes(k)).length;
-  const chips = [['all', `Tous · ${all.length}`], ['bloque', `À débloquer · ${n('bloque')}`], ['finition', `En finition · ${n('finition')}`], ['livrer', `À livrer ce mois · ${n('livrer')}`]];
+  const f = done ? 'all' : (FILTERS[req.query.f] ? req.query.f : 'all');
+  const canal = String(req.query.canal || '');
+  const resp = String(req.query.resp || '');
+  const rows = all.filter(FILTERS[f][1]).filter((p) => !canal || p.canal === canal).filter((p) => !resp || String(p.lead_id) === resp);
+  const qs = (o) => { const x = { f, canal, resp, vue: req.query.vue || '', ...o }; return '/projets?' + Object.entries(x).filter(([, v]) => v && v !== 'all').map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join('&'); };
+  const here = qs({});
+  const ppl = L.people();
   const body = h`
-<div class="head"><div><div class="eb">Fabriquer</div><h1>${done ? 'Projets terminés' : 'Projets'}</h1></div>
-<a class="btn push" href="/projets/nouveau">+ Projet d'atelier</a></div>
-<p class="mut mt8">Les projets clients se créent depuis un devis accepté (bloc « À décider »). Ici, tu peux aussi créer un projet d'atelier, de série ou une reprise. La frise avance toute seule quand l'atelier coche ses fiches.</p>
-${done ? '' : h`<div class="chips" role="group" aria-label="Filtrer">${chips.map(([k, l]) => h`<a class="chip${f === k ? ' on' : ''}" href="/projets?f=${k}${canal ? '&canal=' + encodeURIComponent(canal) : ''}">${l}</a>`)}
-<span style="width:16px"></span>${['', 'Sur-mesure', 'Boutique', 'Revendeur', 'Salon', 'Stock', 'SAV'].filter((c) => !c || all.some((p) => p.canal === c)).map((c) => h`<a class="chip${canal === c ? ' on' : ''}" href="/projets?f=${f}${c ? '&canal=' + encodeURIComponent(c) : ''}">${c || 'Tous canaux'}</a>`)}</div>`}
-<div class="tablebox mt12"><table class="frise">
-<thead><tr><th class="pcol">Projet · prochaine action</th>${PHASES.map((p) => h`<th>${p}</th>`)}<th>Échéance</th></tr></thead>
-<tbody>${rows.map((p) => h`<tr><td class="pcol"><span class="ref">${p.ref}</span> <a href="/projets/${p.id}" class="b">${p.name}</a> ${pill('no', p.kind)}<div class="mut">${p.client ? p.client.name : 'hors commande'} → ${p.next}</div></td>
+<div class="head"><div><div class="eb">Fabriquer</div><h1>${done ? 'OF terminés' : 'Ordres de fabrication'}</h1></div>
+<span class="line push"><a class="btn alt" href="/catalogue">Lancer depuis le catalogue</a><a class="btn" href="/projets/nouveau">+ OF sur-mesure</a></span></div>
+${done ? '' : h`<div class="chips mt12" role="group" aria-label="Filtrer">${Object.entries(FILTERS).map(([k, [l, fn]]) => { const n = all.filter(fn).length; return k !== 'all' && !n ? '' : h`<a class="chip${f === k ? ' on' : ''}${k === 'retard' && n ? ' hot' : ''}" href="${qs({ f: k })}">${l} · ${n}</a>`; })}</div>`}
+<div class="line mt12 tools">
+<label class="sr" for="flt">Filtrer la liste</label><input id="flt" class="qin" type="search" placeholder="Filtrer : nom, client, réf…  (touche /)" data-filter="#oftable" autocomplete="off">
+<form method="get" action="/projets" class="line">${done ? h`<input type="hidden" name="vue" value="termines">` : h`<input type="hidden" name="f" value="${f === 'all' ? '' : f}">`}${frise ? h`<input type="hidden" name="vue" value="frise">` : ''}
+<label class="sr" for="fresp">Responsable</label><select id="fresp" name="resp" data-auto><option value="">Tous les responsables</option>${options(ppl.map((p) => [p.id, p.role === 'patron' ? 'Toi' : p.name]), resp)}</select>
+<label class="sr" for="fcanal">Canal</label><select id="fcanal" name="canal" data-auto><option value="">Tous les canaux</option>${options([...new Set(all.map((p) => p.canal).filter(Boolean))], canal)}</select></form>
+${done ? '' : h`<span class="push seg"><a class="chip${frise ? '' : ' on'}" href="${qs({ vue: '' })}">Liste</a><a class="chip${frise ? ' on' : ''}" href="${qs({ vue: 'frise' })}">Frise</a></span>`}
+</div>
+${done ? '' : h`<form method="post" action="/projets/lot" id="lot" class="lotbar" data-lot hidden>
+<input type="hidden" name="back" value="${here}"><b data-lot-count>0 sélectionné</b>
+<span class="line"><label class="sr" for="ldays">Décaler de</label><select id="ldays" name="days">${options([[7, '+ 1 semaine'], [14, '+ 2 semaines'], [3, '+ 3 jours'], [-7, '− 1 semaine']], 7)}</select><button class="btn alt sm" name="act" value="decaler">Décaler l'échéance</button></span>
+<span class="line"><label class="sr" for="llead">Responsable</label><select id="llead" name="lead_id">${options(ppl.map((p) => [p.id, p.role === 'patron' ? 'Toi' : p.name]))}</select><button class="btn alt sm" name="act" value="resp">Attribuer</button></span>
+<button class="btn alt sm" name="act" value="envoyer">Envoyer les carnets</button>
+<button class="btn alt sm" name="act" value="acompte">Acompte reçu aujourd'hui</button>
+<button class="btn alt sm" name="act" value="terminer" data-confirm-btn="Marquer ces OF comme terminés ?">Terminer</button>
+<button type="button" class="btn ghost sm push" data-lot-clear>Désélectionner</button></form>`}
+${frise ? h`<div class="tablebox mt12"><table class="frise" id="oftable">
+<thead><tr><th class="pcol">OF · prochaine action</th>${PHASES.map((p) => h`<th>${p}</th>`)}<th>Échéance</th></tr></thead>
+<tbody>${rows.map((p) => h`<tr data-q="${[p.ref, p.name, p.client ? p.client.name : '', p.for_whom].join(' ').toLowerCase()}"><td class="pcol"><span class="ref">${p.ref}</span> <a href="/projets/${p.id}" class="b">${p.name}</a><div class="mut">${p.client ? p.client.name : p.for_whom || 'atelier'} → ${p.next}</div></td>
 ${p.frise.map((c) => h`<td><span class="c ${CELL[c.state]}">${c.label}</span></td>`)}
-<td class="due"><b>${p.due_date ? ddmm(p.due_date) : 'à fixer'}</b><div style="color:${p.slack.color}" class="t12 b">${done ? (p.finished_at ? `terminé ${ddmm(p.finished_at)}` : '') : p.slack.text}</div>${avatar(p.lead, 26)}</td></tr>`)}
-${rows.length ? '' : h`<tr><td colspan="11" class="mut">Aucun projet dans ce filtre.</td></tr>`}</tbody></table></div>
-<div class="legend"><span><i class="c d"></i>Fait</span><span><i class="c cc"></i>En cours</span><span><i class="c p"></i>Bloque · à traiter</span><span><i class="c w"></i>À venir</span><span><i class="c n"></i>Sans objet</span></div>`;
-  res.send(layout({ title: 'Projets', tab: 'projets', sub: done ? '/projets?vue=termines' : '/projets', body, flash: req.flash }));
+<td class="due"><b>${p.due_date ? ddmm(p.due_date) : 'à fixer'}</b><div style="color:${p.slack.color}" class="t12 b">${p.slack.text}</div></td></tr>`)}</tbody></table></div>
+<div class="legend"><span><i class="c d"></i>Fait</span><span><i class="c cc"></i>En cours</span><span><i class="c p"></i>Bloque · à traiter</span><span><i class="c w"></i>À venir</span><span><i class="c n"></i>Sans objet</span></div>`
+  : h`<div class="tablebox mt12"><table class="tbl dense" id="oftable">
+<thead><tr>${done ? '' : h`<th class="ck"><input type="checkbox" data-lot-all aria-label="Tout sélectionner"></th>`}<th data-sort>Réf.</th><th data-sort>OF</th><th data-sort>Canal</th><th data-sort>Étape</th><th data-sort class="num">Avancement</th><th data-sort>Resp.</th><th data-sort>Échéance</th><th data-sort>Marge</th></tr></thead>
+<tbody>${rows.map((p) => { const g = prog[p.id] || { n: 0, d: 0 }; const pc = g.n ? Math.round(g.d / g.n * 100) : 0; const urgv = p.slack.text === 'en retard' ? -1000 : p.slack.text === 'tendu' ? -500 : parseInt(p.slack.text, 10) || 9999;
+    return h`<tr data-q="${[p.ref, p.name, p.client ? p.client.name : '', p.for_whom, p.canal, p.cur.phase].join(' ').toLowerCase()}">
+${done ? '' : h`<td class="ck"><input type="checkbox" name="ids" value="${p.id}" form="lot" aria-label="Sélectionner ${p.name}"></td>`}
+<td class="ref" data-v="${p.ref}">${p.ref}</td>
+<td class="ofname" data-v="${p.name}"><a class="b" href="/projets/${p.id}">${p.name}</a> <span class="mut">${p.client ? p.client.name : p.for_whom || ''}</span>${(g.unsent || 0) > 0 && !done ? h` <span class="dot-wa" title="Carnet à envoyer à l’atelier">à envoyer</span>` : ''}</td>
+<td data-v="${p.canal}">${p.canal}</td>
+<td data-v="${PHASES.indexOf(p.cur.phase)}">${pill(p.cur.state === 'p' ? 'ko' : 'no', p.cur.phase)}</td>
+<td class="num" data-v="${pc}"><span class="mini"><i style="width:${pc}%"></i></span> ${pc} %</td>
+<td data-v="${p.lead ? p.lead.name : ''}">${p.lead ? h`<span class="ini sm" title="${p.lead.role === 'patron' ? 'Toi' : p.lead.name}">${p.lead.ini}</span>` : '—'}</td>
+<td data-v="${p.due_date || '9999'}" class="b">${p.due_date ? ddmm(p.due_date) : 'à fixer'}</td>
+<td data-v="${done ? p.finished_at || '' : urgv}" class="t13 b" style="color:${p.slack.color}">${done ? (p.finished_at ? `terminé ${ddmm(p.finished_at)}` : '') : p.slack.text}</td></tr>`; })}
+${rows.length ? '' : h`<tr><td colspan="9" class="mut">Aucun OF dans ce filtre.</td></tr>`}</tbody></table></div>
+<p class="mut mt8" data-filter-count>${rows.length} OF affiché${rows.length > 1 ? 's' : ''}. Clique sur un titre de colonne pour trier. Coche plusieurs OF pour agir sur tous d'un coup.</p>`}`;
+  res.send(layout({ title: done ? 'OF terminés' : 'Ordres de fabrication', tab: 'projets', sub: done ? '/projets?vue=termines' : '/projets', body, flash: req.flash }));
+});
+
+// Actions sur plusieurs OF d'un coup.
+r.post('/projets/lot', (req, res) => {
+  const ids = [].concat(req.body.ids || []).map(Number).filter(Boolean);
+  const back = String(req.body.back || '/projets').startsWith('/projets') ? String(req.body.back) : '/projets';
+  if (!ids.length) return res.flashTo(back, 'Coche au moins un OF.', 'ko');
+  const list = ids.map((id) => q.get('SELECT * FROM projects WHERE id = ?', id)).filter(Boolean);
+  const act = req.body.act;
+  let msg = '';
+  tx(() => {
+    for (const p of list) {
+      if (act === 'decaler') {
+        const days = Math.max(-60, Math.min(120, Number(req.body.days) || 7));
+        if (!p.due_date) continue;
+        const nd = addDays(p.due_date, days);
+        q.run('UPDATE projects SET due_date = ? WHERE id = ?', nd, p.id);
+        logActivity(p.id, null, `Date de livraison : ${ddmm(nd)} (au lieu du ${ddmm(p.due_date)})`, 'Patron');
+        msg = `Échéance décalée de ${days} jour${Math.abs(days) > 1 ? 's' : ''}.`;
+      } else if (act === 'resp') {
+        const lead = int(req.body.lead_id);
+        q.run('UPDATE projects SET lead_id = ? WHERE id = ?', lead, p.id);
+        logActivity(p.id, null, `Responsable : ${L.personName(q.get('SELECT * FROM people WHERE id = ?', lead))}`, 'Patron');
+        msg = 'Responsable attribué.';
+      } else if (act === 'envoyer') {
+        const n = q.get('SELECT COUNT(*) n FROM steps WHERE project_id = ? AND (sent = 0 OR changed = 1)', p.id).n;
+        if (!n) continue;
+        q.run('UPDATE steps SET sent = 1, changed = 0 WHERE project_id = ? AND (sent = 0 OR changed = 1)', p.id);
+        q.run("UPDATE projects SET sent_to_atelier_at = datetime('now') WHERE id = ?", p.id);
+        logActivity(p.id, null, `Carnet envoyé à l’atelier (${n} fiche${n > 1 ? 's' : ''})`, 'Patron');
+        msg = 'Carnets envoyés à l’atelier.';
+      } else if (act === 'acompte') {
+        if (!p.client_id || p.deposit_at) continue;
+        q.run("UPDATE projects SET deposit_at = date('now', 'localtime') WHERE id = ?", p.id);
+        q.run('UPDATE needs SET needs_deposit = 0 WHERE project_id = ?', p.id);
+        logActivity(p.id, null, `Acompte reçu le ${ddmm(today())}`, 'Patron');
+        msg = 'Acomptes notés. Les achats bloqués sont débloqués.';
+      } else if (act === 'terminer') {
+        q.run("UPDATE projects SET status = 'termine', finished_at = datetime('now') WHERE id = ?", p.id);
+        logActivity(p.id, null, 'Projet terminé', 'Patron');
+        msg = 'OF terminés.';
+      }
+    }
+  });
+  res.flashTo(back, msg ? `${msg} (${list.length} OF)` : 'Rien à changer sur ces OF.', msg ? 'ok' : 'ko');
 });
 
 r.get('/projets/nouveau', (req, res) => {
@@ -332,6 +419,20 @@ r.post('/projets/:id/infos', loadProject, (req, res) => {
     if (str(b.due_date) && str(b.due_date) !== (p.due_date || '')) logActivity(p.id, null, `Date de livraison : ${ddmm(str(b.due_date))}${p.due_date ? ` (au lieu du ${ddmm(p.due_date)})` : ''}`, 'Patron');
   });
   res.flashTo(`/projets/${p.id}`, depositAt && !p.deposit_at ? 'Acompte noté. Les achats bloqués sont débloqués.' : 'Enregistré.');
+});
+
+// Acompte reçu en un clic (depuis À décider).
+r.post('/projets/:id/acompte', loadProject, (req, res) => {
+  const p = req.project;
+  const back = String(req.body.back || '').startsWith('/') ? String(req.body.back) : `/projets/${p.id}`;
+  if (!p.deposit_at) {
+    tx(() => {
+      q.run("UPDATE projects SET deposit_at = date('now', 'localtime') WHERE id = ?", p.id);
+      q.run('UPDATE needs SET needs_deposit = 0 WHERE project_id = ?', p.id);
+      logActivity(p.id, null, `Acompte reçu le ${ddmm(today())}`, 'Patron');
+    });
+  }
+  res.flashTo(back, `Acompte noté pour ${p.name}. Les achats bloqués sont débloqués.`);
 });
 
 r.post('/projets/:id/statut', loadProject, (req, res) => {

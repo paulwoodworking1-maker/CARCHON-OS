@@ -116,7 +116,7 @@ const icon = (k, size = 18) => raw(`<svg width="${size}" height="${size}" viewBo
 
 // Colonne de navigation : [groupe, [[clé, libellé, lien, icône, chemins qui l'activent]]]
 const SIDE = [
-  ['', [['dash', 'Tableau de bord', '/', 'dash', ['/']], ['decider', 'À décider', '/#decider', 'check', []], ['assistant', 'Assistant', '/assistant', 'spark', ['/assistant']]]],
+  ['', [['dash', 'Tableau de bord', '/', 'dash', ['/']], ['decider', 'À décider', '/decider', 'check', ['/decider']], ['assistant', 'Assistant', '/assistant', 'spark', ['/assistant']]]],
   ['Fabriquer', [['of', 'Fabrication', '/projets', 'of', ['/projets', '/carnets']], ['catalogue', 'Catalogue', '/catalogue', 'book', ['/catalogue']], ['portails', 'Portails clients', '/portails', 'globe', ['/portails']]]],
   ['Planifier', [['charge', 'Charge', '/charge', 'load', ['/charge']], ['planning', 'Planning', '/planning', 'cal', ['/planning']], ['poses', 'Livraisons et poses', '/poses', 'truck', ['/poses']]]],
   ['Approvisionner', [['stock', 'Matière et stock', '/stock', 'box', ['/stock', '/bois', '/pieces']], ['achats', 'Achats', '/achats', 'cart', ['/achats', '/commandes', '/fournisseurs']]]],

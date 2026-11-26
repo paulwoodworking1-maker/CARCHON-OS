@@ -114,7 +114,7 @@ function alerts() {
   }
   // Acompte qui traîne : relance prête à envoyer.
   for (const p of q.all("SELECT projects.*, clients.email cemail, clients.name cname FROM projects JOIN clients ON clients.id = projects.client_id WHERE projects.status = 'en_cours' AND deposit_needed = 1 AND deposit_at IS NULL AND COALESCE(deposit_asked_at, projects.created_at) <= datetime('now', '-7 days')")) {
-    if (p.cemail) out.push({ kind: 'ko', tag: 'Relance', title: `${p.cname} · acompte attendu depuis plus d'une semaine`, text: p.name, href: `/projets/${p.id}#acompte`, cta: 'Noter reçu',
+    if (p.cemail) out.push({ kind: 'ko', tag: 'Relance', title: `${p.cname} · acompte attendu depuis plus d'une semaine`, text: p.name, href: `/projets/${p.id}#acompte`, cta: 'Ouvrir', act: `/projets/${p.id}/acompte`, actLabel: 'Reçu aujourd’hui',
       href2: mailto(p.cemail, `Acompte · ${p.name}`, `Bonjour,\n\nPour lancer la fabrication de votre projet « ${p.name} », nous attendons le règlement de l'acompte prévu au devis.\nSi c'est déjà fait, merci de ne pas tenir compte de ce message.\n\nBien cordialement,\nCarchon Les Ateliers`), cta2: 'Relancer par e-mail' });
   }
   // Stock fini sous le seuil boutique (pièces libres + en fabrication).
@@ -168,6 +168,7 @@ async function tick() {
   try {
     const t = today();
     if (setting('last_plan_day') !== t) { autoPlan(); setSetting('last_plan_day', t); }
+    try { require('./backup').daily(); } catch (e) { console.error('[sauvegarde]', e); }
     if (on('digest_email') && mail.configured() && new Date().getHours() >= 7 && setting('last_digest') !== t) {
       await sendDigest(); setSetting('last_digest', t);
     }

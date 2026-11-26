@@ -14,7 +14,83 @@
     if (msg && !window.confirm(msg)) { e.preventDefault(); return; }
     var busy = f.getAttribute('data-busy');
     if (busy) { var b2 = f.querySelector('button'); if (b2) { b2.disabled = true; b2.textContent = busy; } }
+    // Un formulaire envoyé ne part qu'une fois (double clic, réseau lent).
+    if ((f.method || '').toLowerCase() === 'post') {
+      if (f.dataset.sent) { e.preventDefault(); return; }
+      f.dataset.sent = '1';
+      setTimeout(function () { f.querySelectorAll('button[type=submit],button:not([type])').forEach(function (b) { b.disabled = true; }); }, 0);
+      setTimeout(function () { delete f.dataset.sent; f.querySelectorAll('button').forEach(function (b) { b.disabled = false; }); }, 8000);
+    }
   });
+  // Retour arrière du navigateur : les boutons redeviennent cliquables.
+  window.addEventListener('pageshow', function () {
+    document.querySelectorAll('form[data-sent]').forEach(function (f) { delete f.dataset.sent; f.querySelectorAll('button').forEach(function (b) { b.disabled = false; }); });
+  });
+
+  // Filtre instantané d'un tableau (tape, la liste se réduit).
+  document.querySelectorAll('[data-filter]').forEach(function (inp) {
+    var table = document.querySelector(inp.getAttribute('data-filter'));
+    if (!table) return;
+    var count = document.querySelector('[data-filter-count]');
+    var key = 'flt:' + location.pathname;
+    try { var saved = sessionStorage.getItem(key); if (saved) inp.value = saved; } catch (x) {}
+    var run = function () {
+      var words = inp.value.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').split(/\s+/).filter(Boolean);
+      var n = 0;
+      table.querySelectorAll('tbody tr[data-q]').forEach(function (tr) {
+        var txt = tr.getAttribute('data-q').normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+        var ok = words.every(function (w) { return txt.indexOf(w) !== -1; });
+        tr.hidden = !ok; if (ok) n++;
+      });
+      if (count) count.textContent = n + ' OF affiché' + (n > 1 ? 's' : '') + (words.length ? ' pour « ' + inp.value + ' »' : '') + '.';
+      try { sessionStorage.setItem(key, inp.value); } catch (x) {}
+    };
+    inp.addEventListener('input', run);
+    inp.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') { inp.value = ''; run(); inp.blur(); }
+      if (e.key === 'Enter') { e.preventDefault(); var first = table.querySelector('tbody tr[data-q]:not([hidden]) a'); if (first) location.href = first.href; }
+    });
+    if (inp.value) run();
+  });
+
+  // Tri d'un tableau en cliquant sur l'en-tête de colonne.
+  document.querySelectorAll('th[data-sort]').forEach(function (th) {
+    th.tabIndex = 0; th.title = 'Trier';
+    var sort = function () {
+      var table = th.closest('table'), tb = table.tBodies[0];
+      var idx = Array.prototype.indexOf.call(th.parentNode.children, th);
+      var dir = th.getAttribute('aria-sort') === 'ascending' ? -1 : 1;
+      th.parentNode.querySelectorAll('th').forEach(function (x) { x.removeAttribute('aria-sort'); });
+      th.setAttribute('aria-sort', dir === 1 ? 'ascending' : 'descending');
+      var rows = Array.prototype.slice.call(tb.querySelectorAll('tr[data-q]'));
+      var val = function (tr) { var c = tr.children[idx]; return c ? (c.getAttribute('data-v') ?? c.textContent) : ''; };
+      rows.sort(function (a, b) {
+        var x = val(a), y = val(b), nx = parseFloat(x), ny = parseFloat(y);
+        if (!isNaN(nx) && !isNaN(ny) && String(nx) === x.trim() && String(ny) === y.trim()) return (nx - ny) * dir;
+        return x.localeCompare(y, 'fr', { numeric: true }) * dir;
+      });
+      rows.forEach(function (r) { tb.appendChild(r); });
+    };
+    th.addEventListener('click', sort);
+    th.addEventListener('keydown', function (e) { if (e.key === 'Enter') sort(); });
+  });
+
+  // Sélection de plusieurs OF : la barre d'actions apparaît.
+  var lot = document.querySelector('[data-lot]');
+  if (lot) {
+    var boxes = function () { return document.querySelectorAll('input[name=ids][form=lot]'); };
+    var upd = function () {
+      var n = 0; boxes().forEach(function (b) { if (b.checked) n++; b.closest('tr').classList.toggle('sel', b.checked); });
+      lot.hidden = !n;
+      lot.querySelector('[data-lot-count]').textContent = n + ' OF sélectionné' + (n > 1 ? 's' : '');
+    };
+    document.addEventListener('change', function (e) {
+      if (e.target.matches('[data-lot-all]')) boxes().forEach(function (b) { if (!b.closest('tr').hidden) b.checked = e.target.checked; });
+      if (e.target.matches('[data-lot-all], input[name=ids]')) upd();
+    });
+    lot.querySelector('[data-lot-clear]').addEventListener('click', function () { boxes().forEach(function (b) { b.checked = false; }); var a = document.querySelector('[data-lot-all]'); if (a) a.checked = false; upd(); });
+    upd();
+  }
   // Copier un lien.
   document.addEventListener('click', function (e) {
     var b = e.target.closest && e.target.closest('[data-copy]');
@@ -34,6 +110,9 @@
   // Raccourci ⌘K / Ctrl+K pour la recherche.
   document.addEventListener('keydown', function (e) {
     if ((e.metaKey || e.ctrlKey) && e.key === 'k') { var s = document.getElementById('qsearch'); if (s) { e.preventDefault(); s.focus(); } }
+    // « / » : filtrer la liste de la page (ou chercher partout).
+    var typing = /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName) || document.activeElement.isContentEditable;
+    if (e.key === '/' && !typing && !e.metaKey && !e.ctrlKey) { var fl = document.querySelector('[data-filter]') || document.getElementById('qsearch'); if (fl) { e.preventDefault(); fl.focus(); fl.select && fl.select(); } }
   });
   // Signature du PV au doigt.
   var c = document.getElementById('sig');

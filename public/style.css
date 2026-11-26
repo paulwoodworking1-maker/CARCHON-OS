@@ -576,3 +576,31 @@ td.num,th.num,.tbl .num{text-align:right;font-variant-numeric:tabular-nums;white
 .am-assistant{background:var(--panel);padding:16px 18px;border-top:0}
 .am-action{padding:8px 0}
 .asst textarea.qin{min-height:56px}
+
+/* Bouton discret (« Plus tard ») */
+.btn.ghost{background:transparent;border-color:transparent;color:var(--mut2,#6B635A)}.btn.ghost:hover{color:var(--ink);background:#F2EFEA}
+
+/* Liste dense des OF (beaucoup de dossiers) */
+.tools{gap:10px;flex-wrap:wrap}.tools .qin{flex:1 1 280px;max-width:420px}.tools select{width:auto}
+.seg{display:inline-flex;gap:4px}.seg .chip{margin:0}
+.chip.hot{border-color:var(--red);color:var(--red)}.chip.hot.on{background:var(--red);color:#fff}
+.tbl.dense td{padding:8px 10px;font-size:14px;vertical-align:middle;white-space:nowrap}
+.tbl.dense th{padding:8px 10px;white-space:nowrap}
+.tbl.dense td.ofname{max-width:340px;overflow:hidden;text-overflow:ellipsis}
+.dot-wa{font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#7A5A1E;background:#F2E6CF;padding:2px 6px;margin-left:4px}
+.tbl.dense td .mut{font-size:13px}
+.tbl.dense tbody tr:hover{background:var(--bg2)}
+.tbl.dense tr.sel{background:#F7F3EC}
+.tbl .ck{width:34px;padding-right:0}.tbl .ck input{width:16px;height:16px;margin:0}
+th[data-sort]{cursor:pointer;user-select:none}th[data-sort]:hover{color:var(--ink)}
+th[aria-sort=ascending]::after{content:" ↑"}th[aria-sort=descending]::after{content:" ↓"}
+.mini{display:inline-block;width:56px;height:6px;background:var(--line2);vertical-align:middle;margin-right:6px}.mini i{display:block;height:100%;background:var(--ink)}
+.ini.sm{width:26px;height:26px;font-size:11px}
+.lotbar{position:sticky;top:0;z-index:20;display:flex;flex-wrap:wrap;gap:10px 16px;align-items:center;background:var(--ink);color:#fff;padding:10px 14px;margin-top:12px}
+.lotbar[hidden]{display:none}
+.lotbar select{width:auto;padding:6px 8px;font-size:13px;color:var(--ink);background:#fff;height:auto}
+.lotbar .btn.alt{background:#fff}.lotbar .btn.ghost{color:#fff}.lotbar .btn.ghost:hover{background:#2E2925}
+.tbl.dense th{letter-spacing:.08em;font-size:11px}
+.tbl.dense td.ref{letter-spacing:.03em;font-size:13px}
+.tbl.dense .mini{width:40px}
+.tbl.dense{width:100%}
