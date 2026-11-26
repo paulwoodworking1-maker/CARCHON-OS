@@ -162,6 +162,12 @@ app.use((req, res, next) => {
 });
 
 // --- Routes ---
+// Flux iCal privé de l'atelier, pour l'abonnement Google Agenda (protégé par une clé dans l'adresse).
+app.get('/agenda/:t.ics', (req, res) => {
+  const G = require('./gcal');
+  if (!G.checkToken(req.params.t)) return res.status(404).type('text').send('Introuvable');
+  res.type('text/calendar; charset=utf-8').set('cache-control', 'no-cache').send(G.feed());
+});
 app.use('/api/v1', require('./routes/api'));       // liaison Cockpit (clé API)
 app.use('/p', require('./routes/client'));          // portail client (liens privés)
 app.use('/atelier', require('./routes/atelier'));   // iPad
@@ -178,5 +184,6 @@ if (require.main === module) {
   app.listen(port, () => console.log(`Carchon OS prêt sur http://localhost:${port}`));
   automations.start();
   require('./sms').start();
+  require('./gcal').start();
 }
 module.exports = app;

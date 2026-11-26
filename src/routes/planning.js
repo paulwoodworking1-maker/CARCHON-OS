@@ -6,6 +6,8 @@ const crypto = require('node:crypto');
 const { q, tx, UPLOAD_DIR, logActivity } = require('../db');
 const { h, layout, pill, avatar, postBtn, options, ddmm, ddmmyyyy, today, addDays, parseDate, iso, JOURS_C, MOIS_C, printPage } = require('../html');
 const L = require('../logic');
+const G = require('../gcal');
+const { setting, setSetting } = require('../db');
 const { loadProject } = require('./patron');
 
 const r = express.Router();
@@ -32,6 +34,7 @@ r.get('/planning', (req, res) => {
       ...q.all('SELECT trips.*, projects.name pname FROM trips JOIN projects ON projects.id = trips.project_id WHERE date BETWEEN ? AND ?', start, end).map((t) => ({ kind: 'b3', label: t.pname, detail: t.what, start_date: t.date, end_date: t.date, ro: '/poses' })),
       ...bars.filter((b) => b.lane === 'event'),
     ] },
+    ...(G.importUrl() ? [{ key: 'gcal', title: 'Google Agenda', sub: 'mis à jour toutes les 10 min', bars: G.between(start, end).map((e) => ({ kind: 'gc', label: `${e.time ? `${e.time.replace(':', 'h')} · ` : ''}${e.title}`, detail: e.location, start_date: e.start_date, end_date: e.end_date, title: e.title, ro: `https://calendar.google.com/calendar/r/day/${e.start_date.replace(/-/g, '/')}` })) }] : []),
   ];
   // Un rang par barre qui se chevauche, pour ne rien masquer.
   let row = 2;
@@ -58,6 +61,7 @@ r.get('/planning', (req, res) => {
   const body = h`<div class="head"><div><div class="eb">Planning</div><h1>Atelier · ${Number(start.slice(8))} ${MOIS_C[Number(start.slice(5, 7)) - 1]} – ${Number(end.slice(8))} ${MOIS_C[Number(end.slice(5, 7)) - 1]}</h1></div>
 <div class="push line"><a class="btn alt sm" href="/planning?du=${prev}&semaines=${weeks}" aria-label="Période précédente">‹</a><a class="btn alt sm" href="/planning?semaines=${weeks}">Aujourd'hui</a><a class="btn alt sm" href="/planning?du=${next}&semaines=${weeks}" aria-label="Période suivante">›</a>
 <div class="seg">${[[1, 'Semaine'], [2, '2 semaines'], [4, 'Mois']].map(([w, l]) => h`<a href="/planning?du=${start}&semaines=${w}" class="${w === weeks ? 'on' : ''}">${l}</a>`)}</div></div></div>
+${G.importUrl() ? '' : h`<p class="flash mt12">Ton Google Agenda n’est pas encore relié au planning. <a href="/planning/agenda">Le relier</a></p>`}
 <p class="mut mt8">Les barres bleues se posent toutes seules d'après les fiches envoyées à l'atelier et leurs heures : pour les changer, modifie le carnet. Ajoute à la main les rendez-vous, congés et blocages : le planning les contourne.</p>
 <div class="tablebox mt12"><div class="plan" style="grid-template-columns: 190px repeat(${days.length}, minmax(${weeks === 4 ? 44 : 84}px, 1fr)); grid-template-rows: 44px repeat(${row - 2}, 58px)">
 <div class="ph0">QUI</div>
@@ -68,10 +72,67 @@ ${ln.placed.map((b) => b.ro ? h`<a class="pbar ${b.kind}" href="${b.ro}" title="
     : h`<details class="pbar ${K[b.kind] || 'b1'}" style="grid-column:${b.a} / ${b.z};grid-row:${ln.row + b.t}"><summary><b>${b.label || b.pname}</b><span>${b.detail}</span></summary>
 <form method="post" action="/planning/barres/${b.id}" class="pop form">${barForm(b)}<div class="line"><button class="btn sm">Enregistrer</button><button class="btn alt sm" name="del" value="1">Supprimer</button></div></form></details>`)}`)}
 </div></div>
-<div class="legend"><span><i class="c b1s"></i>Travail</span><span><i class="c bk"></i>Bloqué · la raison est écrite dessus</span><span><i class="c fr"></i>Temps libre à planifier</span><span><i class="c b3s"></i>Pose, rendez-vous</span></div>
+<div class="legend"><span><i class="c b1s"></i>Travail</span><span><i class="c bk"></i>Bloqué · la raison est écrite dessus</span><span><i class="c fr"></i>Temps libre à planifier</span><span><i class="c b3s"></i>Pose, rendez-vous</span>${G.importUrl() ? h`<span><i class="c gc"></i>Google Agenda</span>` : ''}<a class="push t12" href="/planning/agenda">Google Agenda ›</a></div>
 <details class="card mt20" id="ajouter"><summary class="b">+ Ajouter une barre</summary><form method="post" action="/planning/barres" class="form grid2 mt12">${barForm()}<button class="btn sm">Ajouter</button></form></details>
 <p class="mut t12 mt12">Une aide pour s'organiser, pas un engagement client.</p>`;
   res.send(layout({ title: 'Planning', tab: 'planning', sub: '/planning', body, flash: req.flash }));
+});
+
+// ---------- Google Agenda ----------
+const ago = (iso) => { if (!iso) return 'jamais'; const m = Math.round((Date.now() - new Date(iso)) / 60000); return m < 1 ? 'à l’instant' : m < 60 ? `il y a ${m} min` : `il y a ${Math.round(m / 60)} h`; };
+r.get('/planning/agenda', (req, res) => {
+  const host = req.get('host') || '';
+  const base = (process.env.PUBLIC_URL || `${/^(localhost|127\.)/.test(host) ? 'http' : 'https'}://${host}`).replace(/\/$/, '');
+  const feedUrl = `${base}/agenda/${G.feedToken()}.ics`;
+  const url = G.importUrl(), err = setting('gcal_error'), n = q.get('SELECT COUNT(*) n FROM gcal_events').n;
+  const acct = setting('gmail_account') || setting('patron_email') || '';
+  const body = h`<div class="eb">Planning</div><h1>Google Agenda</h1>
+<p class="mut mt8 mw680">Ton Google Agenda${acct ? h` (<b>${acct}</b>)` : ''} est l’agenda central : tu le vois sur ton téléphone, Cockpit et Carchon OS s’y raccordent. Ici, deux liaisons : tes rendez-vous Google s’affichent dans le planning de l’atelier, et le planning de l’atelier apparaît dans Google Agenda.</p>
+
+<section class="card mt20 mw680" id="lire"><h2>1 · Google Agenda → planning de l’atelier</h2>
+${url ? h`<p class="mt8">${err ? pill('ko', 'Erreur') : pill('ok', 'Relié')} ${err ? h`Dernier essai en échec : ${err}.` : h`${n} rendez-vous lus, dernière mise à jour ${ago(setting('gcal_last_sync'))}. Mise à jour toute seule toutes les 10 minutes.`}</p>`
+    : h`<p class="mut mt8">Pas encore relié.</p>`}
+<ol class="mt12">
+<li>Ouvre <a href="https://calendar.google.com/calendar/u/0/r/settings" target="_blank" rel="noopener">les paramètres de Google Agenda</a> (vérifie en haut à droite que c’est bien ${acct ? h`<b>${acct}</b>` : 'le bon compte'}).</li>
+<li>À gauche, sous « Paramètres de mes agendas », clique sur ton agenda, puis descends jusqu’à « Intégrer l’agenda ».</li>
+<li>Copie l’<b>Adresse secrète au format iCal</b> (elle finit par <code>basic.ics</code>) et colle-la ci-dessous.</li></ol>
+<form method="post" action="/planning/agenda" class="form mt12"><label>Adresse secrète au format iCal <input name="gcal_ical_url" value="${url}" placeholder="https://calendar.google.com/calendar/ical/…/private-…/basic.ics" autocomplete="off"></label>
+<div class="line"><button class="btn sm">Enregistrer et synchroniser</button>${url ? h`<button class="btn alt sm" name="sync" value="1">Synchroniser maintenant</button><button class="btn alt sm" name="off" value="1">Délier</button>` : ''}</div></form>
+<p class="mut t12 mt8">Cette adresse donne accès à tout ton agenda : ne la partage pas. Si elle fuit, « Réinitialiser » dans Google en crée une nouvelle.</p></section>
+
+<section class="card mt20 mw680" id="ecrire"><h2>2 · Planning de l’atelier → Google Agenda</h2>
+<p class="mut mt8">Barres du planning (planifiées automatiquement ou ajoutées à la main), poses et livraisons fournisseur, dans un agenda « Atelier » à part, que tu peux afficher ou masquer d’un clic.</p>
+<div class="line mt12"><input id="feedurl" readonly value="${feedUrl}" style="flex:1;min-width:0"><button type="button" class="btn alt sm" data-copy="#feedurl">Copier</button></div>
+<ol class="mt12">
+<li>Copie l’adresse ci-dessus.</li>
+<li>Ouvre <a href="https://calendar.google.com/calendar/u/0/r/settings/addbyurl" target="_blank" rel="noopener">Google Agenda › Ajouter un agenda › À partir de l’URL</a>.</li>
+<li>Colle l’adresse, puis « Ajouter l’agenda ». C’est tout : il apparaît aussi sur ton téléphone.</li></ol>
+<p class="mut t12 mt8">Google relit cet agenda tout seul, plusieurs fois par jour (Google choisit le rythme, compte quelques heures). Les rendez-vous qui doivent être vus tout de suite : crée-les dans Google, ils arrivent ici en 10 minutes.</p>
+<form method="post" action="/planning/agenda/nouvelle-adresse" data-confirm="Créer une nouvelle adresse ? L’ancienne ne marchera plus : il faudra la remplacer dans Google Agenda."><button class="btn alt sm">Créer une nouvelle adresse</button></form></section>
+
+<section class="card mt20 mw680" id="cockpit"><h2>Et le planning de Cockpit ?</h2>
+<p class="mut mt8">Le plus simple : ne garde qu’un seul agenda de référence, Google. Les rendez-vous commerciaux (visites, métrés, signatures) se prennent dans Cockpit ou directement dans Google, mais doivent finir dans Google ; Carchon OS les affiche alors ici, à côté du travail de l’atelier. Si Cockpit sait s’abonner à un agenda (adresse iCal), donne-lui aussi l’adresse du point 2 : il verra la charge de l’atelier sans double saisie.</p></section>`;
+  res.send(layout({ title: 'Google Agenda', tab: 'planning', sub: '/planning/agenda', body, flash: req.flash }));
+});
+r.post('/planning/agenda', async (req, res, next) => {
+  try {
+    if (req.body.off) { setSetting('gcal_ical_url', ''); q.run('DELETE FROM gcal_events'); return res.flashTo('/planning/agenda', 'Google Agenda délié du planning.'); }
+    if (!req.body.sync) {
+      const u = str(req.body.gcal_ical_url).replace(/^webcal:/i, 'https:');
+      if (u && !/^https:\/\/\S+$/i.test(u)) return res.flashTo('/planning/agenda', 'Colle l’adresse complète, qui commence par https://', 'ko');
+      if (/\/embed\?|calendar\.google\.com\/calendar\/u\//.test(u)) return res.flashTo('/planning/agenda', 'Ce lien sert à afficher l’agenda dans une page. Il faut l’« Adresse secrète au format iCal », qui finit par basic.ics.', 'ko');
+      setSetting('gcal_ical_url', u);
+      if (!u) { q.run('DELETE FROM gcal_events'); return res.flashTo('/planning/agenda', 'Adresse retirée.'); }
+    }
+    const x = await G.sync();
+    if (x.error) return res.flashTo('/planning/agenda', `Adresse enregistrée, mais la lecture a échoué : ${x.error}.`, 'ko');
+    res.flashTo('/planning', `Google Agenda relié : ${x.n} rendez-vous affichés dans le planning.`);
+  } catch (e) { next(e); }
+});
+r.post('/planning/agenda/nouvelle-adresse', (req, res) => {
+  setSetting('ics_token', '');
+  G.feedToken();
+  res.flashTo('/planning/agenda#ecrire', 'Nouvelle adresse créée : remplace l’ancienne dans Google Agenda.');
 });
 
 function barValues(b) {

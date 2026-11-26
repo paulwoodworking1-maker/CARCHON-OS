@@ -98,7 +98,8 @@ ${COMPANY_FIELDS.map(([k, label, def]) => h`<label>${label} <input name="${k}" v
 <label>Garantie des pièces (mois) <input name="warranty_months" inputmode="numeric" value="${setting('warranty_months', '24')}"></label></div>
 <button class="btn">Enregistrer</button></form>
 <section class="card mt20 mw680" id="cockpit"><h2>Liaison avec Cockpit</h2>
-<p class="mut mt8">Cockpit envoie les affaires signées et les acomptes à Carchon OS, et lit l'avancement, les dates et le coût réel des OF. Adresse : <b>${process.env.PUBLIC_URL || ''}/api/v1</b> · clé : ${setting('api_token') ? 'créée (masquée)' : 'pas encore créée'}.</p>
+<form method="post" action="/entreprise/cockpit" class="form mt12"><label>Adresse de Cockpit (pour le bouton « Passer sur Cockpit » en bas de la colonne) <input type="url" name="cockpit_url" placeholder="https://…" value="${setting('cockpit_url') || process.env.COCKPIT_URL || ''}"></label><button class="btn alt sm">Enregistrer l’adresse</button></form>
+<p class="mut mt12">Cockpit envoie les affaires signées et les acomptes à Carchon OS, et lit l'avancement, les dates et le coût réel des OF. Adresse : <b>${process.env.PUBLIC_URL || ''}/api/v1</b> · clé : ${setting('api_token') ? 'créée (masquée)' : 'pas encore créée'}.</p>
 <form method="post" action="/entreprise/cle" data-confirm="Créer une nouvelle clé ? L’ancienne ne marchera plus."><button class="btn alt sm">${setting('api_token') ? 'Créer une nouvelle clé' : 'Créer la clé'}</button></form>
 <p class="mut t12 mt8">Détail technique pour Cockpit : POST /api/v1/affaires, POST /api/v1/affaires/{réf}/acompte, GET /api/v1/ofs, en-tête « Authorization: Bearer &lt;clé&gt; ».</p></section>
 <section class="card mt20 mw680" id="sauvegardes"><h2>Sauvegardes</h2>
@@ -117,6 +118,13 @@ r.get('/sauvegarde/:name', (req, res) => {
   const f = B.fileOf(req.params.name);
   if (!f || !require('node:fs').existsSync(f)) return res.status(404).send('Introuvable');
   res.download(f, req.params.name.replace('carchon-', 'carchon-os-'));
+});
+
+r.post('/entreprise/cockpit', (req, res) => {
+  const url = String(req.body.cockpit_url || '').trim();
+  if (url && !/^https?:\/\/[^\s]+$/i.test(url)) return res.flashTo('/entreprise#cockpit', 'L’adresse de Cockpit doit commencer par https://', 'ko');
+  setSetting('cockpit_url', url);
+  res.flashTo('/entreprise#cockpit', url ? 'Adresse de Cockpit enregistrée : le bouton « Passer sur Cockpit » l’ouvre.' : 'Adresse de Cockpit retirée.');
 });
 
 // Clé de la liaison avec Cockpit (montrée une fois à la création).
