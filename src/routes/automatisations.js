@@ -41,7 +41,7 @@ ${Object.keys(avg).length ? Object.entries(avg).map(([g, hr], i) => h`<div class
 
 <aside class="side-col">
 <section class="card"><div class="line"><h2>Assistant IA</h2>${pill(ai.enabled() ? 'ok' : 'no', ai.enabled() ? 'Activé' : 'Pas activé')}</div>
-<ul class="mut checklist mt8"><li>Écrit un carnet de fabrication à partir de ce que tu racontes.</li><li>Lit le PDF d’un devis et remplit le formulaire d’envoi.</li><li>Rédige un message d’avancement pour le client.</li></ul>
+<ul class="mut checklist mt8"><li><a href="/assistant">Répond à tes questions sur l’atelier</a> et note un achat, une fiche ou une absence quand tu le demandes.</li><li>Écrit un carnet de fabrication à partir de ce que tu racontes.</li><li>Lit le PDF d’un devis et remplit le formulaire d’envoi.</li><li>Rédige un message d’avancement pour le client.</li></ul>
 ${ai.enabled() ? '' : h`<p class="mut mt8">Pour l’activer : crée une clé sur console.anthropic.com, puis ajoute-la à l’hébergeur sous le nom <b>ANTHROPIC_API_KEY</b> (Render › Environment). Coût à l’usage, quelques centimes par demande.</p>`}</section>
 <section class="card"><div class="line"><h2>E-mails</h2>${pill(mail.configured() ? 'ok' : 'no', mail.configured() ? 'Configurés' : 'Pas configurés')}</div>
 ${mail.configured() ? '' : h`<p class="mut mt8">Résumé du matin, rappels J-2 et codes clients ont besoin de l’envoi d’e-mails (variables SMTP chez l’hébergeur).</p>`}</section>
