@@ -161,6 +161,23 @@ addColumn('projects', 'qty', 'INTEGER NOT NULL DEFAULT 1');
 addColumn('projects', 'for_whom', "TEXT DEFAULT ''");
 addColumn('people', 'hours_week', 'REAL NOT NULL DEFAULT 35');
 addColumn('stock_items', 'machine_id', 'INTEGER');
+// Suivi des portails : le client a-t-il ouvert, lu, demandé son code ?
+addColumn('quotes', 'opened_at', 'TEXT');
+addColumn('quotes', 'last_seen_at', 'TEXT');
+addColumn('quotes', 'views', 'INTEGER NOT NULL DEFAULT 0');
+addColumn('quotes', 'pdf_opened_at', 'TEXT');
+addColumn('quotes', 'code_sent_at', 'TEXT');
+addColumn('quotes', 'link_at', 'TEXT');
+addColumn('quotes', 'lines', "TEXT DEFAULT '[]'");     // lignes du devis, pour que le client ajuste ligne par ligne
+addColumn('quotes', 'response_json', 'TEXT');
+addColumn('quotes', 'token_enc', 'TEXT');          // lien chiffré, pour le remettre dans les SMS
+addColumn('quotes', 'signer_phone', "TEXT DEFAULT ''");
+addColumn('projects', 'portal_token_enc', 'TEXT');
+addColumn('clients', 'sms_off', 'INTEGER NOT NULL DEFAULT 0');
+addColumn('projects', 'portal_opened_at', 'TEXT');
+addColumn('projects', 'portal_seen_at', 'TEXT');
+addColumn('projects', 'portal_views', 'INTEGER NOT NULL DEFAULT 0');
+addColumn('projects', 'portal_link_at', 'TEXT');
 
 db.exec(`
 CREATE TABLE IF NOT EXISTS models (
@@ -213,7 +230,16 @@ CREATE TABLE IF NOT EXISTS machine_events (
 CREATE TABLE IF NOT EXISTS absences (
   id INTEGER PRIMARY KEY, person_id INTEGER NOT NULL REFERENCES people(id) ON DELETE CASCADE, start_date TEXT NOT NULL, end_date TEXT NOT NULL, label TEXT DEFAULT 'Congé'
 );
+CREATE TABLE IF NOT EXISTS sms_queue (
+  id INTEGER PRIMARY KEY, target TEXT NOT NULL, project_id INTEGER, quote_id INTEGER, phone TEXT NOT NULL, event TEXT NOT NULL, vars TEXT DEFAULT '{}',
+  text TEXT, status TEXT NOT NULL DEFAULT 'attente', error TEXT, send_after TEXT NOT NULL, sent_at TEXT, created_at TEXT DEFAULT (datetime('now'))
+);
 CREATE TABLE IF NOT EXISTS snoozes (key TEXT PRIMARY KEY, until TEXT NOT NULL);
+-- Parcours client : rendez-vous, prises de cotes, échanges… visibles sur son portail.
+CREATE TABLE IF NOT EXISTS client_log (
+  id INTEGER PRIMARY KEY, number TEXT DEFAULT '', project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE,
+  date TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'rdv', title TEXT NOT NULL, note TEXT DEFAULT '', created_at TEXT DEFAULT (datetime('now'))
+);
 `);
 
 // Référence de dossier : P2026-001, P2026-002… attribuée à la création.

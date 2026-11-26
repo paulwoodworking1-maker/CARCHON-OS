@@ -177,5 +177,6 @@ if (require.main === module) {
   const port = Number(process.env.PORT || 3000);
   app.listen(port, () => console.log(`Carchon OS prêt sur http://localhost:${port}`));
   automations.start();
+  require('./sms').start();
 }
 module.exports = app;

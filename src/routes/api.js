@@ -60,6 +60,7 @@ r.post('/affaires/:ref/acompte', (req, res) => {
     q.run('UPDATE needs SET needs_deposit = 0 WHERE project_id = ?', p.id);
     logActivity(p.id, null, 'Acompte encaissé (Cockpit) : achats débloqués', 'Cockpit');
   });
+  if (!p.deposit_at) require('../sms').notify('acompte', { projectId: p.id });
   res.json({ ok: true });
 });
 

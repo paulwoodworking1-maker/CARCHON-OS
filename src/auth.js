@@ -85,4 +85,4 @@ function throttle(key) {
 }
 function fail(key) { (attempts.get(key) || attempts.set(key, []).get(key)).push(Date.now()); }
 
-module.exports = { sessionMiddleware, requirePatron, requireAtelier, hash, verify, token, sha256, throttle, fail, setSetting };
+module.exports = { sessionMiddleware, requirePatron, requireAtelier, hash, verify, token, sha256, throttle, fail, setSetting, secret };

@@ -166,6 +166,8 @@ r.post('/fiche/:id/prendre', loadStep, (req, res) => {
 r.post('/fiche/:id/commencer', loadStep, (req, res) => {
   if (!mineOrFree(req)) return res.redirect(`/atelier/fiche/${req.step.id}`);
   if (req.step.status !== 'doing') logActivity(req.step.project_id, req.person.id, `Fiche commencée : ${req.step.title}`, req.person.name);
+  // Premier coup de scie sur ce projet : le client est prévenu.
+  if (!q.get('SELECT id FROM steps WHERE project_id = ? AND started_at IS NOT NULL', req.step.project_id)) require('../sms').notify('maj', { projectId: req.step.project_id, quoi: 'début de la fabrication' });
   q.run("UPDATE steps SET status = 'doing', started_at = COALESCE(started_at, datetime('now')), who_id = COALESCE(who_id, ?), seen = 1 WHERE id = ?", req.person.id, req.step.id);
   res.redirect(`/atelier/fiche/${req.step.id}`);
 });

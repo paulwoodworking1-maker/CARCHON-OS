@@ -140,6 +140,7 @@ function tripValues(b) {
 r.post('/poses', (req, res) => {
   const { items, vals } = tripValues(req.body);
   q.run('INSERT INTO trips (project_id, date, what, place, access, contact, team, items) VALUES (?, ?, ?, ?, ?, ?, ?, ?)', ...vals, JSON.stringify(items.map((t) => ({ t, done: false }))));
+  if (vals[0] && vals[1]) require('../sms').notify('rdv', { projectId: vals[0], date: require('../html').ddmm(vals[1]), titre: 'livraison et pose chez vous' });
   res.flashTo('/poses', 'Livraison ajoutée. Elle apparaît dans le planning et sur la frise du projet.');
 });
 r.post('/poses/:id', (req, res) => {

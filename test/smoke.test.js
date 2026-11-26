@@ -27,7 +27,7 @@ test('sans connexion, on est renvoyé vers la connexion', async () => {
 });
 
 const pages = ['/', '/projets', '/projets?vue=termines', '/projets/1', '/projets/nouveau', '/carnets', '/carnets/1', '/stock', '/achats', '/commandes',
-  '/fournisseurs', '/planning', '/planning?semaines=4', '/poses', '/poses/1/pv', '/pilotage', '/pilotage/export.csv', '/equipe', '/portails', '/portails?nouveau=1', '/recherche?q=chêne', '/automatisations', '/automatisations/resume', '/projets/1/nouvelles', '/entreprise', '/carnets/1/imprimer', '/poses/1/pv/imprimer', '/commandes/1/bon', '/catalogue', '/catalogue?m=1&qty=12', '/machines', '/machines?m=2', '/charge', '/charge?p=2&w=1', '/bois', '/pieces', '/expeditions', '/expeditions/1/bon', '/sav', '/sav?nouveau=1', '/unites', '/unites/1', '/unites/6', '/pilotage/couts', '/projets/4', '/assistant', '/decider', '/decider?tag=Achat', '/projets?f=retard', '/projets?vue=frise', '/projets?resp=1&canal=Boutique', '/projets?f=acompte'];
+  '/fournisseurs', '/planning', '/planning?semaines=4', '/poses', '/poses/1/pv', '/pilotage', '/pilotage/export.csv', '/equipe', '/portails', '/portails?nouveau=1', '/recherche?q=chêne', '/automatisations', '/automatisations/resume', '/projets/1/nouvelles', '/entreprise', '/carnets/1/imprimer', '/poses/1/pv/imprimer', '/commandes/1/bon', '/catalogue', '/catalogue?m=1&qty=12', '/machines', '/machines?m=2', '/charge', '/charge?p=2&w=1', '/bois', '/pieces', '/expeditions', '/expeditions/1/bon', '/sav', '/sav?nouveau=1', '/unites', '/unites/1', '/unites/6', '/pilotage/couts', '/projets/4', '/assistant', '/decider', '/decider?tag=Achat', '/projets?f=retard', '/projets?vue=frise', '/projets?resp=1&canal=Boutique', '/projets?f=acompte', '/portails/envoyer', '/portails/reglages', '/portails/parcours?p=1', '/portails?f=espaces', '/portails?f=signes', '/portails/envoyer?depuis=1'];
 for (const p of pages) {
   test(`GET ${p}`, async () => {
     const res = await fetch(base + p, { headers: { cookie } });
@@ -159,4 +159,31 @@ test('transactions imbriquées et sauvegarde de la base', async () => {
   assert.strictEqual(Buffer.from(await res.arrayBuffer()).subarray(0, 15).toString(), 'SQLite format 3');
   assert.strictEqual((await fetch(base + '/sauvegarde/..%2Fcarchon.db', { headers: { cookie } })).status, 404);
   assert.strictEqual((await fetch(base + '/sante')).status, 200);
+});
+
+test('SMS : numéro, lien chiffré, regroupement des nouveautés, texte final', () => {
+  const SMS = require('../src/sms');
+  const { q } = require('../src/db');
+  assert.strictEqual(SMS.normalize('06 12 34 56 78'), '33612345678');
+  assert.strictEqual(SMS.normalize('+33 7 12 34 56 78'), '33712345678');
+  assert.strictEqual(SMS.normalize('abc'), '');
+  assert.strictEqual(SMS.open(SMS.seal('jeton-secret')), 'jeton-secret');
+  const p = q.get('SELECT id, client_id FROM projects WHERE client_id IS NOT NULL LIMIT 1');
+  q.run("UPDATE clients SET phone = '06 11 22 33 44', sms_off = 0 WHERE id = ?", p.client_id);
+  q.run("UPDATE projects SET portal_state = 'open', portal_token_enc = ? WHERE id = ?", SMS.seal('abc123'), p.id);
+  q.run('DELETE FROM sms_queue');
+  SMS.notify('maj', { projectId: p.id, quoi: 'nouvelle photo' });
+  SMS.notify('maj', { projectId: p.id, quoi: 'nouveau document : plan' });
+  const rows = q.all('SELECT * FROM sms_queue');
+  assert.strictEqual(rows.length, 1);
+  const text = SMS.compose(rows[0]);
+  assert.match(text, /nouvelle photo, nouveau document/);
+  assert.match(text, /\/p\/espace\/abc123/);
+  assert.doesNotMatch(text, /[’«»]/);
+  q.run('UPDATE clients SET sms_off = 1 WHERE id = ?', p.client_id); q.run('DELETE FROM sms_queue');
+  SMS.notify('acompte', { projectId: p.id });
+  assert.strictEqual(q.get('SELECT COUNT(*) n FROM sms_queue').n, 0);
+  assert.strictEqual(SMS.quietNow(new Date('2026-11-29T12:00:00+01:00')), true); // dimanche
+  assert.strictEqual(SMS.quietNow(new Date('2026-11-26T10:00:00+01:00')), false);
+  assert.strictEqual(SMS.quietNow(new Date('2026-11-26T22:00:00+01:00')), true);
 });

@@ -131,6 +131,7 @@ const SUBNAV = {
   pilotage: [['/pilotage', 'Heures et chiffrage'], ['/pilotage/couts', 'Coût par OF']],
   reglages: [['/equipe', 'Équipe'], ['/entreprise', 'Entreprise']],
   sav: [['/sav', 'Demandes SAV'], ['/unites', 'Registre des pièces']],
+  portails: [['/portails', 'Suivi des portails'], ['/portails/envoyer', 'Envoyer un devis'], ['/portails/reglages', 'Réglages et e-mails']],
 };
 
 // Compteurs de la colonne (calculés à chaque page, requêtes légères).
@@ -182,7 +183,7 @@ function layout({ title, tab, sub, body, flash, counts = {}, heading }) {
   <div class="tools">
     <form action="/recherche" method="get" role="search" class="search"><label class="sr" for="qsearch">Rechercher</label><input id="qsearch" name="q" placeholder="Rechercher un OF, une pièce, un lot" accesskey="k"></form>
     <details class="menu"><summary class="btn sm">+ Créer</summary><div class="menu-list right-al">
-      <a href="/catalogue">Lancer un OF depuis le catalogue</a><a href="/projets/nouveau">OF sur-mesure ou d'atelier</a><a href="/portails?nouveau=1">Envoyer un devis</a><a href="/sav?nouveau=1">Demande SAV</a><a href="/achats#noter">Noter à recommander</a>
+      <a href="/catalogue">Lancer un OF depuis le catalogue</a><a href="/projets/nouveau">OF sur-mesure ou d'atelier</a><a href="/portails/envoyer">Envoyer un devis</a><a href="/sav?nouveau=1">Demande SAV</a><a href="/achats#noter">Noter à recommander</a>
     </div></details>
   </div>
 </header>

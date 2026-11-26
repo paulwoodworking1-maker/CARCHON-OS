@@ -93,12 +93,14 @@ const QuoteSchema = z.object({
   montant_ttc: z.string(),
   acompte: z.string(),
   resume: z.string(),
+  lignes: z.array(z.object({ designation: z.string(), quantite: z.string() })),
 });
 async function readQuotePdf(pdfBuffer) {
   const system = `Tu lis un devis d'ébénisterie (PDF) et tu en extrais les informations demandées, telles qu'elles sont écrites. N'invente rien : si une information n'apparaît pas, renvoie "".
 - "objet" : nom court de la pièce ou de l'ouvrage, 2 à 5 mots, ex. "Table à manger · chêne".
 - "montant_ttc" et "acompte" : tels qu'écrits, avec la devise.
-- "resume" : une phrase sur ce qui est commandé.`;
+- "resume" : une phrase sur ce qui est commandé.
+- "lignes" : les lignes d'ouvrage du devis, dans l'ordre (désignation courte, sans prix ; quantité telle qu'écrite, "1" si absente). Ignore les lignes de total, de TVA, d'acompte et de conditions.`;
   return structured({
     system,
     schema: QuoteSchema,

@@ -61,6 +61,12 @@ Pour que les clients reçoivent leur code par e-mail, renseigner `SMTP_*` (l'adr
 - Les liens ne sont montrés qu'une fois (seule leur empreinte est gardée). Un lien perdu se recrée.
 - Le client ne voit jamais de prix de revient, de fournisseur ni de note interne : seulement l'avancement, les photos cochées « Partagée au client » et les documents cochés « Client ».
 
+## E-mails et SMS aux clients
+
+- **Codes de validation des devis** : `GMAIL_USER` et `GMAIL_APP_PASSWORD` (mot de passe d'application Google, 16 lettres). Les e-mails partent de ce Gmail.
+- **SMS de suivi** : `BREVO_API_KEY` (compte Brevo avec un pack de SMS). Un SMS court part au client à chaque nouveauté de son portail, regroupé sur 15 minutes, jamais la nuit ni le dimanche. Modèles modifiables dans Portails clients › Réglages et e-mails.
+- **Brouillons Gmail** : « Créer le brouillon Gmail » ouvre un message rédigé dans Gmail (rangé dans Brouillons).
+
 ## Sauvegardes
 
 Chaque nuit, une copie complète de la base est écrite dans `DATA_DIR/sauvegardes/` (les 14 dernières sont gardées). Dans Réglages › Entreprise › Sauvegardes, on peut en télécharger une à tout moment : en ranger une chaque semaine hors du serveur.

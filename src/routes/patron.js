@@ -6,6 +6,7 @@ const { icon, h, raw, layout, pill, avatar, postBtn, options, hidden, ddmm, long
 const L = require('../logic');
 const { upload, fileUrl, isImage } = require('../uploads');
 const decideRow = (...a) => require('./decider').row(...a);
+const SMS = require('../sms');
 
 const r = express.Router();
 const int = (v) => (v === undefined || v === '' || v === null ? null : Number(v));
@@ -219,6 +220,7 @@ r.post('/projets/lot', (req, res) => {
         q.run("UPDATE projects SET deposit_at = date('now', 'localtime') WHERE id = ?", p.id);
         q.run('UPDATE needs SET needs_deposit = 0 WHERE project_id = ?', p.id);
         logActivity(p.id, null, `Acompte reçu le ${ddmm(today())}`, 'Patron');
+        SMS.notify('acompte', { projectId: p.id });
         msg = 'Acomptes notés. Les achats bloqués sont débloqués.';
       } else if (act === 'terminer') {
         q.run("UPDATE projects SET status = 'termine', finished_at = datetime('now') WHERE id = ?", p.id);
@@ -240,6 +242,7 @@ r.get('/projets/nouveau', (req, res) => {
 <label>Pour (client, revendeur, salon…) <input name="for_whom"></label>
 <label>Client existant (facultatif) <select name="client_id"><option value="">—</option>${options(q.all('SELECT id, name FROM clients ORDER BY name').map((c) => [c.id, c.name]))}</select></label>
 <div class="grid2"><label>Ou nouveau client : nom <input name="client_name" placeholder="ex. M. et Mme Martin"></label><label>Son e-mail <input type="email" name="client_email"></label></div>
+<label>Son portable (SMS de suivi, facultatif) <input type="tel" name="client_phone" placeholder="06 12 34 56 78"></label>
 <label>Échéance <input type="date" name="due_date"></label>
 <label>Responsable <select name="lead_id">${options(L.people().map((p) => [p.id, p.role === 'patron' ? 'Toi' : p.name]))}</select></label>
 <button class="btn">Créer le projet</button></form>`;
@@ -415,7 +418,7 @@ r.post('/projets/:id/infos', loadProject, (req, res) => {
     q.run('UPDATE projects SET name = ?, due_date = ?, lead_id = ?, next_action = ?, wood = ?, notes = ?, deposit_needed = ?, deposit_at = ? WHERE id = ?',
       str(b.name) || p.name, str(b.due_date) || null, int(b.lead_id), str(b.next_action), str(b.wood), str(b.notes), p.client_id ? (b.deposit_needed ? 1 : 0) : 0, depositAt, p.id);
     // Acompte reçu : les achats qui l'attendaient se débloquent.
-    if (depositAt && !p.deposit_at) { q.run('UPDATE needs SET needs_deposit = 0 WHERE project_id = ?', p.id); logActivity(p.id, null, `Acompte reçu le ${ddmm(depositAt)}`, 'Patron'); }
+    if (depositAt && !p.deposit_at) { q.run('UPDATE needs SET needs_deposit = 0 WHERE project_id = ?', p.id); logActivity(p.id, null, `Acompte reçu le ${ddmm(depositAt)}`, 'Patron'); SMS.notify('acompte', { projectId: p.id }); }
     if (str(b.due_date) && str(b.due_date) !== (p.due_date || '')) logActivity(p.id, null, `Date de livraison : ${ddmm(str(b.due_date))}${p.due_date ? ` (au lieu du ${ddmm(p.due_date)})` : ''}`, 'Patron');
   });
   res.flashTo(`/projets/${p.id}`, depositAt && !p.deposit_at ? 'Acompte noté. Les achats bloqués sont débloqués.' : 'Enregistré.');
@@ -431,6 +434,7 @@ r.post('/projets/:id/acompte', loadProject, (req, res) => {
       q.run('UPDATE needs SET needs_deposit = 0 WHERE project_id = ?', p.id);
       logActivity(p.id, null, `Acompte reçu le ${ddmm(today())}`, 'Patron');
     });
+    SMS.notify('acompte', { projectId: p.id });
   }
   res.flashTo(back, `Acompte noté pour ${p.name}. Les achats bloqués sont débloqués.`);
 });
@@ -480,17 +484,22 @@ r.post('/projets/:id/photos', loadProject, upload.single('photo'), (req, res) =>
   res.flashTo(`/projets/${req.project.id}#photos`, 'Photo ajoutée au journal.');
 });
 r.post('/projets/:id/photos/:pid', loadProject, (req, res) => {
+  const was = q.get('SELECT shared_client FROM photos WHERE id = ?', req.params.pid);
   q.run('UPDATE photos SET shared_client = ?, publishable = ? WHERE id = ? AND project_id = ?', req.body.shared_client ? 1 : 0, req.body.publishable ? 1 : 0, req.params.pid, req.project.id);
+  if (req.body.shared_client && was && !was.shared_client) SMS.notify('maj', { projectId: req.project.id, quoi: 'nouvelle photo' });
   res.redirect(`/projets/${req.project.id}#photos`);
 });
 
 r.post('/projets/:id/documents', loadProject, upload.single('file'), (req, res) => {
   if (!req.file) return res.flashTo(`/projets/${req.project.id}`, 'Fichier refusé (PDF ou image).', 'ko');
   q.run('INSERT INTO documents (project_id, title, file, visible_client) VALUES (?, ?, ?, ?)', req.project.id, str(req.body.title), req.file.filename, req.body.visible_client ? 1 : 0);
+  if (req.body.visible_client) SMS.notify('maj', { projectId: req.project.id, quoi: `nouveau document : ${str(req.body.title).toLowerCase()}` });
   res.flashTo(`/projets/${req.project.id}`, 'Document ajouté.');
 });
 r.post('/projets/:id/documents/:did', loadProject, (req, res) => {
+  const wasDoc = q.get('SELECT visible_client, title FROM documents WHERE id = ?', req.params.did);
   q.run('UPDATE documents SET visible_client = ? WHERE id = ? AND project_id = ?', req.body.visible_client ? 1 : 0, req.params.did, req.project.id);
+  if (req.body.visible_client && wasDoc && !wasDoc.visible_client) SMS.notify('maj', { projectId: req.project.id, quoi: `nouveau document : ${String(wasDoc.title).toLowerCase()}` });
   res.redirect(`/projets/${req.project.id}`);
 });
 

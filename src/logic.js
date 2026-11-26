@@ -91,7 +91,7 @@ function toDecide() {
     items.push({ kind: 'ok', tag: 'Devis accepté', title: qt.signer_name, text: `Accepté sur son portail le ${ddmm(qt.accepted_at)} · la commande est créée`, href: `/portails#q${qt.id}`, cta: 'Ouvrir son espace client', primary: true });
   }
   for (const qt of q.all("SELECT * FROM quotes WHERE status IN ('modif','refused') AND treated = 0 ORDER BY responded_at DESC")) {
-    items.push({ kind: qt.status === 'refused' ? 'ko' : 'wa', tag: 'Portail', title: `${qt.status === 'refused' ? 'Devis refusé' : 'Modification demandée'} · ${qt.project_name || qt.number}`, text: `${qt.signer_name} : « ${qt.response_text || '—'} »`, href: `/portails#q${qt.id}`, cta: 'Voir la demande' });
+    items.push({ kind: qt.status === 'refused' ? 'ko' : 'wa', tag: 'Portail', title: `${qt.status === 'refused' ? 'Devis refusé' : 'Modification demandée'} · ${qt.project_name || qt.number}`, text: `${qt.signer_name} : « ${qt.response_text || '—'} »`, href: `/portails#q${qt.id}r`, cta: 'Voir la demande' });
   }
   for (const n of q.all("SELECT needs.*, people.name pname FROM needs LEFT JOIN people ON people.id = needs.person_id WHERE status = 'todo' AND acknowledged = 0 AND source IN ('stock','ipad') ORDER BY created_at DESC")) {
     items.push({ kind: 'wa', tag: 'Achat', title: `${n.text} · ${n.source === 'stock' ? 'signalé vide' : 'il manque'}`, text: `Par ${n.pname || 'l’atelier'} ${n.source === 'ipad' ? 'depuis l’iPad' : 'dans le stock'}`, href: '/achats', cta: 'Valider', ack: n.id });
@@ -137,7 +137,7 @@ function projectFromQuote(quote) {
   let clientId = quote.client_id;
   if (!clientId) {
     const existing = q.get('SELECT id FROM clients WHERE lower(email) = lower(?)', quote.signer_email);
-    clientId = existing ? existing.id : Number(q.run('INSERT INTO clients (name, email, kind) VALUES (?, ?, ?)', quote.signer_name, quote.signer_email, 'Particulier').lastInsertRowid);
+    clientId = existing ? existing.id : Number(q.run('INSERT INTO clients (name, email, phone, kind) VALUES (?, ?, ?, ?)', quote.signer_name, quote.signer_email, quote.signer_phone || '', 'Particulier').lastInsertRowid);
     q.run('UPDATE quotes SET client_id = ? WHERE id = ?', clientId, quote.id);
   }
   let projectId = quote.project_id;
