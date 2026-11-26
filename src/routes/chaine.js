@@ -54,6 +54,43 @@ ${it.wid * s > 40 ? `<text x="${m + (it.x + it.len / 2) * s}" y="${m + (it.y + i
 <text x="${m}" y="${W * s + 32}" font-size="9" letter-spacing="1.5" fill="#6B635A">${String(g.ref.name).toUpperCase()} ${g.ref.thickness} · ${L} × ${W} · FIL DANS LA LONGUEUR</text></svg>`);
 }
 
+// Élévation d'un ensemble dessinée par l'IA (rectangles en mm, origine en bas à gauche).
+function ensembleView(e) {
+  const W = Math.max(1, e.largeur || Math.max(...(e.vue || []).map((v) => v.x + v.l), 1)), H = Math.max(1, e.hauteur || Math.max(...(e.vue || []).map((v) => v.y + v.h), 1));
+  const s = Math.min(520 / W, 320 / H), ox = 40, oy = 24;
+  const esc = (t) => String(t).replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[ch]);
+  const rects = (e.vue || []).map((v) => { const x = ox + v.x * s, y = oy + (H - v.y - v.h) * s, w = v.l * s, hh = v.h * s;
+    return `<rect x="${x}" y="${y}" width="${w}" height="${hh}" fill="none" stroke="currentColor" stroke-width=".9"/>${w > 40 && hh > 12 && v.label ? `<text x="${x + w / 2}" y="${y + hh / 2 + 4}" text-anchor="middle" font-size="${Math.min(11, Math.max(7, hh / 3))}" fill="#6B635A">${esc(v.label).slice(0, 28)}</text>` : ''}`; }).join('');
+  return raw(`<svg viewBox="0 0 ${W * s + 70} ${H * s + 64}" class="chaine-svg" role="img" aria-label="Élévation ${esc(e.nom)}">${rects}
+<line x1="${ox}" y1="${oy + H * s + 18}" x2="${ox + W * s}" y2="${oy + H * s + 18}" stroke="#6B635A" stroke-width=".7"/><text x="${ox + (W * s) / 2}" y="${oy + H * s + 34}" text-anchor="middle" font-size="12" fill="#6B635A">${W}</text>
+<line x1="${ox - 16}" y1="${oy}" x2="${ox - 16}" y2="${oy + H * s}" stroke="#6B635A" stroke-width=".7"/><text x="${ox - 22}" y="${oy + (H * s) / 2}" transform="rotate(-90 ${ox - 22} ${oy + (H * s) / 2})" text-anchor="middle" font-size="12" fill="#6B635A">${H}</text></svg>`);
+}
+
+// La demande du client, étudiée par l'IA : aucun modèle figé, l'étude s'adapte au projet.
+function studyBlock(p, c, x, frozen) {
+  const ai = require('../ai');
+  const st = c.ai_status;
+  const brief = c.brief || [p.descr, p.notes, p.wood && `Bois : ${p.wood}`].filter(Boolean).join('\n');
+  const client = p.client_id ? q.get('SELECT * FROM clients WHERE id = ?', p.client_id) : null;
+  const qs = c.study?.questions_client || [];
+  const mailQ = qs.length ? `/mail/nouveau?${new URLSearchParams({ to: client?.email || '', subject: `Votre projet · quelques précisions · ${company().name}`, back: `/projets/${p.id}/chaine#01`, project_id: String(p.id),
+    body: `Bonjour,\n\nPour préparer au plus juste votre projet, pourriez-vous nous préciser :\n\n${qs.map((t) => `- ${t}`).join('\n')}\n\nMerci par avance,\n${company().name}` }).toString()}` : '';
+  return h`<div class="ch-box">
+${!ai.enabled() ? h`<p class="flash ko">L’assistant IA n’est pas activé (clé ANTHROPIC_API_KEY chez l’hébergeur) : en attendant, la chaîne calcule des caissons simples.</p>` : ''}
+${st === 'running' ? h`<p data-reload="12"><b>L’IA étudie le projet…</b> <span class="mut">Une à cinq minutes selon la taille. La page se met à jour toute seule.</span></p>` : ''}
+${st === 'error' ? h`<p class="flash ko">L’étude n’a pas abouti : ${c.ai_error || ''}</p>` : ''}
+${c.study ? h`<p><b>${c.study.titre}</b> <span class="mut t12">· étude du ${ddmm(c.ai_at || c.updated_at)}</span></p><p class="mut">${c.study.resume}</p>
+<div class="ch-two mt12"><div><div class="eb">Hypothèses de l’IA</div><ul class="t13">${(c.study.hypotheses || []).map((t) => h`<li>${t}</li>`)}</ul></div>
+<div><div class="eb">Questions à poser au client</div><ul class="t13">${qs.map((t) => h`<li>${t}</li>`)}</ul>${qs.length ? h`<a class="btn alt sm" href="${mailQ}">Envoyer ces questions au client</a>` : h`<p class="mut t13">Aucune.</p>`}</div></div>` : ''}
+${frozen ? h`<p class="mut mt8">Version figée : fais un avenant pour changer l’étude.</p>` : h`
+<form method="post" action="/projets/${p.id}/chaine/etude" class="form mt12" data-busy="Envoi à l’IA…">
+<label>${c.study ? 'Demande du client (tout ce que tu sais : pièces, cotes, matières, finitions, contraintes du lieu)' : 'Décris la demande du client : tout ce que tu sais (pièces, cotes, matières, finitions, contraintes du lieu). Cuisine, dressing, bureau, massif… ou tout à la fois.'}
+<textarea name="brief" rows="${c.study ? 4 : 8}" required placeholder="ex. Cuisine en L 3,20 m + 2,10 m, caissons bas et hauts, façades chêne plaqué vernis mat, plan de travail en chêne massif 40 mm, îlot 180 × 90 avec 4 tiroirs ; dressing 2,40 m sous pente avec penderie et 6 tiroirs ; bureau d’angle mélaminé blanc et chêne…">${brief}</textarea></label>
+${c.study ? h`<label>Ajuster l’étude (facultatif) <input name="instruction" placeholder="ex. passe les façades en laque blanche, ajoute 2 tiroirs sous l’évier, plan de travail en 2 morceaux"></label>` : ''}
+<div class="line"><button class="btn"${st === 'running' || !ai.enabled() ? ' disabled' : ''}>${c.study ? 'Ajuster / refaire l’étude' : 'Étudier avec l’IA'}</button>
+${c.study ? postBtn(`/projets/${p.id}/chaine/etude/oublier`, 'Revenir au calcul simple de caissons', 'linkbtn', {}, 'Oublier l’étude de l’IA ?') : ''}</div></form>`}</div>`;
+}
+
 function stepHead(num, title, tag, ia, you, youTitle = 'Vous validez') {
   return h`<div class="ch-step" id="${num}"><div class="line"><span class="eb">Étape ${num}</span><span class="ch-tag push">${tag}</span></div><h2 class="ch-h">${title}</h2>
 <div class="ch-two"><div><div class="eb">L’IA prépare</div><p>${ia}</p></div><div><div class="eb">${youTitle}</div><p>${you}</p></div></div></div>`;
@@ -63,7 +100,7 @@ const frozenBox = (c) => (c.frozen_at ? h`<div class="ch-frozen"><span class="eb
 r.get('/projets/:id/chaine', loadProject, (req, res) => {
   const p = req.project;
   const c = ensure(p);
-  const x = C.compute(p.id, c.params);
+  const x = C.compute(p.id, c.params, c.study);
   const P = x.p, frozen = !!c.frozen_at;
   const refs = C.refs().filter((r0) => r0.kind === 'Panneau');
   const client = p.client_id ? q.get('SELECT * FROM clients WHERE id = ?', p.client_id) : null;
@@ -71,8 +108,9 @@ r.get('/projets/:id/chaine', loadProject, (req, res) => {
   const fld = (name, label, val, type = 'number', extra = '') => h`<label class="ch-f"><span>${label}</span><input type="${type}" name="${name}" value="${val}" inputmode="decimal"${dis}${raw(extra)}></label>`;
   const sel = (name, label, list, val) => h`<label class="ch-f"><span>${label}</span><select name="${name}"${dis}>${options(list, val)}</select></label>`;
   const sups = Object.fromEntries(q.all('SELECT * FROM suppliers').map((s) => [s.id, s]));
-  const panelLines = x.cal.filter((g) => g.refId).map((g) => ({ name: `${g.ref.name} ${g.ref.thickness} mm, ${g.ref.length} × ${g.ref.width}`, qty: g.panels.length, unit: g.panels.length > 1 ? 'panneaux' : 'panneau', pu: ((g.ref.length * g.ref.width) / 1e6) * g.ref.price_m2, sup: sups[g.ref.supplier_id] }));
-  panelLines.push({ name: 'Chant chêne 23 mm encollé', qty: Math.ceil((x.edgeM * 1.15) / 25) * 25, unit: 'm', pu: x.b.chant_m });
+  const panelLines = x.cal.map((g) => ({ name: `${g.ref.name} ${g.ref.thickness} mm, ${g.ref.length || 2500} × ${g.ref.width || 1220}${g.refId ? '' : ' (hors stock)'}`, qty: g.panels.length, unit: g.panels.length > 1 ? 'panneaux' : 'panneau', pu: (((g.ref.length || 2500) * (g.ref.width || 1220)) / 1e6) * (g.ref.price_m2 || 0), sup: sups[g.ref.supplier_id] }));
+  for (const m of x.massif) panelLines.push({ name: `${m.ref.name} · ${m.name} ${m.len} × ${m.wid} × ${m.ep} (brut +35 %)`, qty: Math.round(m.volBrut * 1000) / 1000, unit: 'm³', pu: m.ref.price_m3 || 0, sup: sups[m.ref.supplier_id] });
+  if (x.edgeM) panelLines.push({ name: 'Chant assorti encollé', qty: Math.ceil((x.edgeM * 1.15) / 25) * 25, unit: 'm', pu: x.b.chant_m });
   const groups = [
     { k: 'panneaux', title: 'Négoce panneaux', lines: panelLines, delay: 'Livraison sous 3 j ouvrés', sup: panelLines[0]?.sup },
     { k: 'quinc', title: 'Quincaillerie', lines: x.hw.map((l) => ({ ...l, unit: '' })), delay: 'Livraison sous 2 j ouvrés' },
@@ -88,17 +126,16 @@ r.get('/projets/:id/chaine', loadProject, (req, res) => {
   const kpi = (big, sub) => h`<div class="ch-kpi"><div class="ch-big">${big}</div><div class="mut">${sub}</div></div>`;
   const frise = [
     ['Conception', `plans ${c.indice ? `indice ${c.indice}` : 'V1'}`, true], ['Accord', frozen ? `figé, indice ${c.indice}` : `prévu ${ddmm(P.accord)}`, frozen],
-    ['Bois', `livré ${ddmm(plan.rows[1].end)}`, false], ['Débit', ddmm(plan.rows.find((r0) => r0.k === 'cnc').start), !!c.consumed_at],
-    ['Assemblage', ddmm(plan.rows.find((r0) => r0.k === 'ass').start), false], ['Finition', ddmm((plan.rows.find((r0) => r0.k === 'fin1') || plan.rows.find((r0) => r0.k === 'ass')).start), false],
-    ['Contrôle', ddmm(plan.rows.find((r0) => r0.k === 'ctrl').start), false], ['Livraison', ddmm(plan.poseDate), false], ['Réception', 'PV à signer', false],
+    ['Bois', `livré ${ddmm(plan.rows[1].end)}`, false], ...['Débit', 'Assemblage', 'Finition', 'Contrôle'].map((ph) => [ph, plan.byPhase(ph) ? ddmm(plan.byPhase(ph).start) : 'sans objet', ph === 'Débit' && !!c.consumed_at]),
+    ['Livraison', ddmm(plan.poseDate), false], ['Réception', 'PV à signer', false],
   ];
   const body = h`
 <div class="mut"><a href="/projets/${p.id}">‹ ${p.name}</a></div>
 <nav class="ch-nav" aria-label="Étapes">${STEPS.map(([k, l], i) => h`<a href="#${String(i + 1).padStart(2, '0')}"><span>${String(i + 1).padStart(2, '0')}</span> ${l}</a>`)}</nav>
 <header class="ch-top"><img class="logo ch-logo" src="/static/logo.png" alt="Carchon"><div class="push ch-ref"><div class="eb">Chaîne de production</div><div class="mut">Projet ${p.ref} · ${client ? client.name : p.for_whom || 'atelier'}</div></div></header>
 <div class="ch-hero"><div class="eb mt20">Du devis à la pose</div>
-<h1 class="ch-title">${p.descr || `${p.name} · ${P.caissons} caisson${P.caissons > 1 ? 's' : ''}`}</h1>
-<p class="ch-lead">Une seule saisie : les cotes et les choix du client, en haut de l’étape 01. Tout le reste en découle et se recalcule : prix, plans, débit, calepinage, commandes, quincaillerie, planning et pose. L’atelier valide.</p></div>
+<h1 class="ch-title">${p.descr || x.title || p.name}</h1>
+<p class="ch-lead">Une seule saisie : la demande du client, telle qu’elle est, en haut de l’étape 01. L’IA en fait l’étude, sans modèle figé. Tout le reste en découle et se recalcule : prix, plans, débit, calepinage, commandes, quincaillerie, planning et pose. L’atelier valide.</p></div>
 <div class="ch-kpis">${kpi(eur(x.ht), 'prix de vente HT')}${kpi(`${Math.round(x.marge * 100)} %`, 'marge sur prix de revient')}${kpi(x.pieces, `pièces · ${x.panelsCount} panneaux`)}${kpi(`${Math.round(x.hours)} h`, 'heures d’atelier et de pose')}${kpi(ddmm(plan.poseDate), 'pose au plus tôt')}</div>
 <div class="ch-frise">${frise.map(([ph, l, d]) => h`<div class="${d ? 'd' : ''}"><b>${ph}</b><span>${l}</span></div>`)}</div>
 <div class="ch-box mt20"><div class="seg2"><span class="${frozen ? '' : 'on'}">1 · Chiffrage</span><span class="${frozen ? 'on' : ''}">2 · Fabrication</span></div>
@@ -106,22 +143,26 @@ ${frozen ? h`<p class="mt12"><b>Devis accepté, indice ${c.indice} figé le ${dd
 <div class="line mt12">${postBtn(`/projets/${p.id}/chaine/avenant`, `Modifier : avenant ${String.fromCharCode((c.indice || 'A').charCodeAt(0) + 1)}`, 'btn alt', {}, 'Rouvrir le chiffrage pour un avenant ?')}${c.consumed_at ? pill('ok', `Débit fait le ${ddmm(c.consumed_at)}`) : postBtn(`/projets/${p.id}/chaine/debit`, 'Débit fait : sortir les panneaux du stock', 'btn', {}, 'Les panneaux sortent du stock et les chutes utiles entrent dans le stock de chutes. Continuer ?')}</div>`
     : h`<p class="mt12">Chiffrage en cours. Quand le client accepte le devis, fige la version : elle fait foi pour l’atelier, et les panneaux sont réservés dans le stock.</p><div class="line mt12">${postBtn(`/projets/${p.id}/chaine/figer`, `Devis accepté : figer l’indice ${c.indice ? String.fromCharCode(c.indice.charCodeAt(0) + 1) : 'A'}`, 'btn')}</div>`}</div>
 
-${stepHead('01', 'La demande et le devis', 'Chiffrage automatique', 'Nomenclature, matière, quincaillerie, heures par poste, prix de revient et descriptif du devis, à partir des cotes.', 'Le coefficient, le prix final et la formulation, puis l’envoi au client depuis son portail : il y signe le devis et règle l’acompte.')}
-<h3 class="ch-h3">La pièce demandée</h3>
+${stepHead('01', 'La demande et le devis', 'Chiffrage automatique', 'Nomenclature, matière, quincaillerie, heures par poste, prix de revient et descriptif du devis, à partir de la demande du client, quelle qu’elle soit.', 'Le coefficient, le prix final et la formulation, puis l’envoi au client depuis son portail : il y signe le devis et règle l’acompte.')}
+<h3 class="ch-h3">La demande du client</h3>
+${studyBlock(p, c, x, frozen)}
+<h3 class="ch-h3 mt20">Pose et vente</h3>
 <form method="post" action="/projets/${p.id}/chaine" class="ch-grid">
-${fld('width', 'Largeur d’un caisson (mm)', P.width)}${fld('caissons', 'Nombre de caissons', P.caissons)}
+${c.study ? '' : h`${fld('width', 'Largeur d’un caisson (mm)', P.width)}${fld('caissons', 'Nombre de caissons', P.caissons)}
 ${fld('height', 'Hauteur (mm)', P.height)}${fld('shelves', 'Étagères par caisson', P.shelves)}
 ${fld('depth', 'Profondeur (mm)', P.depth)}${sel('ref_id', 'Matière', refs.map((r0) => [r0.id, `${r0.name} ${r0.thickness} mm`]), P.ref_id)}
 ${sel('finition', 'Finition', C.FINITIONS, P.finition)}${fld('couches', 'Couches de finition', P.couches)}
-${sel('mur', 'Mur du client', C.MURS, P.mur)}${sel('back_id', 'Fonds', refs.map((r0) => [r0.id, `${r0.name} ${r0.thickness} mm`]), P.back_id)}
-${fld('km', 'Distance de l’atelier (km)', P.km)}${fld('etage', 'Étage, sans ascenseur', P.etage)}
+${sel('back_id', 'Fonds', refs.map((r0) => [r0.id, `${r0.name} ${r0.thickness} mm`]), P.back_id)}`}
+${sel('mur', 'Mur du client', C.MURS, P.mur)}${fld('km', 'Distance de l’atelier (km)', P.km)}${fld('etage', 'Étage, sans ascenseur', P.etage)}
 ${fld('accord', 'Accord du client prévu le', P.accord, 'date')}${fld('coef', 'Coefficient de vente', P.coef, 'text')}
 ${fld('start', 'Début de fabrication', P.start, 'date')}
 ${frozen ? '' : h`<div class="ch-f"><button class="btn">Recalculer</button></div>`}</form>
+${c.study ? '' : h`<p class="mut t12 mt8">Sans étude de l’IA, la chaîne calcule un ensemble de caissons simple à partir des cotes ci-dessus.</p>`}
+${x.missing.length ? h`<p class="flash ko mt12">Matière hors stock : ${[...new Set(x.missing.map((l) => l.ref.name))].join(', ')}. Ajoute la référence et son prix dans <a href="/bois">Panneaux et bois</a>, puis « Ajuster » l’étude pour qu’elle l’utilise.</p>` : ''}
 
 <div class="line mt20"><h3 class="ch-h3 m0">Quantitatif par poste · renvoyé par la chaîne</h3><span class="ch-tag push">Quantités et heures, sans prix</span></div>
 <div class="tablebox"><table class="tbl ch-tbl"><thead><tr><th>Poste</th><th>Quantités</th><th class="num">Heures</th></tr></thead><tbody>
-<tr><td>Matière</td><td class="mut">${x.main.panels.length} panneaux ${x.main.ref?.name || ''}${x.back.panels.length ? ` · ${x.back.panels.length} pour les fonds` : ''} · ${Math.round(x.edgeM)} m de chant</td><td class="num">—</td></tr>
+<tr><td>Matière</td><td class="mut">${x.cal.map((g) => `${g.panels.length} × ${g.ref.name} ${g.ref.thickness}`).join(' · ')}${x.massif.length ? ` · ${x.massif.reduce((a, m) => a + m.volBrut, 0).toFixed(2).replace('.', ',')} m³ de massif` : ''} · ${Math.round(x.edgeM)} m de chant</td><td class="num">—</td></tr>
 ${x.postes.map((po) => h`<tr><td>${po.name}</td><td class="mut">${po.qty}</td><td class="num">${C.hh(po.h)}</td></tr>`)}
 <tr><td>Quincaillerie</td><td class="mut">${x.hw.length} références · ${x.hw.reduce((a, l) => a + l.qty, 0)} articles</td><td class="num">—</td></tr>
 <tr class="b"><td>Total</td><td></td><td class="num">${C.hh(x.hours)}</td></tr></tbody></table></div>
@@ -138,21 +179,21 @@ ${x.cost.find((l) => l.k === 'panneaux' && !l.v) ? h`<p class="flash ko mt8">Le 
 
 <div class="ch-devis mt20"><div class="line"><img class="logo ch-logo" src="/static/logo.png" alt="Carchon"><div class="push" style="text-align:right"><div class="eb">Devis</div><div class="mut">n° ${p.ref.replace('P', '')} · ${ddmmyyyy(P.accord)}</div></div></div>
 <p class="mt20"><b>${client ? client.name : '[Nom du client]'}</b><br><span class="mut">${client?.address || '[Adresse du chantier]'}</span></p>
-<h3 class="mt12">${p.descr || `Ensemble de ${P.caissons} caissons`}</h3><p class="mut">${P.width * P.caissons} × ${P.height} × ${P.depth} mm · ${x.main.ref?.name || ''}</p>
+<h3 class="mt12">${p.descr || x.title}</h3><p class="mut">${x.dims}</p>
 ${x.quote.map((l) => h`<div class="ch-ql"><div class="grow"><b>${l.name}</b><p class="mut">${l.text}</p></div><b>${eur(l.v)}</b></div>`)}
 <div class="ch-total"><span class="mut">Total HT</span><div class="ch-big b">${eur(x.ht)}</div><span class="mut">TVA 20 % · ${eur(x.ttc)} TTC</span></div>
 <p class="mut mt12">Acompte de 30 % à la commande, soit ${eur(x.ttc * 0.3)} TTC. Solde à la réception. Devis valable un mois. Délai indicatif : pose au plus tôt le ${JOURS_C[parseDate(plan.poseDate).getDay()].toLowerCase()}. ${ddmm(plan.poseDate)}.</p>
 <div class="line mt12"><a class="btn alt sm" href="/projets/${p.id}/chaine/devis">Imprimer / PDF</a><a class="btn alt sm" href="/portails/envoyer">Envoyer le devis au client</a></div></div>
 
 ${stepHead('02', 'Plans', 'Générés depuis les cotes', 'Vue de face cotée, à partir des cotes saisies.', 'La même vue, ouverte sur l’étape en cours du carnet sur l’iPad de l’atelier.', 'Sur l’iPad de production')}
-<div class="ch-box">${faceView(x)}</div>
-<table class="tbl mt12"><tbody><tr><td class="mut">Projet</td><td class="num b">${p.ref}</td></tr><tr><td class="mut">Ensemble</td><td class="num">${P.width * P.caissons} × ${P.height} × ${P.depth}</td></tr>
-<tr><td class="mut">Matière</td><td class="num">${x.main.ref?.name || ''} ${x.main.ref?.thickness || ''}</td></tr><tr><td class="mut">Finition</td><td class="num">${P.finition}</td></tr><tr><td class="mut">Indice</td><td class="num">${c.indice ? `${c.indice}${frozen ? ' · fait foi' : ''}` : 'chiffrage'}</td></tr></tbody></table>
+${c.study ? h`<div class="ch-panels">${(c.study.ensembles || []).map((e) => h`<figure class="ch-box"><figcaption><b>${e.nom}</b> <span class="mut t12">${e.largeur} × ${e.hauteur} × ${e.profondeur} · ${e.description}</span></figcaption>${ensembleView(e)}</figure>`)}</div>` : h`<div class="ch-box">${faceView(x)}</div>`}
+<table class="tbl mt12"><tbody><tr><td class="mut">Projet</td><td class="num b">${p.ref}</td></tr><tr><td class="mut">Ensemble</td><td class="num">${x.dims}</td></tr>
+<tr><td class="mut">Matière</td><td class="num">${[...new Set(x.lines.map((l) => `${l.ref.name} ${l.ref.thickness}`))].join(' · ')}</td></tr><tr><td class="mut">Finition</td><td class="num">${x.finition}${x.couches ? `, ${x.couches} couches` : ''}</td></tr><tr><td class="mut">Indice</td><td class="num">${c.indice ? `${c.indice}${frozen ? ' · fait foi' : ''}` : 'chiffrage'}</td></tr></tbody></table>
 
 ${stepHead('03', 'Nomenclature, débit et calepinage', 'Calepinage automatique', 'Les repères, le sens du fil, les chants à plaquer, le placement sur panneaux sans rotation des pièces plaquées.', 'Le calepinage et l’appairage des veinages sur les faces vues.')}
 ${frozenBox(c)}
-<div class="tablebox mt12"><table class="tbl ch-tbl"><thead><tr><th>Repère</th><th>Désignation</th><th class="num">Long. (fil)</th><th class="num">Larg.</th><th class="num">Ép.</th><th class="num">Qté</th><th>Chants</th><th>Usinage CNC</th></tr></thead><tbody>
-${x.lines.map((l) => h`<tr><td class="b">${l.label}</td><td>${l.name}</td><td class="num">${l.len}</td><td class="num">${l.wid}</td><td class="num">${l.ep}</td><td class="num">${l.qty}</td><td>${l.edges ? '1 chant avant' : '—'}</td><td class="mut">${l.cnc}</td></tr>`)}</tbody></table></div>
+<div class="tablebox mt12"><table class="tbl ch-tbl"><thead><tr><th>Repère</th><th>Ensemble</th><th>Désignation</th><th class="num">Long. (fil)</th><th class="num">Larg.</th><th class="num">Ép.</th><th class="num">Qté</th><th>Chants</th><th>Usinage CNC</th></tr></thead><tbody>
+${x.lines.map((l) => h`<tr><td class="b">${l.label}</td><td class="mut">${l.ensemble}</td><td>${l.name}</td><td class="num">${l.len}</td><td class="num">${l.wid}</td><td class="num">${l.ep}</td><td class="num">${l.qty}</td><td>${l.edgesLabel}</td><td class="mut">${l.cnc}</td></tr>`)}</tbody></table></div>
 ${x.cal.map((g) => h`<h3 class="ch-h3 mt20">${g.ref.name} ${g.ref.thickness} mm · ${g.panels.length} panneau${g.panels.length > 1 ? 'x' : ''} · ${Math.round(g.usage * 1000) / 10} % de matière utilisée · ${n1(g.m2)} m²</h3>
 ${g.tooBig.length ? h`<p class="flash ko">Trop grand pour le panneau : ${g.tooBig.map((t) => t.rep).join(', ')}</p>` : ''}
 <div class="ch-panels">${g.panels.map((pn, i) => h`<figure class="ch-box"><figcaption class="mut t12">Panneau ${i + 1} · ${pn.items.length} pièces${pn.offcuts.length ? ` · chutes : ${pn.offcuts.map((o) => `${o.len} × ${o.wid}`).join(', ')}` : ''}</figcaption>${panelView(g, pn)}</figure>`)}</div>`)}
@@ -193,6 +234,20 @@ r.post('/projets/:id/chaine', loadProject, (req, res) => {
   C.save(req.project.id, C.cleanParams(req.body, c.params));
   res.flashTo(back(req.project, '#01'), 'Recalculé : prix, plans, débit, commandes et planning sont à jour.');
 });
+r.post('/projets/:id/chaine/etude', loadProject, (req, res) => {
+  const c = ensure(req.project);
+  if (c.frozen_at) return res.flashTo(back(req.project, '#01'), 'Version figée : fais un avenant pour changer l’étude.', 'ko');
+  const brief = String(req.body.brief || '').trim();
+  if (!brief) return res.flashTo(back(req.project, '#01'), 'Décris la demande du client.', 'ko');
+  if (!require('../ai').enabled()) return res.flashTo(back(req.project, '#01'), 'L’assistant IA n’est pas activé (clé ANTHROPIC_API_KEY).', 'ko');
+  const instruction = String(req.body.instruction || '').trim();
+  const started = C.startStudy(req.project, { brief, instruction: c.study ? (instruction || 'Refais l’étude complète à partir de la demande, qui a pu changer.') : '' });
+  res.flashTo(back(req.project, '#01'), started ? 'L’IA étudie le projet : la page se met à jour toute seule.' : 'Une étude est déjà en cours.');
+});
+r.post('/projets/:id/chaine/etude/oublier', loadProject, (req, res) => {
+  q.run("UPDATE chains SET ai = NULL, ai_status = NULL WHERE project_id = ? AND frozen_at IS NULL", req.project.id);
+  res.flashTo(back(req.project, '#01'), 'Étude oubliée : retour au calcul simple de caissons.');
+});
 r.post('/projets/:id/chaine/bareme', loadProject, (req, res) => {
   const o = {};
   for (const k of Object.keys(C.BAREME_DEF)) { const v = parseFloat(String(req.body[k] ?? '').replace(',', '.')); if (Number.isFinite(v) && v >= 0) o[k] = v; }
@@ -227,7 +282,7 @@ r.post('/projets/:id/chaine/debit', loadProject, (req, res) => {
 
 // Commandes : bon de commande bois (Matière › Panneaux et bois) ou besoins dans Achats.
 r.post('/projets/:id/chaine/commande', loadProject, (req, res) => {
-  const p = req.project, c = ensure(p), x = C.compute(p.id, c.params);
+  const p = req.project, c = ensure(p), x = C.compute(p.id, c.params, c.study);
   const k = req.body.k;
   if (k === 'panneaux') {
     const bySup = {};
@@ -245,7 +300,7 @@ r.post('/projets/:id/chaine/commande', loadProject, (req, res) => {
 
 // Le planning de la chaîne devient les fiches du carnet (et donc le planning de l'atelier).
 r.post('/projets/:id/chaine/carnet', loadProject, (req, res) => {
-  const p = req.project, c = ensure(p), x = C.compute(p.id, c.params);
+  const p = req.project, c = ensure(p), x = C.compute(p.id, c.params, c.study);
   const lead = p.lead_id || require('../logic').patron().id;
   tx(() => {
     q.run("DELETE FROM steps WHERE project_id = ? AND note LIKE '[chaîne]%' AND status = 'todo'", p.id);
@@ -263,24 +318,24 @@ r.post('/projets/:id/chaine/carnet', loadProject, (req, res) => {
 });
 // La pose calculée devient une date de livraison du projet.
 r.post('/projets/:id/chaine/pose', loadProject, (req, res) => {
-  const p = req.project, c = ensure(p), x = C.compute(p.id, c.params);
-  require('../livraisons').addTrip(p, { date: x.plan.poseDate, kind: 'Livraison et pose', hours: Math.round(x.postes.find((po) => po.k === 'pose').h / 2 * 10) / 10 });
+  const p = req.project, c = ensure(p), x = C.compute(p.id, c.params, c.study);
+  require('../livraisons').addTrip(p, { date: x.plan.poseDate, kind: 'Livraison et pose', hours: Math.round(x.poseHours * 10) / 10 });
   res.flashTo(`/projets/${p.id}#livraisons`, `Pose ajoutée le ${dayMonth(x.plan.poseDate)} : elle est dans le planning.`);
 });
 
 r.get('/projets/:id/chaine/devis', loadProject, (req, res) => {
-  const p = req.project, c = ensure(p), x = C.compute(p.id, c.params);
+  const p = req.project, c = ensure(p), x = C.compute(p.id, c.params, c.study);
   const client = p.client_id ? q.get('SELECT * FROM clients WHERE id = ?', p.client_id) : null;
   res.send(printPage('Devis', h`<p><b>${client ? client.name : ''}</b><br>${client?.address || ''}</p>
-<h2>${p.descr || p.name}</h2><p>${x.p.width * x.p.caissons} × ${x.p.height} × ${x.p.depth} mm · ${x.main.ref?.name || ''}</p>
+<h2>${p.descr || x.title || p.name}</h2><p>${x.dims}</p>
 <table><thead><tr><th>Désignation</th><th style="text-align:right">Montant HT</th></tr></thead><tbody>${x.quote.map((l) => h`<tr><td><b>${l.name}</b><br>${l.text}</td><td style="text-align:right">${eur(l.v)}</td></tr>`)}
 <tr><td><b>Total HT</b></td><td style="text-align:right"><b>${eur(x.ht)}</b></td></tr><tr><td>TVA 20 %</td><td style="text-align:right">${eur(x.ttc - x.ht)}</td></tr><tr><td><b>Total TTC</b></td><td style="text-align:right"><b>${eur(x.ttc)}</b></td></tr></tbody></table>
 <p>Acompte de 30 % à la commande, soit ${eur(x.ttc * 0.3)} TTC. Solde à la réception. Devis valable un mois. Pose au plus tôt le ${ddmmyyyy(x.plan.poseDate)}.</p>
 <div class="sign"><div>Bon pour accord · date et signature</div><div></div></div>`, { ref: p.ref.replace('P', ''), date: ddmmyyyy(x.p.accord) }));
 });
 r.get('/projets/:id/chaine/etiquettes', loadProject, (req, res) => {
-  const p = req.project, c = ensure(p), x = C.compute(p.id, c.params);
-  const all = x.cal.flatMap((g) => g.panels.flatMap((pn, i) => pn.items.map((it) => ({ ...it, panel: i + 1, edges: x.lines.find((l) => it.rep.startsWith(l.rep) && /^\d+$/.test(it.rep.slice(l.rep.length)))?.edges }))));
+  const p = req.project, c = ensure(p), x = C.compute(p.id, c.params, c.study);
+  const all = x.cal.flatMap((g) => g.panels.flatMap((pn, i) => pn.items.map((it) => ({ ...it, panel: i + 1, edges: x.lines.find((l) => it.rep.startsWith(l.rep) && /^\d+$/.test(it.rep.slice(l.rep.length)))?.edgeM }))));
   res.send(printPage('Étiquettes des pièces', h`<div class="ch-labels print">${all.map((it) => h`<div class="ch-label"><div class="ch-big b">${it.rep}</div><b>${it.name}</b><div>${it.len} × ${it.wid}</div><div>${it.edges ? 'Chant avant' : 'Sans chant'} · fil ↕ longueur</div><div class="eb mt8">${p.ref} · panneau ${it.panel}</div></div>`)}</div>`, { ref: p.ref }));
 });
 

@@ -156,3 +156,6 @@ document.addEventListener('change', function (e) {
     if (inp && !inp.value) inp.value = el.getAttribute(p[1]) || '';
   });
 });
+
+// Étude en cours (IA) : la page se recharge toute seule.
+(function () { var el = document.querySelector('[data-reload]'); if (el) setTimeout(function () { location.reload(); }, (Number(el.getAttribute('data-reload')) || 12) * 1000); })();

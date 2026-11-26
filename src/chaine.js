@@ -30,6 +30,9 @@ CREATE TABLE IF NOT EXISTS wood_orders (
   created_at TEXT DEFAULT (datetime('now')), sent_at TEXT, received_at TEXT
 );
 `);
+for (const [t, c, d] of [['chains', 'ai', 'TEXT'], ['chains', 'brief', "TEXT DEFAULT ''"], ['panel_refs', 'price_m3', 'REAL NOT NULL DEFAULT 0'], ['chains', 'ai_status', 'TEXT'], ['chains', 'ai_error', 'TEXT'], ['chains', 'ai_at', 'TEXT']]) {
+  if (!db.prepare(`PRAGMA table_info(${t})`).all().some((x) => x.name === c)) db.exec(`ALTER TABLE ${t} ADD COLUMN ${c} ${d}`);
+}
 // Références de départ (stock à 0, à compléter dans Matière et stock › Panneaux et bois).
 if (setting('panel_refs_seeded') !== '1') {
   if (!q.get('SELECT id FROM panel_refs LIMIT 1')) {
@@ -94,7 +97,31 @@ function get(projectId) {
   let params = {}, done = {};
   try { params = JSON.parse(row.params); } catch {}
   try { done = JSON.parse(row.done); } catch {}
-  return { ...row, params: cleanParams(params, defaults()), done };
+  let study = null;
+  try { study = row.ai ? JSON.parse(row.ai) : null; } catch {}
+  return { ...row, params: cleanParams(params, defaults()), done, study };
+}
+// Étude par l'IA, en tâche de fond (une à quelques minutes) : la page se recharge toute seule.
+function startStudy(project, { brief, instruction }) {
+  const ai = require('./ai');
+  const c = get(project.id) || (save(project.id, defaults()), get(project.id));
+  if (c.ai_status === 'running') return false;
+  const previous = instruction && c.study ? c.study : null;
+  q.run("UPDATE chains SET ai_status = 'running', ai_error = NULL, brief = ? WHERE project_id = ?", brief, project.id);
+  const auto = require('./automations');
+  const { PHASES, GESTES } = require('./db');
+  ai.chainStudy({ project, brief, previous, instruction, refs: refs(), stock: q.all('SELECT name FROM stock_items ORDER BY category, ord').map((x) => x.name),
+    bareme: bareme(), averages: auto.averages ? auto.averages() : {}, params: c.params, phases: PHASES, gestes: GESTES })
+    .then((study) => {
+      q.run("UPDATE chains SET ai = ?, ai_status = 'done', ai_at = datetime('now'), updated_at = datetime('now') WHERE project_id = ?", JSON.stringify(study), project.id);
+      require('./db').logActivity(project.id, null, instruction ? `Étude ajustée par l’IA : ${instruction.slice(0, 120)}` : 'Étude de fabrication faite par l’IA', 'Assistant');
+    })
+    .catch((e) => { console.error(e); q.run("UPDATE chains SET ai_status = 'error', ai_error = ? WHERE project_id = ?", e.message || String(e), project.id); });
+  return true;
+}
+function saveStudy(projectId, study, brief) {
+  if (!q.get('SELECT project_id FROM chains WHERE project_id = ?', projectId)) save(projectId, defaults());
+  q.run("UPDATE chains SET ai = ?, brief = ?, updated_at = datetime('now') WHERE project_id = ?", study ? JSON.stringify(study) : null, brief ?? '', projectId);
 }
 function save(projectId, params) {
   q.run("INSERT INTO chains (project_id, params) VALUES (?, ?) ON CONFLICT(project_id) DO UPDATE SET params = excluded.params, updated_at = datetime('now')", projectId, JSON.stringify(params));
@@ -113,15 +140,34 @@ function nomenclature(p) {
     { rep: 'PL', name: 'Plinthe', len: inner, wid: 80, ep: e, qty: n, edges: 0, cnc: 'découpe', ref: r, refId: p.ref_id },
     { rep: 'F', name: 'Fond', len: H - 105, wid: W - 25, ep: back.thickness, qty: n, edges: 0, cnc: 'découpe', ref: back, refId: p.back_id },
   ].filter((x) => x.qty > 0 && x.len > 0 && x.wid > 0);
-  L.forEach((x) => { x.label = x.qty > 1 ? `${x.rep}1–${x.qty}` : `${x.rep}1`; });
+  L.forEach((x) => { x.label = x.qty > 1 ? `${x.rep}1–${x.qty}` : `${x.rep}1`; x.edgesLabel = x.edges ? '1 chant avant' : '—'; x.edgeM = x.edges ? x.len / 1000 : 0; x.vue = x.rep !== 'F'; x.ensemble = 'Caissons'; });
   return L;
 }
+
+// Nomenclature tirée de l'étude de l'IA : n'importe quel ouvrage (cuisine, dressing, bureau, massif… ou tout à la fois).
+function studyLines(study) {
+  const used = new Set();
+  return (study?.pieces || []).filter((x) => x.quantite > 0 && x.longueur > 0 && x.largeur > 0).map((x) => {
+    let rep = String(x.rep || 'P').toUpperCase().replace(/[^A-Z0-9]/g, '').replace(/\d+$/, '').slice(0, 4) || 'P';
+    while (used.has(rep)) rep += 'X';
+    used.add(rep);
+    const r0 = ref(x.matiere_id);
+    const r = r0 || { name: x.matiere_libre || 'Matière à définir', thickness: x.epaisseur, length: 2500, width: 1220, price_m2: 0, price_m3: 0, kind: /massif/i.test(x.matiere_libre || '') ? 'Bois massif' : 'Panneau' };
+    const qty = Math.round(x.quantite);
+    return { rep, name: x.designation, len: Math.round(x.longueur), wid: Math.round(x.largeur), ep: x.epaisseur || r.thickness, qty, ensemble: x.ensemble || '',
+      edgeM: Math.max(0, x.chants_ml_par_piece || 0), edgesLabel: x.chants_ml_par_piece ? `${String(Math.round(x.chants_ml_par_piece * 100) / 100).replace('.', ',')} m` : '—',
+      cnc: x.usinage || '', vue: !!x.face_vue, ref: r, refId: r0 ? r0.id : null, massif: r.kind === 'Bois massif', missing: !r0,
+      label: qty > 1 ? `${rep}1–${qty}` : `${rep}1` };
+  });
+}
+const linesOf = (c) => (c?.study ? studyLines(c.study) : nomenclature(c.params));
 
 // --- Calepinage : bandes guillotine, fil dans la longueur, sans rotation des pièces plaquées ---
 function calepinage(lines, b = bareme()) {
   const byRef = {};
   for (const l of lines) {
-    const k = l.refId || 0;
+    if (l.massif) continue;
+    const k = l.refId || `x:${l.ref.name}:${l.ep}`;
     byRef[k] = byRef[k] || { ref: l.ref, refId: l.refId, pieces: [] };
     for (let i = 1; i <= l.qty; i++) byRef[k].pieces.push({ rep: `${l.rep}${i}`, name: l.name, len: l.len, wid: l.wid });
   }
@@ -175,56 +221,88 @@ function finitions(p, m2) {
 
 // --- Tout le calcul ---
 const round10 = (x) => Math.round(x / 10) * 10;
-function compute(projectId, params) {
-  const b = bareme();
-  const p = params;
-  const lines = nomenclature(p);
-  const cal = calepinage(lines, b);
-  const main = cal.find((c) => c.refId === p.ref_id) || cal[0] || { panels: [], m2: 0 };
-  const back = cal.find((c) => c.refId === p.back_id && p.back_id !== p.ref_id) || { panels: [], m2: 0 };
+const GROUPES = ['Conception', 'Fabrication', 'Finition', 'Pose'];
+const WHO = { Conception: 'Bureau', Débit: 'Établi', Assemblage: 'Établi', Finition: 'Finition', Contrôle: 'Établi', Livraison: 'Pose', Bois: 'Établi', Accord: 'Bureau', Réception: 'Pose' };
+
+// Mode sans IA : caissons calculés par le barème.
+function caissonModel(p, lines, b) {
   const pieces = lines.reduce((a, l) => a + l.qty, 0);
-  const edgeM = lines.reduce((a, l) => a + (l.edges ? (l.len * l.qty) / 1000 : 0), 0);
-  const faces = lines.filter((l) => l.rep !== 'F').reduce((a, l) => a + (l.len * l.wid * l.qty * (l.rep === 'E' ? 2 : 1)) / 1e6, 0);
+  const edgeM = lines.reduce((a, l) => a + l.edgeM * l.qty, 0);
+  const faces = lines.filter((l) => l.vue).reduce((a, l) => a + (l.len * l.wid * l.qty * (l.rep === 'E' ? 2 : 1)) / 1e6, 0);
   const noFin = p.finition.startsWith('Aucune') || !p.couches;
   const colis = p.caissons + Math.ceil((p.shelves * p.caissons) / 8) + 1;
-  // Caisson le plus lourd : côtés + dessus/dessous (densité 750 kg/m³) + fond.
   const heaviest = Math.round(((2 * p.height * p.depth + 2 * p.width * p.depth) / 1e6) * ((ref(p.ref_id)?.thickness || 19) / 1000) * 750 + 8);
-  const poseH = 2 * (p.caissons * b.pose_h_caisson + p.etage * b.pose_h_etage + (p.km * 2) / 60);
-  const hw = hardware(p);
-  const fin = finitions(p, faces);
-  const postes = [
-    { k: 'prep', name: 'Préparation et plans', qty: 'relevé, plans, fichiers', h: b.prep_h, phase: 'Conception', geste: 'Autre' },
-    { k: 'cnc', name: 'Usinage CNC', qty: `${pieces} pièces · ${main.panels.length + back.panels.length} panneaux`, h: pieces * b.cnc_h_piece, phase: 'Débit', geste: 'Débit, corroyage', machine: true },
-    { k: 'chants', name: 'Placage des chants', qty: `${Math.round(edgeM)} m`, h: edgeM * b.chant_h_m, phase: 'Débit', geste: 'Débit, corroyage' },
-    { k: 'ponc', name: 'Ponçage', qty: `${faces.toFixed(1).replace('.', ',')} m² de faces vues`, h: noFin ? 0 : faces * b.ponc_h_m2, phase: 'Finition', geste: 'Ponçage' },
-    { k: 'fin', name: 'Finition', qty: noFin ? 'sans objet' : `${faces.toFixed(1).replace('.', ',')} m² × ${p.couches} couches`, h: noFin ? 0 : faces * p.couches * b.fin_h_m2_couche, phase: 'Finition', geste: p.finition.startsWith('Huile') ? 'Huile-cire' : 'Vernis' },
-    { k: 'ass', name: 'Assemblage', qty: `${p.caissons} caissons · ${p.shelves * p.caissons} étagères · ${Math.max(0, p.caissons - 1)} jonctions`, h: p.caissons * b.ass_h_caisson + p.shelves * p.caissons * b.ass_h_etagere, phase: 'Assemblage', geste: 'Assemblage' },
-    { k: 'ctrl', name: 'Contrôle et emballage', qty: `${colis} colis`, h: colis * b.ctrl_h_colis, phase: 'Contrôle', geste: 'Contrôle' },
-    { k: 'pose', name: 'Livraison et pose', qty: `2 pers. · ${heaviest} kg au plus lourd · ${Math.round(p.km * 2)} km`, h: poseH, phase: 'Livraison', geste: 'Pose' },
-  ];
+  const r0 = ref(p.ref_id);
+  return {
+    title: `${p.caissons} caisson${p.caissons > 1 ? 's' : ''}`, dims: `${p.width * p.caissons} × ${p.height} × ${p.depth} mm`, finition: p.finition, couches: p.couches, faces,
+    hw: hardware(p), delai: 3,
+    postes: [
+      { name: 'Préparation et plans', qty: 'relevé, plans, fichiers', h: b.prep_h, phase: 'Conception', geste: 'Autre', groupe: 'Conception' },
+      { name: 'Usinage CNC', qty: `${pieces} pièces`, h: pieces * b.cnc_h_piece, phase: 'Débit', geste: 'Débit, corroyage', machine: true, groupe: 'Fabrication', who: 'CNC' },
+      { name: 'Placage des chants', qty: `${Math.round(edgeM)} m`, h: edgeM * b.chant_h_m, phase: 'Débit', geste: 'Débit, corroyage', groupe: 'Fabrication' },
+      { name: 'Ponçage', qty: `${faces.toFixed(1).replace('.', ',')} m² de faces vues`, h: noFin ? 0 : faces * b.ponc_h_m2, phase: 'Finition', geste: 'Ponçage', groupe: 'Finition' },
+      { name: 'Finition', qty: noFin ? 'sans objet' : `${faces.toFixed(1).replace('.', ',')} m² × ${p.couches} couches`, h: noFin ? 0 : faces * p.couches * b.fin_h_m2_couche, phase: 'Finition', geste: p.finition.startsWith('Huile') ? 'Huile-cire' : 'Vernis', groupe: 'Finition', couches: p.couches, sechage: 0.5 },
+      { name: 'Assemblage', qty: `${p.caissons} caissons · ${p.shelves * p.caissons} étagères`, h: p.caissons * b.ass_h_caisson + p.shelves * p.caissons * b.ass_h_etagere, phase: 'Assemblage', geste: 'Assemblage', groupe: 'Fabrication' },
+      { name: 'Contrôle et emballage', qty: `${colis} colis`, h: colis * b.ctrl_h_colis, phase: 'Contrôle', geste: 'Contrôle', groupe: 'Fabrication' },
+      { name: 'Livraison et pose', qty: `2 pers. · ${heaviest} kg au plus lourd · ${Math.round(p.km * 2)} km`, h: 2 * (p.caissons * b.pose_h_caisson + p.etage * b.pose_h_etage + (p.km * 2) / 60), phase: 'Livraison', geste: 'Pose', groupe: 'Pose', personnes: 2 },
+    ],
+    texts: {
+      Conception: ['Conception et plans', 'Relevé de cotes, plans cotés et rendu, une version de modification comprise.'],
+      Fabrication: [`Fabrication de ${p.caissons} caisson${p.caissons > 1 ? 's' : ''} ${p.width} × ${p.height} × ${p.depth} mm`, `${r0?.name || 'Panneau'} ${r0?.thickness || ''} mm, chants plaqués, fond rainuré, ${p.shelves * p.caissons} étagères réglables. Usinage numérique, assemblage tourillonné, démontable pour la livraison.`],
+      Finition: ['Finition', `${p.finition}, ${p.couches} couches, égrenage 240.`],
+      Pose: ['Livraison et pose', `Livraison, montage, fixation murale adaptée (${p.mur.toLowerCase()}), réglage d’aplomb.`],
+    },
+  };
+}
+// Mode IA : l'étude dit tout (postes, quincaillerie, textes du devis).
+function studyModel(study, lines) {
+  const faces = lines.filter((l) => l.vue).reduce((a, l) => a + (l.len * l.wid * l.qty) / 1e6, 0);
+  const texts = {};
+  for (const d of study.devis || []) if (GROUPES.includes(d.groupe) && !texts[d.groupe]) texts[d.groupe] = [d.titre, d.descriptif];
+  return {
+    title: study.titre, dims: (study.ensembles || []).map((e) => `${e.nom} ${e.largeur} × ${e.hauteur} × ${e.profondeur}`).join(' · '),
+    finition: study.finition || 'Aucune', couches: Math.max(0, Math.round(study.couches || 0)), faces, delai: study.delai_fournisseur_jours || 3,
+    hw: (study.quincaillerie || []).filter((x) => x.quantite > 0).map((x) => ({ name: x.designation, qty: Math.round(x.quantite * 100) / 100, pu: x.prix_unitaire || 0, total: x.quantite * (x.prix_unitaire || 0), unit: x.unite || '' })),
+    postes: (study.postes || []).filter((x) => x.heures > 0).map((x) => ({ name: x.nom, qty: x.detail || '', h: x.heures, phase: x.etape_frise, geste: x.geste, groupe: GROUPES.includes(x.groupe) ? x.groupe : 'Fabrication',
+      machine: !!x.machine, sechage: x.sechage_jours || 0, personnes: Math.max(1, x.personnes || 1), couches: 1 })),
+    texts,
+  };
+}
+
+function compute(projectId, params, study) {
+  const b = bareme();
+  const p = params;
+  const lines = study ? studyLines(study) : nomenclature(p);
+  const M = study ? studyModel(study, lines) : caissonModel(p, lines, b);
+  const cal = calepinage(lines, b);
+  const massif = lines.filter((l) => l.massif).map((l) => { const vol = (l.len * l.wid * l.ep * l.qty) / 1e9; return { ...l, vol, volBrut: vol * 1.35, ml: (l.len * l.qty) / 1000 }; });
+  const main = cal.find((c) => c.refId === p.ref_id) || cal[0] || { panels: [], m2: 0, ref: {} };
+  const pieces = lines.reduce((a, l) => a + l.qty, 0);
+  const edgeM = lines.reduce((a, l) => a + l.edgeM * l.qty, 0);
+  const noFin = !M.couches || /^aucune/i.test(M.finition);
+  const fin = noFin ? [] : finitions({ finition: M.finition, couches: M.couches }, M.faces);
+  const postes = M.postes.map((x, i) => ({ ...x, k: `p${i}`, who: x.who || WHO[x.phase] || 'Établi' }));
   const hours = postes.reduce((a, x) => a + x.h, 0);
   const panelCost = (c) => c.panels.length * ((c.ref.length || 2500) * (c.ref.width || 1220) / 1e6) * (c.ref.price_m2 || 0);
-  const hwTotal = hw.reduce((a, x) => a + x.total, 0), finTotal = fin.reduce((a, x) => a + x.total, 0);
+  const hwTotal = M.hw.reduce((a, x) => a + x.total, 0), finTotal = fin.reduce((a, x) => a + x.total, 0);
+  const firstPose = postes.find((x) => x.groupe === 'Pose');
   const cost = [
-    { k: 'panneaux', name: 'Panneaux', base: `${main.panels.length} × ${main.ref?.name || ''} ${main.ref?.length || ''} × ${main.ref?.width || ''}`, v: panelCost(main) },
-    ...(back.panels.length ? [{ k: 'fonds', name: 'Fonds', base: `${back.panels.length} × ${back.ref.name} ${back.ref.thickness} mm`, v: panelCost(back) }] : []),
-    { k: 'chants', name: 'Chants', base: `${edgeM.toFixed(1).replace('.', ',')} m de chant`, v: edgeM * b.chant_m },
-    { k: 'quinc', name: 'Quincaillerie', base: `${hw.length} références, détail aux commandes`, v: hwTotal },
-    { k: 'finp', name: 'Produits de finition', base: noFin ? 'sans objet' : `${faces.toFixed(1).replace('.', ',')} m² × ${String(b.finition_m2).replace('.', ',')} €`, v: noFin ? 0 : Math.max(finTotal, faces * b.finition_m2) },
-    ...postes.map((x) => ({ k: `h_${x.k}`, name: x.name, base: `${hh(x.h)}${x.machine ? ', opérateur + machine' : ''}${x.k === 'pose' ? ` · ${Math.round(p.km * 2)} km` : ''}`, v: x.h * b.taux + (x.machine ? x.h * b.cnc_machine : 0) + (x.k === 'pose' ? p.km * 2 * b.km : 0) })),
-  ];
+    ...cal.map((c, i) => ({ k: `mat${i}`, g: 'Fabrication', name: `Panneaux · ${c.ref.name} ${c.ref.thickness} mm`, base: `${c.panels.length} × ${c.ref.length || 2500} × ${c.ref.width || 1220}${c.refId ? '' : ' · matière hors stock, prix à saisir'}`, v: panelCost(c) })),
+    ...massif.map((m, i) => ({ k: `mas${i}`, g: 'Fabrication', name: `Bois massif · ${m.ref.name}`, base: `${m.vol.toFixed(3).replace('.', ',')} m³ net, ${m.volBrut.toFixed(3).replace('.', ',')} m³ brut (+35 %)`, v: m.volBrut * (m.ref.price_m3 || 0) })),
+    { k: 'chants', g: 'Fabrication', name: 'Chants', base: `${edgeM.toFixed(1).replace('.', ',')} m de chant`, v: edgeM * b.chant_m },
+    { k: 'quinc', g: 'Fabrication', name: 'Quincaillerie', base: `${M.hw.length} références, détail aux commandes`, v: hwTotal },
+    { k: 'finp', g: 'Finition', name: 'Produits de finition', base: noFin ? 'sans objet' : `${M.faces.toFixed(1).replace('.', ',')} m² × ${String(b.finition_m2).replace('.', ',')} €`, v: noFin ? 0 : Math.max(finTotal, M.faces * b.finition_m2) },
+    ...postes.map((x) => ({ k: `h_${x.k}`, g: x.groupe, name: x.name, base: `${hh(x.h)}${x.machine ? ', opérateur + machine' : ''}${x === firstPose ? ` · ${Math.round(p.km * 2)} km` : ''}`, v: x.h * b.taux + (x.machine ? x.h * b.cnc_machine : 0) + (x === firstPose ? p.km * 2 * b.km : 0) })),
+  ].filter((x) => x.v || !x.k.startsWith('h_'));
   const revient = cost.reduce((a, x) => a + x.v, 0);
-  const sum = (ks) => cost.filter((x) => ks.includes(x.k)).reduce((a, x) => a + x.v, 0);
-  const quote = [
-    { name: 'Conception et plans', text: 'Relevé de cotes, plans cotés et rendu, une version de modification comprise.', v: round10(sum(['h_prep']) * p.coef) },
-    { name: `Fabrication de ${p.caissons} caisson${p.caissons > 1 ? 's' : ''} ${p.width} × ${p.height} × ${p.depth} mm`, text: `${main.ref?.name || 'Panneau'} ${main.ref?.thickness || ''} mm, chants plaqués, fond rainuré, ${p.shelves * p.caissons} étagères réglables. Usinage numérique, assemblage tourillonné, démontable pour la livraison.`, v: round10(sum(['panneaux', 'fonds', 'chants', 'quinc', 'h_cnc', 'h_chants', 'h_ass', 'h_ctrl']) * p.coef) },
-    ...(noFin ? [] : [{ name: 'Finition', text: `${p.finition}, ${p.couches} couches, égrenage 240.`, v: round10(sum(['finp', 'h_ponc', 'h_fin']) * p.coef) }]),
-    { name: 'Livraison et pose', text: `Livraison, montage, jonction des caissons, fixation murale adaptée (${p.mur.toLowerCase()}), réglage d’aplomb.`, v: round10(sum(['h_pose']) * p.coef) },
-  ];
+  const DEF = { Conception: ['Conception et plans', 'Relevé de cotes, plans cotés, une version de modification comprise.'], Fabrication: ['Fabrication', ''], Finition: ['Finition', ''], Pose: ['Livraison et pose', ''] };
+  const quote = GROUPES.map((g) => { const v = cost.filter((x) => x.g === g).reduce((a, x) => a + x.v, 0); const [name, text] = M.texts[g] || DEF[g]; return { g, name, text, v: round10(v * p.coef) }; }).filter((x) => x.v > 0);
   const ht = quote.reduce((a, x) => a + x.v, 0);
-  const plan = planning(p, postes, b, getDone(projectId));
-  return { p, b, lines, cal, main, back, pieces, edgeM, faces, hw, fin, postes, hours, cost, revient, quote, ht, ttc: ht * 1.2,
-    marge: ht ? (ht - revient) / ht : 0, plan, panelsCount: cal.reduce((a, c) => a + c.panels.length, 0) };
+  const plan = planning(p, postes, b, getDone(projectId), M.delai);
+  const missing = lines.filter((l) => l.missing);
+  return { p, b, study, lines, cal, main, massif, pieces, edgeM, faces: M.faces, hw: M.hw, fin, postes, hours, cost, revient, quote, ht, ttc: ht * 1.2, title: M.title, dims: M.dims,
+    finition: M.finition, couches: M.couches, missing, marge: ht ? (ht - revient) / ht : 0, plan, panelsCount: cal.reduce((a, c) => a + c.panels.length, 0),
+    poseHours: firstPose ? firstPose.h / (firstPose.personnes || 1) : 0 };
 }
 const getDone = (projectId) => { try { return JSON.parse(q.get('SELECT done FROM chains WHERE project_id = ?', projectId)?.done || '{}'); } catch { return {}; } };
 function hh(h) { const m = Math.round(h * 60); return `${Math.floor(m / 60)} h ${String(m % 60).padStart(2, '0')}`; }
@@ -232,45 +310,41 @@ function hh(h) { const m = Math.round(h * 60); return `${Math.floor(m / 60)} h $
 // --- Planning de fabrication : jours ouvrés, en demi-journées ---
 const isWork = (d) => { const x = parseDate(d).getDay(); return x !== 0 && x !== 6; };
 const nextWork = (d) => { let x = d; while (!isWork(x)) x = addDays(x, 1); return x; };
-function planning(p, postes, b, done) {
+function planning(p, postes, b, done, delai = 3) {
   const half = (h) => Math.max(0.5, Math.ceil((h / b.jour_h) * 2) / 2);
-  const P = Object.fromEntries(postes.map((x) => [x.k, x]));
   const rows = [
-    { k: 'cmd', name: 'Commande matière', who: 'Bureau', d: 0.5 },
-    { k: 'livf', name: 'Livraison panneaux et quincaillerie', who: 'Fournisseurs', d: 3, wait: true },
-    { k: 'cnc', name: 'Usinage CNC', who: 'CNC', d: half(P.cnc.h) },
-    { k: 'chants', name: 'Placage des chants', who: 'Établi', d: half(P.chants.h) },
+    { k: 'cmd', name: 'Commande matière', who: 'Bureau', d: 0.5, phase: 'Bois' },
+    { k: 'livf', name: 'Livraison matière et quincaillerie', who: 'Fournisseurs', d: Math.max(0.5, delai), wait: true, phase: 'Bois' },
   ];
-  if (P.ponc.h) rows.push({ k: 'ponc', name: 'Ponçage', who: 'Établi', d: half(P.ponc.h) });
-  for (let c = 1; c <= (P.fin.h ? p.couches : 0); c++) {
-    rows.push({ k: `fin${c}`, name: `Finition, couche ${c}`, who: 'Finition', d: half(P.fin.h / p.couches) });
-    rows.push({ k: `sech${c}`, name: c === p.couches ? 'Séchage complet' : 'Séchage, égrenage', who: 'Finition', d: c === p.couches ? 1 : 0.5, dry: true });
+  for (const x of postes) {
+    if (x.groupe === 'Conception') continue; // fait avant l'accord
+    const per = x.h / (x.personnes || 1);
+    const coats = x.couches > 1 ? x.couches : 1;
+    for (let c = 1; c <= coats; c++) {
+      rows.push({ k: coats > 1 ? `${x.k}c${c}` : x.k, name: coats > 1 ? `${x.name}, couche ${c}` : x.name, who: x.who, d: half(per / coats), phase: x.phase, groupe: x.groupe });
+      if (x.sechage) rows.push({ k: `${x.k}s${c}`, name: c === coats && coats > 1 ? 'Séchage complet' : 'Séchage', who: x.who, d: c === coats && coats > 1 ? Math.max(1, x.sechage) : x.sechage, dry: true, phase: x.phase });
+    }
   }
-  rows.push({ k: 'ass', name: 'Assemblage à blanc et montage', who: 'Établi', d: half(P.ass.h) });
-  rows.push({ k: 'ctrl', name: 'Contrôle et emballage', who: 'Établi', d: half(P.ctrl.h) });
-  rows.push({ k: 'pose', name: 'Livraison et pose', who: 'Pose', d: half(P.pose.h / 2) });
-  // Placement en demi-journées à partir de la date de départ ; un poste fait prend sa durée réelle.
   let cur = nextWork(p.start || today()), halfIdx = 0, late = 0, nDone = 0;
   for (const r of rows) {
     const real = done[r.k];
     if (real !== undefined && real !== '') { late += Number(real) - r.d; r.real = Number(real); nDone++; }
     const dur = r.real ?? r.d;
     r.start = cur; r.startHalf = halfIdx;
-    let left = dur * 2;
-    let end = cur, endHalf = halfIdx;
+    let left = Math.round(dur * 2), end = cur, endHalf = halfIdx;
     while (left > 0) { endHalf = halfIdx; end = cur; left--; halfIdx++; if (halfIdx === 2) { halfIdx = 0; cur = nextWork(addDays(cur, 1)); } }
     r.end = end; r.endHalf = endHalf;
   }
-  const pose = rows[rows.length - 1];
-  return { rows, poseDate: pose.start, late, nDone, start: nextWork(p.start || today()) };
+  const pose = rows.find((r) => r.groupe === 'Pose') || rows[rows.length - 1];
+  return { rows, poseDate: pose.start, late, nDone, start: nextWork(p.start || today()), byPhase: (ph) => rows.find((r) => r.phase === ph) };
 }
 
 // Besoins en panneaux des projets en cours (chaînes figées, pas encore débitées), par référence.
 function reservations() {
   const out = {};
   for (const c of q.all("SELECT chains.*, projects.ref pref, projects.name pname FROM chains JOIN projects ON projects.id = chains.project_id WHERE projects.status = 'en_cours' AND chains.consumed_at IS NULL")) {
-    let params; try { params = cleanParams(JSON.parse(c.params)); } catch { continue; }
-    for (const g of calepinage(nomenclature(params))) {
+    let lines; try { lines = c.ai ? studyLines(JSON.parse(c.ai)) : nomenclature(cleanParams(JSON.parse(c.params))); } catch { continue; }
+    for (const g of calepinage(lines)) {
       if (!g.refId) continue;
       const o = (out[g.refId] = out[g.refId] || { m2: 0, frozen: 0, projects: [] });
       o.m2 += g.m2; if (c.frozen_at) o.frozen += g.m2;
@@ -284,7 +358,7 @@ function reservations() {
 function consume(projectId) {
   const c = get(projectId);
   if (!c || c.consumed_at) return null;
-  const cal = calepinage(nomenclature(c.params));
+  const cal = calepinage(linesOf(c));
   let n = 0;
   for (const g of cal) {
     if (!g.refId) continue;
@@ -296,5 +370,7 @@ function consume(projectId) {
   return n;
 }
 
-module.exports = { FINITIONS, MURS, BAREME_DEF, BAREME_LABELS, bareme, refs, ref, defaults, cleanParams, get, save, nomenclature, calepinage, hardware, compute, planning,
+module.exports = { startStudy, saveStudy, studyLines, linesOf, GROUPES, FINITIONS, MURS, BAREME_DEF, BAREME_LABELS, bareme, refs, ref, defaults, cleanParams, get, save, nomenclature, calepinage, hardware, compute, planning,
   reservations, consume, hh, nextWork, isWork, iso };
+// Une étude interrompue par un redémarrage du serveur est signalée, pas laissée « en cours ».
+q.run("UPDATE chains SET ai_status = 'error', ai_error = 'Étude interrompue (redémarrage du serveur) : relance-la.' WHERE ai_status = 'running'");

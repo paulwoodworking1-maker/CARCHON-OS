@@ -18,7 +18,7 @@ function api() {
 class AIError extends Error {}
 
 // Un appel avec réponse structurée (JSON validé par le schéma).
-async function structured({ system, content, schema, effort = 'medium', maxTokens = 16000 }) {
+async function structured({ system, content, schema, effort = 'medium', maxTokens = 16000, timeout }) {
   if (!enabled()) throw new AIError('L’assistant n’est pas activé (clé ANTHROPIC_API_KEY absente).');
   let res;
   try {
@@ -30,7 +30,7 @@ async function structured({ system, content, schema, effort = 'medium', maxToken
       output_config: { effort, format: zodOutputFormat(schema) },
       system,
       messages: [{ role: 'user', content }],
-    });
+    }, timeout ? { timeout } : undefined);
   } catch (e) {
     if (e instanceof Anthropic.AuthenticationError) throw new AIError('La clé de l’assistant est refusée : vérifie ANTHROPIC_API_KEY.');
     if (e instanceof Anthropic.RateLimitError) throw new AIError('L’assistant est très demandé : réessaie dans une minute.');
@@ -128,4 +128,67 @@ N'annonce que les faits fournis ; ne promets aucune date qui n'est pas dans les 
   });
 }
 
-module.exports = { enabled, carnetFromText, readQuotePdf, clientUpdate, AIError, MODEL };
+// --- 4. Étude de fabrication d'un projet (chaîne de production) ---
+// Aucun modèle figé : l'IA lit la demande (cuisine, dressing, bureau, massif… ou tout à la fois) et
+// renvoie une nomenclature complète, la quincaillerie, les postes en heures et le texte du devis.
+const StudySchema = z.object({
+  titre: z.string(),
+  resume: z.string(),
+  ensembles: z.array(z.object({
+    nom: z.string(), largeur: z.number(), hauteur: z.number(), profondeur: z.number(), description: z.string(),
+    vue: z.array(z.object({ x: z.number(), y: z.number(), l: z.number(), h: z.number(), label: z.string() })),
+  })),
+  pieces: z.array(z.object({
+    rep: z.string(), ensemble: z.string(), designation: z.string(), longueur: z.number(), largeur: z.number(), epaisseur: z.number(), quantite: z.number(),
+    matiere_id: z.number(), matiere_libre: z.string(), chants_ml_par_piece: z.number(), face_vue: z.boolean(), usinage: z.string(),
+  })),
+  quincaillerie: z.array(z.object({ designation: z.string(), quantite: z.number(), unite: z.string(), prix_unitaire: z.number() })),
+  finition: z.string(),
+  couches: z.number(),
+  postes: z.array(z.object({
+    nom: z.string(), detail: z.string(), groupe: z.enum(['Conception', 'Fabrication', 'Finition', 'Pose']), etape_frise: z.string(), geste: z.string(),
+    heures: z.number(), personnes: z.number(), machine: z.boolean(), sechage_jours: z.number(),
+  })),
+  devis: z.array(z.object({ groupe: z.enum(['Conception', 'Fabrication', 'Finition', 'Pose']), titre: z.string(), descriptif: z.string() })),
+  delai_fournisseur_jours: z.number(),
+  hypotheses: z.array(z.string()),
+  questions_client: z.array(z.string()),
+});
+
+async function chainStudy({ project, brief, previous, instruction, refs, stock, bareme, averages, params, phases, gestes }) {
+  const system = `Tu es le bureau des méthodes d'un atelier d'ébénisterie et d'agencement (Carchon Les Ateliers). À partir de la demande d'un client, tu prépares l'étude de fabrication complète : elle sert à chiffrer, débiter sur panneaux, commander, planifier et poser.
+Aucun modèle figé : adapte-toi au projet tel qu'il est (cuisine, dressing, placard, bureau, bibliothèque, mobilier massif, agencement de magasin… ou plusieurs à la fois). Découpe-le en ensembles cohérents.
+Règles :
+- Toutes les cotes en millimètres. Longueur = sens du fil. Une ligne par type de pièce (avec quantité), repère court en lettres propre à la ligne (ex. "BC" côtés de caissons bas, "FA" façades).
+- Matière : choisis "matiere_id" dans la liste des références de l'atelier (épaisseur cohérente). Si aucune ne convient, matiere_id = 0 et décris-la dans "matiere_libre" (ex. "Chêne massif", "Stratifié compact 12 mm") ; pour le bois massif, écris "massif" dans matiere_libre si la référence n'existe pas.
+- Pièces : n'oublie rien (côtés, dessus, dessous, fonds, étagères, traverses, façades, tiroirs et leurs éléments, plinthes, fileurs, joues de finition, plans de travail, plateaux, pieds…). Une pièce plus grande qu'un panneau du stock doit être prévue en plusieurs morceaux ou en matière hors stock.
+- "chants_ml_par_piece" : mètres de chant à plaquer sur UNE pièce (0 si massif ou pas de chant). "face_vue" : vrai si la pièce est vue et reçoit la finition.
+- Quincaillerie : références précises (marque et modèle quand l'usage est clair, ex. "Coulisse Blum Tandembox antaro 500 mm", "Charnière Blum Clip top 110°"), quantités exactes, prix unitaires HT réalistes. Utilise en priorité ce que l'atelier a déjà en stock (liste fournie). Ajoute fixations, chevilles adaptées au mur et consommables d'assemblage.
+- Finition : produit et nombre de couches d'après la demande ("Aucune" et 0 si mélaminé ou brut).
+- Postes : la suite réelle des opérations (préparation et plans, débit/CNC, placage des chants, corroyage pour le massif, usinages, ponçage, finition, montage, contrôle et emballage, livraison et pose…). Heures-personne réalistes en partant du barème et des moyennes réelles de l'atelier. "personnes" = nombre de personnes en même temps (2 pour la pose de grands éléments). "machine" = vrai pour l'usinage CNC. "sechage_jours" = attente après le poste (finition). "etape_frise" et "geste" : exactement une valeur des listes fournies. "groupe" : où ce poste apparaît dans le devis.
+- Vue de face par ensemble ("vue") : rectangles en mm, origine en bas à gauche, pour dessiner l'élévation (caissons, façades, tiroirs, niches, plan de travail). 4 à 40 rectangles.
+- Devis : un titre et un descriptif sobre par groupe concerné (vouvoiement, sans prix, vocabulaire d'atelier, aucun superlatif).
+- "hypotheses" : ce que tu as supposé faute d'information. "questions_client" : les questions à poser au client pour lever le doute (courtes). Ne bloque pas : fais l'étude avec des hypothèses raisonnables.
+- Si une étude précédente et une consigne d'ajustement sont fournies, repars de l'étude précédente et applique seulement la consigne.`;
+  const content = `Projet : ${project.name}${project.descr ? ` · ${project.descr}` : ''}
+Contexte de pose : mur ${params.mur}, ${params.km} km de l'atelier, ${params.etage} étage(s) sans ascenseur.
+Références de panneaux et bois de l'atelier (id · désignation · type · épaisseur mm · format mm · prix) :
+${refs.map((r) => `${r.id} · ${r.name} · ${r.kind} · ${r.thickness} · ${r.length} × ${r.width} · ${r.kind === 'Bois massif' ? `${r.price_m3} €/m³` : `${r.price_m2} €/m²`}`).join('\n') || 'aucune'}
+Quincaillerie et consommables en stock à l'atelier : ${stock.join(' ; ') || '—'}
+Barème de l'atelier : ${Object.entries(bareme).map(([k, v]) => `${k}=${v}`).join(', ')}
+Moyennes réelles (heures par fiche et par geste) : ${Object.entries(averages).map(([g, h]) => `${g} ${Number(h).toFixed(1)} h`).join(', ') || 'pas encore de données'}
+Étapes de la frise : ${phases.join(', ')}
+Gestes : ${gestes.join(', ')}
+
+Demande du client :
+"""${brief}"""${previous ? `
+
+Étude précédente (JSON) :
+${JSON.stringify(previous)}
+
+Consigne d'ajustement du patron :
+"""${instruction}"""` : ''}`;
+  return structured({ system, content, schema: StudySchema, effort: 'high', maxTokens: 32000, timeout: 15 * 60 * 1000 });
+}
+
+module.exports = { enabled, carnetFromText, readQuotePdf, clientUpdate, chainStudy, AIError, MODEL };

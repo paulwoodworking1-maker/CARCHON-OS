@@ -19,9 +19,10 @@ function refForm(rf = {}, sups) {
   return h`<div class="grid2"><label>Désignation <input name="name" value="${rf.name || ''}" required placeholder="ex. MDF plaqué chêne"></label><label>Type <select name="kind">${options(['Panneau', 'Bois massif', 'Chant', 'Autre'], rf.kind || 'Panneau')}</select></label></div>
 <div class="grid2"><label>Épaisseur (mm) <input name="thickness" inputmode="decimal" value="${rf.thickness ?? 19}" required></label><label>Format (mm) <span class="line"><input name="length" inputmode="numeric" value="${rf.length ?? 2500}" style="width:45%"> × <input name="width" inputmode="numeric" value="${rf.width ?? 1220}" style="width:45%"></span></label></div>
 <div class="grid2"><label>En stock (m²) <input name="stock_m2" inputmode="decimal" value="${rf.stock_m2 ?? 0}"></label><label>Prix (€ HT / m²) <input name="price_m2" inputmode="decimal" value="${rf.price_m2 ?? 0}"></label></div>
+<label>Prix bois massif (€ HT / m³, si massif) <input name="price_m3" inputmode="decimal" value="${rf.price_m3 ?? 0}"></label>
 <div class="grid2"><label>Seuil d’alerte (m²) <input name="min_m2" inputmode="decimal" value="${rf.min_m2 ?? 0}"></label><label>Fournisseur <select name="supplier_id"><option value="">—</option>${options(sups.map((s) => [s.id, s.name]), rf.supplier_id)}</select></label></div>`;
 }
-const refVals = (b) => [str(b.name), str(b.kind) || 'Panneau', num(b.thickness), Math.round(num(b.length)), Math.round(num(b.width)), Math.max(0, num(b.stock_m2)), num(b.price_m2), num(b.min_m2), b.supplier_id ? Number(b.supplier_id) : null];
+const refVals = (b) => [str(b.name), str(b.kind) || 'Panneau', num(b.thickness), Math.round(num(b.length)), Math.round(num(b.width)), Math.max(0, num(b.stock_m2)), num(b.price_m2), num(b.min_m2), b.supplier_id ? Number(b.supplier_id) : null, num(b.price_m3)];
 
 r.get('/bois', (req, res) => {
   const refs = q.all('SELECT panel_refs.*, suppliers.name sname FROM panel_refs LEFT JOIN suppliers ON suppliers.id = panel_refs.supplier_id WHERE active = 1 ORDER BY kind, ord, name, thickness');
@@ -51,7 +52,7 @@ ${rows.map((x) => h`<tr><td><b>${x.name}</b><div class="mut t12">${x.kind}${x.sn
 <td class="num">${x.rr.frozen ? m2(x.rr.frozen) : '—'}${x.rr.m2 > x.rr.frozen ? h`<div class="mut t12">+ ${m2(x.rr.m2 - x.rr.frozen)} en chiffrage</div>` : ''}</td>
 <td class="num b" style="${x.low ? 'color:var(--red)' : ''}">${m2(x.free)}${x.min_m2 ? h`<div class="mut t12">seuil ${m2(x.min_m2)}</div>` : ''}</td>
 <td class="t13">${x.rr.projects.map((pp) => h`<div><a href="/projets/${pp.id}/chaine#03"><span class="ref">${pp.ref}</span></a> ${m2(pp.m2)}${pp.frozen ? '' : h` <span class="mut">(chiffrage)</span>`}</div>`)}${x.rr.projects.length ? '' : h`<span class="mut">—</span>`}</td>
-<td class="num">${x.price_m2 ? eur(x.price_m2) : h`<span class="red">à renseigner</span>`}</td>
+<td class="num">${x.kind === 'Bois massif' ? (x.price_m3 ? `${eur(x.price_m3)} / m³` : h`<span class="red">à renseigner</span>`) : x.price_m2 ? eur(x.price_m2) : h`<span class="red">à renseigner</span>`}</td>
 <td class="num"><details class="menu"><summary class="btn alt sm">Modifier</summary><form method="post" action="/bois/refs/${x.id}" class="menu-list right-al form pad wide">${refForm(x, sups)}
 <div class="line"><button class="btn sm">Enregistrer</button><button class="btn alt sm" name="del" value="1" data-confirm-btn="Retirer cette référence ?">Retirer</button></div></form></details></td></tr>`)}
 ${rows.length ? '' : h`<tr><td colspan="9" class="mut">Aucune référence. Ajoute les panneaux que tu as en stock.</td></tr>`}</tbody></table></div>
@@ -83,7 +84,7 @@ ${chutes.length ? '' : h`<tr><td colspan="6" class="mut">Pas de chute en stock.<
 });
 
 r.post('/bois/refs', (req, res) => {
-  q.run('INSERT INTO panel_refs (name, kind, thickness, length, width, stock_m2, price_m2, min_m2, supplier_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)', ...refVals(req.body));
+  q.run('INSERT INTO panel_refs (name, kind, thickness, length, width, stock_m2, price_m2, min_m2, supplier_id, price_m3) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', ...refVals(req.body));
   res.flashTo('/bois', 'Référence ajoutée.');
 });
 r.post('/bois/refs/:id', (req, res) => {
@@ -92,7 +93,7 @@ r.post('/bois/refs/:id', (req, res) => {
   if (req.body.del) { q.run('UPDATE panel_refs SET active = 0 WHERE id = ?', old.id); return res.flashTo('/bois', 'Référence retirée.'); }
   const v = refVals(req.body);
   tx(() => {
-    q.run('UPDATE panel_refs SET name = ?, kind = ?, thickness = ?, length = ?, width = ?, stock_m2 = ?, price_m2 = ?, min_m2 = ?, supplier_id = ? WHERE id = ?', ...v, old.id);
+    q.run('UPDATE panel_refs SET name = ?, kind = ?, thickness = ?, length = ?, width = ?, stock_m2 = ?, price_m2 = ?, min_m2 = ?, supplier_id = ?, price_m3 = ? WHERE id = ?', ...v, old.id);
     if (Math.abs(v[5] - old.stock_m2) > 0.001) q.run("INSERT INTO panel_moves (ref_id, m2, kind, note) VALUES (?, ?, 'correction', 'inventaire')", old.id, v[5] - old.stock_m2);
   });
   res.flashTo('/bois', 'Enregistré.');
