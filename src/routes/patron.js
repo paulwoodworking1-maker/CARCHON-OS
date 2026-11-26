@@ -151,14 +151,23 @@ r.get('/projets/nouveau', (req, res) => {
 <div class="grid2"><label>Canal <select name="canal">${options(['Sur-mesure', 'Boutique', 'Revendeur', 'Salon', 'Stock'], 'Sur-mesure')}</select></label>
 <label>Type <select name="kind">${options(['Particulier', 'Architecte', 'Professionnel', 'Atelier', 'Reprise'], 'Particulier')}</select></label></div>
 <label>Pour (client, revendeur, salon…) <input name="for_whom"></label>
-<label>Client (facultatif) <select name="client_id"><option value="">Hors commande client</option>${options(q.all('SELECT id, name FROM clients ORDER BY name').map((c) => [c.id, c.name]))}</select></label>
+<label>Client existant (facultatif) <select name="client_id"><option value="">—</option>${options(q.all('SELECT id, name FROM clients ORDER BY name').map((c) => [c.id, c.name]))}</select></label>
+<div class="grid2"><label>Ou nouveau client : nom <input name="client_name" placeholder="ex. M. et Mme Martin"></label><label>Son e-mail <input type="email" name="client_email"></label></div>
 <label>Échéance <input type="date" name="due_date"></label>
 <label>Responsable <select name="lead_id">${options(L.people().map((p) => [p.id, p.role === 'patron' ? 'Toi' : p.name]))}</select></label>
 <button class="btn">Créer le projet</button></form>`;
   res.send(layout({ title: 'Nouveau projet', tab: 'projets', sub: '/projets', body }));
 });
+// Client choisi, ou créé à la volée (nom + e-mail).
+function clientFrom(b) {
+  if (str(b.client_name)) {
+    const ex = str(b.client_email) ? q.get('SELECT id FROM clients WHERE lower(email) = lower(?)', str(b.client_email)) : null;
+    return ex ? ex.id : Number(q.run('INSERT INTO clients (name, email, phone, kind) VALUES (?, ?, ?, ?)', str(b.client_name), str(b.client_email), str(b.client_phone), str(b.kind) || 'Particulier').lastInsertRowid);
+  }
+  return int(b.client_id);
+}
 r.post('/projets/nouveau', (req, res) => {
-  const b = req.body;
+  const b = { ...req.body, client_id: clientFrom(req.body) };
   const id = q.run('INSERT INTO projects (name, kind, canal, for_whom, client_id, due_date, lead_id, deposit_needed) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
     str(b.name), str(b.kind), str(b.canal) || 'Sur-mesure', str(b.for_whom), int(b.client_id), str(b.due_date) || null, int(b.lead_id), b.client_id ? 1 : 0).lastInsertRowid;
   logActivity(Number(id), null, 'Projet créé', 'Patron');
@@ -272,7 +281,13 @@ ${p.client_id ? h`<section class="card"><div class="line"><h2>Portail client</h2
 <div class="who"><span class="grow">Acompte</span><b>${p.deposit_at ? `Reçu le ${ddmm(p.deposit_at)}` : 'Attendu'}</b></div>
 <form method="post" action="/projets/${p.id}/infos" class="who"><label class="grow" for="rd">Prête à poser vers le</label><input id="rd" type="date" name="ready_date" value="${p.ready_date || ''}" data-auto><input type="hidden" name="only" value="ready_date"></form>
 <div class="who"><span class="grow">Photos partagées</span><b>${shared} sur ${photos.length}</b></div>
-<div class="line mt12"><a class="btn alt sm" href="/portails#p${p.id}">Gérer le portail</a><a class="btn alt sm" href="/projets/${p.id}/nouvelles">Donner des nouvelles</a></div></section>` : ''}
+<div class="line mt12"><a class="btn alt sm" href="/portails#p${p.id}">Gérer le portail</a><a class="btn alt sm" href="/projets/${p.id}/nouvelles">Donner des nouvelles</a></div>
+${p.portal_state !== 'open' ? postBtn(`/portails/espace/${p.id}/ouvrir`, 'Ouvrir l’espace client', 'btn sm mt12') : ''}</section>`
+    : h`<section class="card" id="client"><h2>Client et portail</h2><p class="mut">Rattache un client à cet OF pour lui ouvrir un espace de suivi (avancement, photos partagées, documents, date de pose).</p>
+<form method="post" action="/projets/${p.id}/client" class="form mt12">
+<label>Client existant <select name="client_id"><option value="">—</option>${options(q.all('SELECT id, name FROM clients ORDER BY name').map((c) => [c.id, c.name]))}</select></label>
+<label>Ou nouveau client : nom <input name="client_name"></label><label>Son e-mail <input type="email" name="client_email"></label><label>Téléphone <input name="client_phone"></label>
+<button class="btn sm">Rattacher le client</button></form></section>`}
 
 <section class="card" id="historique"><h2>Historique</h2><p class="mut">Tout ce qui s’est passé sur ce dossier, daté.</p>
 <ol class="timeline mt8">${history.map((a) => h`<li><time datetime="${a.created_at}">${ddmm(a.created_at)} · ${hhmm(a.created_at)}</time><span>${a.text}${a.who ? h` <span class="mut">· ${a.who}</span>` : ''}</span></li>`)}</ol>
@@ -295,6 +310,13 @@ r.post('/projets/:id/phase', loadProject, (req, res) => {
   res.redirect(`/projets/${req.project.id}`);
 });
 
+r.post('/projets/:id/client', loadProject, (req, res) => {
+  const cid = clientFrom(req.body);
+  if (!cid) return res.flashTo(`/projets/${req.project.id}#client`, 'Choisis un client ou indique son nom.', 'ko');
+  q.run('UPDATE projects SET client_id = ?, for_whom = COALESCE(NULLIF(for_whom, \'\'), (SELECT name FROM clients WHERE id = ?)) WHERE id = ?', cid, cid, req.project.id);
+  logActivity(req.project.id, null, 'Client rattaché', 'Patron');
+  res.flashTo(`/projets/${req.project.id}`, 'Client rattaché. Tu peux maintenant lui ouvrir son espace (bloc « Portail client »).');
+});
 r.post('/projets/:id/infos', loadProject, (req, res) => {
   const b = req.body, p = req.project;
   if (b.only === 'ready_date') {

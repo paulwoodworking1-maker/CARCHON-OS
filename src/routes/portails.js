@@ -30,7 +30,7 @@ r.get('/portails', (req, res) => {
 <p class="mut mt8 mw680">Un espace par client et par commande. Il reçoit le devis, l'avancement, la date de pose prévue et les photos que tu partages. Jamais de prix de revient, de fournisseur ni de notes internes.</p></div>
 <a class="btn push" href="/portails?nouveau=1#envoi">Envoyer un devis</a></div>
 
-<details class="card warm mt20"><summary class="line"><b>${testMode() ? 'Mode test' : 'Mode réel'}</b>${pill(testMode() ? 'wa' : 'ok', testMode() ? 'Seules les adresses de test reçoivent un lien' : 'Tous les clients peuvent recevoir un lien')}</summary>
+<details class="card warm mt20"${req.query.reglages ? ' open' : ''}><summary class="line" style="cursor:pointer"><b>${testMode() ? 'Mode test' : 'Mode réel'}</b><span class="mut t13">· cliquer pour régler</span>${pill(testMode() ? 'wa' : 'ok', testMode() ? 'Seules les adresses de test reçoivent un lien' : 'Tous les clients peuvent recevoir un lien')}</summary>
 <form method="post" action="/portails/reglages" enctype="multipart/form-data" class="form mt12"><label class="ck"><input type="checkbox" name="test" value="1" ${testMode() ? 'checked' : ''}> Mode test (pages marquées « sans valeur contractuelle »)</label>
 <label>Adresses de test, séparées par des virgules <input name="emails" value="${setting('portal_test_emails') || ''}"></label>
 <label>Conditions générales de vente (PDF, jointes à chaque devis) <input type="file" name="cgv" accept="application/pdf"></label>
@@ -54,7 +54,8 @@ ${draft ? h`<p class="mut">PDF du devis déposé ✓ <a href="/portails/devis/an
 <fieldset class="chips m0"><legend>Valable</legend>${['15', '30'].map((d) => h`<label class="chip"><input type="radio" name="days" value="${d}" ${d === '30' ? 'checked' : ''}>${d} jours</label>`)}</fieldset>
 <ul class="mut checklist"><li>PDF du devis repris tel quel, empreinte calculée</li><li>CGV jointes ${setting('cgv_file') ? '' : '(aucune CGV déposée : à ajouter dans le bloc Mode test)'}</li><li>Ce document ne bougera plus : le client accepte exactement celui-ci</li></ul>
 <p class="mut">Si tu modifies le devis ensuite, tu renvoies une nouvelle version avec le même numéro : l'ancien lien se ferme tout seul.</p>
-<button class="btn">Créer le lien d'acceptation</button></form></section>` : ''}
+<div class="line"><button class="btn">Créer le lien d'acceptation</button>
+${testMode() && draft?.signer_email && !testEmails().includes(String(draft.signer_email).toLowerCase()) ? h`<button class="btn alt" name="allow_test" value="1">Autoriser cette adresse et envoyer</button>` : ''}</div></form></section>` : ''}
 
 <section class="card mt20"><div class="line"><h2>Réponses des clients</h2>${pill(responses.length ? 'ko' : 'ok', responses.length)}</div>
 ${responses.map((x, i) => h`<div class="row${i ? '' : ' f'}" id="q${x.id}"><span class="kind">${pill(x.status === 'accepted' ? 'ok' : x.status === 'refused' ? 'ko' : 'wa', x.status === 'accepted' ? 'Devis accepté' : x.status === 'refused' ? 'Refusé' : 'Modification demandée')}</span>
@@ -124,9 +125,11 @@ r.post('/portails/devis', upload.single('pdf'), (req, res) => {
   if (!req.file || !/\.pdf$/.test(req.file.filename)) return res.flashTo('/portails?nouveau=1', 'Il faut le PDF du devis.', 'ko');
   const email = str(b.signer_email).toLowerCase();
   const isTest = testMode();
+  if (isTest && req.body.allow_test && email) setSetting('portal_test_emails', [...new Set([...testEmails(), email])].join(', '));
   if (isTest && !testEmails().includes(email)) {
-    fs.rmSync(filePath(req.file.filename), { force: true });
-    return res.flashTo('/portails?nouveau=1', `Mode test : ${email} n’est pas une adresse de test. Ajoute-la dans le bloc « Mode test », ou passe en mode réel.`, 'ko');
+    // On garde le PDF et ce qui a été saisi : il suffit d'autoriser l'adresse puis de renvoyer.
+    req.session.draftQuote = { ...(draft || {}), pdf: req.file.filename, number: str(b.number), project_name: str(b.project_name), signer_name: str(b.signer_name), signer_email: email };
+    return res.flashTo('/portails#envoi', `Mode test : ${email} n’est pas une adresse de test. Clique « Autoriser cette adresse et envoyer », ou passe le portail en mode réel dans le bloc « Mode test ».`, 'ko');
   }
   const number = str(b.number);
   const prev = q.get('SELECT * FROM quotes WHERE number = ? ORDER BY version DESC LIMIT 1', number);
