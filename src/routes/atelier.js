@@ -240,10 +240,15 @@ r.post('/photo', upload.single('photo'), (req, res) => {
   res.flashTo(stepId ? `/atelier/fiche/${stepId}` : '/atelier', 'Photo rangée dans le projet.');
 });
 r.get('/signaler', (req, res) => {
+  const machines = q.all('SELECT id, name FROM machines WHERE down_since IS NULL ORDER BY ord, name');
   const body = h`<h1 class="red">Signaler un problème</h1><form method="post" action="/atelier/signaler" enctype="multipart/form-data" class="ip-card form mw680 mt20">${projectPicker(req)}
 <label>Ce qui se passe <textarea name="body" rows="3" required placeholder="ex. petite fente en bout de plateau"></textarea></label>
 <label class="big-file">Photo (conseillé) <input type="file" name="photo" accept="image/*" capture="environment"></label>
-<button class="big-btn danger">Prévenir le patron</button></form>`;
+<button class="big-btn danger">Prévenir le patron</button></form>
+${machines.length ? h`<form method="post" action="/atelier/panne" class="ip-card form mw680 mt20"><h2>Une machine est en panne</h2>
+<label>Machine <select name="machine_id" required>${options(machines.map((m) => [m.id, m.name]))}</select></label>
+<label>Ce qui se passe <input class="qin" name="note" required placeholder="ex. la lame vibre, bruit anormal"></label>
+<button class="big-btn danger">Mettre la machine en panne</button></form>` : ''}`;
   res.send(shell(req, 'Signaler', body, { back: req.query.fiche ? `/atelier/fiche/${req.query.fiche}` : '/atelier' }));
 });
 r.post('/signaler', upload.single('photo'), (req, res) => {
@@ -255,6 +260,11 @@ r.post('/signaler', upload.single('photo'), (req, res) => {
     logActivity(pid, req.person.id, `Problème signalé : ${str(req.body.body)}`, req.person.name);
   });
   res.flashTo(stepId ? `/atelier/fiche/${stepId}` : '/atelier', 'Le patron est prévenu. Sa réponse s’affichera ici.');
+});
+
+r.post('/panne', (req, res) => {
+  q.run("UPDATE machines SET down_since = datetime('now'), down_note = ? WHERE id = ? AND down_since IS NULL", `${str(req.body.note)} (${req.person.name})`, Number(req.body.machine_id));
+  res.flashTo('/atelier', 'Machine mise en panne : le patron est prévenu.');
 });
 
 module.exports = r;

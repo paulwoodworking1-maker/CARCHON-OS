@@ -154,6 +154,66 @@ addColumn('bars', 'step_id', 'INTEGER');
 addColumn('trips', 'reminder_sent_at', 'TEXT');
 addColumn('steps', 'ai_generated', 'INTEGER NOT NULL DEFAULT 0');
 addColumn('projects', 'ref', 'TEXT');
+// Version complète : OF (canal, modèle, quantité), stock fini, machines, capacité.
+addColumn('projects', 'canal', "TEXT NOT NULL DEFAULT 'Sur-mesure'");
+addColumn('projects', 'model_id', 'INTEGER');
+addColumn('projects', 'qty', 'INTEGER NOT NULL DEFAULT 1');
+addColumn('projects', 'for_whom', "TEXT DEFAULT ''");
+addColumn('people', 'hours_week', 'REAL NOT NULL DEFAULT 35');
+addColumn('stock_items', 'machine_id', 'INTEGER');
+
+db.exec(`
+CREATE TABLE IF NOT EXISTS models (
+  id INTEGER PRIMARY KEY, code TEXT NOT NULL, name TEXT NOT NULL, family TEXT DEFAULT 'Mobilier', woods TEXT DEFAULT '',
+  dims TEXT DEFAULT '', notes TEXT DEFAULT '', care TEXT DEFAULT '', photo TEXT, notice TEXT, threshold INTEGER NOT NULL DEFAULT 0,
+  checks TEXT NOT NULL DEFAULT '[]', active INTEGER NOT NULL DEFAULT 1, created_at TEXT DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS model_bom (
+  id INTEGER PRIMARY KEY, model_id INTEGER NOT NULL REFERENCES models(id) ON DELETE CASCADE,
+  article TEXT NOT NULL, qty REAL NOT NULL DEFAULT 1, unit TEXT DEFAULT '', essence TEXT DEFAULT '', thickness TEXT DEFAULT '',
+  stock_item_id INTEGER REFERENCES stock_items(id) ON DELETE SET NULL, supplier_id INTEGER REFERENCES suppliers(id) ON DELETE SET NULL, ord INTEGER DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS model_steps (
+  id INTEGER PRIMARY KEY, model_id INTEGER NOT NULL REFERENCES models(id) ON DELETE CASCADE, ord INTEGER NOT NULL DEFAULT 0,
+  title TEXT NOT NULL, piece TEXT DEFAULT '', phase TEXT DEFAULT '', geste TEXT DEFAULT '', est_hours REAL DEFAULT 0, per_unit INTEGER NOT NULL DEFAULT 1,
+  note TEXT DEFAULT '', checks TEXT NOT NULL DEFAULT '[]'
+);
+CREATE TABLE IF NOT EXISTS wood_lots (
+  id INTEGER PRIMARY KEY, code TEXT NOT NULL, essence TEXT NOT NULL, thickness TEXT DEFAULT '', volume REAL NOT NULL DEFAULT 0,
+  origin TEXT DEFAULT '', supplier_id INTEGER REFERENCES suppliers(id) ON DELETE SET NULL, received_at TEXT DEFAULT (date('now')),
+  project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL, note TEXT DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS units (
+  id INTEGER PRIMARY KEY, project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL, model_id INTEGER REFERENCES models(id) ON DELETE SET NULL,
+  serial TEXT NOT NULL UNIQUE, status TEXT NOT NULL DEFAULT 'a_faire', wood_lot_id INTEGER REFERENCES wood_lots(id) ON DELETE SET NULL,
+  reserved_for TEXT DEFAULT '', checks TEXT NOT NULL DEFAULT '[]', controlled_at TEXT, controlled_by INTEGER REFERENCES people(id),
+  shipment_id INTEGER, warranty_until TEXT, created_at TEXT DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS shipments (
+  id INTEGER PRIMARY KEY, project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL, recipient TEXT DEFAULT '', address TEXT DEFAULT '',
+  carrier TEXT DEFAULT '', tracking TEXT DEFAULT '', packing TEXT DEFAULT '', shipped_at TEXT, delivered_at TEXT, created_at TEXT DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS sav (
+  id INTEGER PRIMARY KEY, unit_id INTEGER REFERENCES units(id) ON DELETE SET NULL, project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL,
+  client TEXT DEFAULT '', body TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'recue', warranty INTEGER NOT NULL DEFAULT 1, notes TEXT DEFAULT '',
+  hours REAL DEFAULT 0, created_at TEXT DEFAULT (datetime('now')), closed_at TEXT
+);
+CREATE TABLE IF NOT EXISTS machines (
+  id INTEGER PRIMARY KEY, name TEXT NOT NULL, type TEXT DEFAULT '', brand TEXT DEFAULT '', serial TEXT DEFAULT '', since TEXT DEFAULT '',
+  gestes TEXT DEFAULT '', sav_contact TEXT DEFAULT '', notice TEXT, down_since TEXT, down_note TEXT DEFAULT '', ord INTEGER DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS machine_tasks (
+  id INTEGER PRIMARY KEY, machine_id INTEGER NOT NULL REFERENCES machines(id) ON DELETE CASCADE, title TEXT NOT NULL,
+  every_hours REAL, every_days INTEGER, last_done TEXT
+);
+CREATE TABLE IF NOT EXISTS machine_events (
+  id INTEGER PRIMARY KEY, machine_id INTEGER NOT NULL REFERENCES machines(id) ON DELETE CASCADE, date TEXT DEFAULT (datetime('now')),
+  title TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'entretien', who TEXT DEFAULT '', days_down REAL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS absences (
+  id INTEGER PRIMARY KEY, person_id INTEGER NOT NULL REFERENCES people(id) ON DELETE CASCADE, start_date TEXT NOT NULL, end_date TEXT NOT NULL, label TEXT DEFAULT 'Congé'
+);
+`);
 
 // Référence de dossier : P2026-001, P2026-002… attribuée à la création.
 db.exec(`

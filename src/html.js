@@ -89,42 +89,105 @@ const options = (list, selected) => list.map((o) => {
   return h`<option value="${v}"${String(v) === String(selected ?? '') ? raw(' selected') : ''}>${l}</option>`;
 });
 
-const NAV = [
-  ['aujourdhui', '/', "Aujourd'hui"], ['projets', '/projets', 'Projets'], ['planning', '/planning', 'Planning'],
-  ['stock', '/stock', 'Stock'], ['achats', '/achats', 'Achats'], ['pilotage', '/pilotage', 'Pilotage'],
-];
-const SUBNAV = {
-  projets: [['/projets', 'Projets en cours'], ['/carnets', 'Carnets de fabrication'], ['/portails', 'Portails clients'], ['/projets?vue=termines', 'Terminés']],
-  planning: [['/planning', 'Par personne'], ['/poses', 'Livraisons et poses']],
-  achats: [['/achats', 'À commander'], ['/commandes', 'Commandes en cours'], ['/fournisseurs', 'Fournisseurs']],
-  pilotage: [['/pilotage', 'Heures et chiffrage'], ['/automatisations', 'Automatisations'], ['/equipe', 'Réglages équipe'], ['/entreprise', 'Entreprise']],
+// Icônes de la colonne (trait fin, comme Cockpit).
+const ICONS = {
+  dash: '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
+  check: '<circle cx="12" cy="12" r="9"/><path d="M8 12l3 3 5-6"/>',
+  of: '<path d="M14 4l6 6-3 3-6-6zM11 7L3 15v6h6l8-8"/>',
+  book: '<path d="M4 5h7v15H4zM13 5h7v15h-7z"/>',
+  list: '<rect x="5" y="4" width="14" height="17"/><path d="M9 4V2h6v2M9 10h6M9 14h6"/>',
+  globe: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18"/>',
+  load: '<path d="M3 20h18M6 16v-5M11 16V7M16 16v-3M21 16V5"/>',
+  cal: '<rect x="3" y="5" width="18" height="16"/><path d="M3 10h18M8 3v4M16 3v4"/>',
+  truck: '<path d="M2 6h12v11H2zM14 10h4l4 4v3h-8"/><circle cx="6" cy="18" r="2"/><circle cx="18" cy="18" r="2"/>',
+  box: '<path d="M3 8l9-4 9 4-9 4zM3 8v8l9 4 9-4V8M12 12v8"/>',
+  cart: '<path d="M3 4h3l2 11h11l2-8H7"/><circle cx="9" cy="19" r="1.5"/><circle cx="18" cy="19" r="1.5"/>',
+  send: '<path d="M3 12l18-8-7 18-3-7z"/>',
+  shield: '<path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/>',
+  gauge: '<circle cx="12" cy="13" r="8"/><path d="M12 13l4-4M12 3v2"/>',
+  gear: '<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1"/>',
+  bolt: '<path d="M13 2L4 14h7l-1 8 9-12h-7z"/>',
+  users: '<circle cx="9" cy="8" r="3"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6M16 5a3 3 0 010 6M21 20c0-2.6-1.6-4.8-4-5.6"/>',
+  home: '<path d="M3 11l9-7 9 7v9H3z"/>',
+  ipad: '<rect x="5" y="2" width="14" height="20"/><path d="M11 18h2"/>',
 };
+const icon = (k, size = 18) => raw(`<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true">${ICONS[k] || ''}</svg>`);
+
+// Colonne de navigation : [groupe, [[clé, libellé, lien, icône, chemins qui l'activent]]]
+const SIDE = [
+  ['', [['dash', 'Tableau de bord', '/', 'dash', ['/']], ['decider', 'À décider', '/#decider', 'check', []]]],
+  ['Fabriquer', [['of', 'Fabrication', '/projets', 'of', ['/projets', '/carnets']], ['catalogue', 'Catalogue', '/catalogue', 'book', ['/catalogue']], ['portails', 'Portails clients', '/portails', 'globe', ['/portails']]]],
+  ['Planifier', [['charge', 'Charge', '/charge', 'load', ['/charge']], ['planning', 'Planning', '/planning', 'cal', ['/planning']], ['poses', 'Livraisons et poses', '/poses', 'truck', ['/poses']]]],
+  ['Approvisionner', [['stock', 'Matière et stock', '/stock', 'box', ['/stock', '/bois', '/pieces']], ['achats', 'Achats', '/achats', 'cart', ['/achats', '/commandes', '/fournisseurs']]]],
+  ['Livrer et garantir', [['exp', 'Expéditions', '/expeditions', 'send', ['/expeditions']], ['sav', 'Qualité et SAV', '/sav', 'shield', ['/sav', '/unites']]]],
+  ['Piloter', [['pilot', 'Heures et coûts', '/pilotage', 'gauge', ['/pilotage']], ['machines', 'Machines', '/machines', 'gear', ['/machines']], ['auto', 'Automatisations', '/automatisations', 'bolt', ['/automatisations']], ['equipe', 'Équipe et réglages', '/equipe', 'users', ['/equipe', '/entreprise']]]],
+];
+const TABHOME = { aujourdhui: '/', projets: '/projets', planning: '/planning', stock: '/stock', achats: '/achats', pilotage: '/pilotage' };
+const SUBNAV = {
+  projets: [['/projets', 'En cours'], ['/carnets', 'Carnets de fabrication'], ['/projets?vue=termines', 'Terminés']],
+  achats: [['/achats', 'À commander'], ['/commandes', 'Commandes en cours'], ['/fournisseurs', 'Fournisseurs']],
+  stock: [['/stock', 'Consommables'], ['/bois', 'Bois noble'], ['/pieces', 'Pièces finies']],
+  pilotage: [['/pilotage', 'Heures et chiffrage'], ['/pilotage/couts', 'Coût par OF']],
+  reglages: [['/equipe', 'Équipe'], ['/entreprise', 'Entreprise']],
+  sav: [['/sav', 'Demandes SAV'], ['/unites', 'Registre des pièces']],
+};
+
+// Compteurs de la colonne (calculés à chaque page, requêtes légères).
+function sideCounts() {
+  try {
+    const { q } = require('./db');
+    const n = (sql) => q.get(sql).n;
+    return {
+      decider: require('./logic').toDecide().length,
+      of: n("SELECT COUNT(*) n FROM projects WHERE status = 'en_cours'"),
+      catalogue: n('SELECT COUNT(*) n FROM models WHERE active = 1'),
+      achats: n("SELECT COUNT(*) n FROM needs WHERE status = 'todo'"),
+      exp: n("SELECT COUNT(*) n FROM shipments WHERE shipped_at IS NULL"),
+      sav: n("SELECT COUNT(*) n FROM sav WHERE status != 'close'"),
+      machines: require('./machines').dueCount(),
+    };
+  } catch (e) { return {}; }
+}
 
 function flashBox(flash) {
   if (!flash) return '';
   return h`<div class="flash ${flash.kind || 'ok'}" role="status">${flash.html ? raw(flash.html) : flash.text}</div>`;
 }
 
-// Mise en page « patron » (ordinateur).
-function layout({ title, tab, sub, body, flash, counts = {} }) {
-  const subs = SUBNAV[tab];
+// Mise en page « patron » (ordinateur) : colonne à gauche façon Cockpit.
+function layout({ title, tab, sub, body, flash, counts = {}, heading }) {
+  const here = sub || TABHOME[tab] || '';
+  const path = here.split('?')[0].split('#')[0];
+  const c = sideCounts();
+  const isOn = (paths) => paths.some((p) => (p === '/' ? path === '/' : path === p || path.startsWith(p + '/')));
+  const subsKey = Object.keys(SUBNAV).find((k) => SUBNAV[k].some(([href]) => href.split('?')[0] === path)) || '';
+  const subs = SUBNAV[subsKey] || (tab && SUBNAV[tab]);
+  const co = require('./db').company();
   return page(title, h`
-<nav class="top" aria-label="Navigation principale">
-  <a href="/" class="brand" aria-label="Carchon OS, accueil"><img src="/static/logo.png" alt="Carchon Les Ateliers"><span>OS</span></a>
-  ${NAV.map(([k, href, label]) => h`<a class="tab${k === tab ? ' on' : ''}" href="${href}">${label}</a>`)}
-  <div class="right">
-    <div class="seg"><a class="on" href="/">Patron</a><a href="/atelier">Atelier</a></div>
-    <form action="/recherche" method="get" class="search" role="search"><label class="sr" for="qsearch">Rechercher</label><input id="qsearch" name="q" placeholder="Rechercher" accesskey="k"></form>
-    <details class="menu"><summary class="btn sm">+ Créer</summary><div class="menu-list">
-      <a href="/portails?nouveau=1">Envoyer un devis</a><a href="/projets/nouveau">Projet d'atelier</a><a href="/achats#noter">Noter à recommander</a><a href="/planning#ajouter">Barre de planning</a>
-    </div></details>
-    <details class="menu"><summary class="av" style="background:#1A1714" aria-label="Compte patron">PA</summary><div class="menu-list right-al">
-      <a href="/equipe">Réglages équipe</a><form method="post" action="/deconnexion"><button type="submit" class="linkbtn">Se déconnecter</button></form>
-    </div></details>
+<div class="shell">
+<nav class="side" aria-label="Navigation principale">
+  <a href="/" class="side-h"><span class="side-name">Carchon <span>OS</span></span><span class="side-sub">${co.name}</span></a>
+  ${SIDE.map(([g, items]) => h`<div class="side-g">${g ? h`<div class="side-gh">${g}</div>` : ''}
+    ${items.map(([k, label, href, ic, paths]) => h`<a class="side-a${isOn(paths) ? ' on' : ''}" href="${href}">${icon(ic)}<span>${label}</span>${c[k] ? h`<span class="side-n">${c[k]}</span>` : ''}</a>`)}</div>`)}
+  <div class="side-f">
+    <a class="side-a" href="/atelier">${icon('ipad')}<span>Mode atelier (iPad)</span></a>
+    <form method="post" action="/deconnexion"><button type="submit" class="side-a linkish">${icon('home')}<span>Se déconnecter</span></button></form>
+    <div class="side-cta"><a class="btn sm" href="/catalogue">+ Lancer un OF</a></div>
   </div>
 </nav>
-${subs ? h`<nav class="sub" aria-label="Sous-menu">${subs.map(([href, label]) => h`<a href="${href}"${href === sub ? raw(' class="on"') : ''}>${label}${counts[href] ? ` · ${counts[href]}` : ''}</a>`)}</nav>` : ''}
-<main class="wrap">${flashBox(flash)}${body}</main>`);
+<div class="main">
+<header class="topbar">
+  <h1 class="topbar-t">${heading || title}</h1>
+  <div class="tools">
+    <form action="/recherche" method="get" role="search" class="search"><label class="sr" for="qsearch">Rechercher</label><input id="qsearch" name="q" placeholder="Rechercher un OF, une pièce, un lot" accesskey="k"></form>
+    <details class="menu"><summary class="btn sm">+ Créer</summary><div class="menu-list right-al">
+      <a href="/catalogue">Lancer un OF depuis le catalogue</a><a href="/projets/nouveau">OF sur-mesure ou d'atelier</a><a href="/portails?nouveau=1">Envoyer un devis</a><a href="/sav?nouveau=1">Demande SAV</a><a href="/achats#noter">Noter à recommander</a>
+    </div></details>
+  </div>
+</header>
+${subs ? h`<nav class="sub" aria-label="Sous-menu">${subs.map(([href, label]) => h`<a href="${href}"${href === here ? raw(' class="on"') : ''}>${label}${counts[href] ? ` · ${counts[href]}` : ''}</a>`)}</nav>` : ''}
+<main class="wrap">${flashBox(flash)}${body}</main>
+</div></div>`);
 }
 
 function page(title, body, { bodyClass = '', head = '' } = {}) {
@@ -138,7 +201,7 @@ function page(title, body, { bodyClass = '', head = '' } = {}) {
 }
 
 module.exports = {
-  h, raw, esc, pill, avatar, hidden, postBtn, options, layout, page, flashBox,
+  icon, h, raw, esc, pill, avatar, hidden, postBtn, options, layout, page, flashBox,
   hoursExact, pct, printPage,
   parseDate, iso, today, addDays, ddmm, ddmmyyyy, longDate, dayMonth, hhmm, rel, hoursLabel, JOURS_C, MOIS_C, MOIS,
 };

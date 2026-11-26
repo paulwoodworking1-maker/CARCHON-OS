@@ -75,7 +75,7 @@ app.get('/fichiers/:name', (req, res) => {
 const automations = require('./automations');
 let replanQueued = false;
 app.use((req, res, next) => {
-  if (req.method === 'POST' && !req.path.startsWith('/p/')) {
+  if (req.method === 'POST' && !req.path.startsWith('/p/') && !req.path.startsWith('/api/')) {
     res.on('finish', () => {
       if (res.statusCode >= 400 || replanQueued) return;
       replanQueued = true;
@@ -86,9 +86,10 @@ app.use((req, res, next) => {
 });
 
 // --- Routes ---
+app.use('/api/v1', require('./routes/api'));       // liaison Cockpit (clé API)
 app.use('/p', require('./routes/client'));          // portail client (liens privés)
 app.use('/atelier', require('./routes/atelier'));   // iPad
-for (const m of ['patron', 'carnets', 'achats', 'planning', 'reglages', 'portails', 'automatisations']) app.use('/', requirePatron, require(`./routes/${m}`));
+for (const m of ['patron', 'carnets', 'achats', 'planning', 'reglages', 'portails', 'automatisations', 'catalogue', 'machines', 'charge', 'matiere', 'livraison']) app.use('/', requirePatron, require(`./routes/${m}`));
 
 app.use((req, res) => res.status(404).send(page('Introuvable', h`<main class="login"><h1>Page introuvable</h1><p><a href="/">Revenir à l’accueil</a></p></main>`)));
 app.use((err, req, res, next) => {

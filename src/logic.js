@@ -20,7 +20,8 @@ function frise(project) {
     if (over[ph]) return { phase: ph, state: over[ph].state, label: over[ph].label || defaultLabel(over[ph].state) };
     const mine = steps.filter((s) => s.phase === ph);
     let state = 'w', label = 'À venir';
-    if (ph === 'Conception') {
+    if (ph === 'Conception' && project.model_id) { state = 'd'; label = 'Modèle du catalogue'; }
+    else if (ph === 'Conception') {
       if (plan && plan.status === 'validee') { state = 'd'; label = `${plan.version} validée`; }
       else if (plan) { state = 'c'; label = `${plan.version} à valider`; }
       else { state = 'c'; label = 'À démarrer'; }
@@ -28,6 +29,8 @@ function frise(project) {
       if (!project.client_id || !project.deposit_needed) { state = 'n'; label = 'Sans objet'; }
       else if (project.deposit_at) { state = 'd'; label = 'Acompte reçu'; }
       else { state = 'p'; label = 'Acompte attendu'; }
+    } else if (ph === 'Bois' && !mine.length && q.get('SELECT id FROM wood_lots WHERE project_id = ?', project.id)) {
+      state = 'd'; label = 'Bois réservé';
     } else if (ph === 'Bois' && blockedNeed && !mine.length) {
       state = 'w'; label = 'À commander';
     } else if (ph === 'Livraison' && trip && !mine.length) {

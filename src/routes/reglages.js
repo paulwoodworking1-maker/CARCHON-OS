@@ -54,7 +54,8 @@ r.get('/equipe', (req, res) => {
   const COLORS = [['#1A1714', 'Noir'], ['#4A443E', 'Brun foncé'], ['#6B635A', 'Pierre'], ['#2E2925', 'Charbon'], ['#5A534B', 'Taupe'], ['#3E3832', 'Bois sombre']];
   const form = (p = {}) => h`<div class="grid2"><label>Prénom <input name="name" value="${p.name || ''}" required></label><label>Initiales <input name="ini" value="${p.ini || ''}" maxlength="3" required></label></div>
 <div class="grid2"><label>Métier <input name="sub" value="${p.sub || ''}" placeholder="ex. ébéniste"></label><label>Couleur <select name="color">${options(COLORS, p.color)}</select></label></div>
-<label>Code iPad (4 chiffres)${p.pin_hash ? ' · laisse vide pour garder l’actuel' : ''} <input name="pin" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" ${p.id ? '' : 'required'}></label>`;
+<div class="grid2"><label>Code iPad (4 chiffres)${p.pin_hash ? ' · vide = inchangé' : ''} <input name="pin" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" ${p.id ? '' : 'required'}></label>
+<label>Heures à l'atelier par semaine <input name="hours_week" inputmode="decimal" value="${p.hours_week ?? 35}"></label></div>`;
   const body = h`<div class="head"><div><div class="eb">Réglages</div><h1>Équipe</h1><p class="mut mt8">Un prénom et un code à 4 chiffres pour ouvrir son carnet sur l'iPad. Pas de compte, pas de mot de passe.</p></div>
 <details class="menu push"><summary class="btn">+ Ajouter quelqu'un</summary><form method="post" action="/equipe" class="menu-list right-al form pad wide">${form()}<button class="btn sm">Ajouter</button></form></details></div>
 <section class="card mt20">${people.map((p, i) => h`<div class="it${i ? '' : ' f'}${p.active ? '' : ' off'}">${avatar(p, 44)}<div class="grow"><b class="t16">${p.role === 'patron' ? `${p.name} (toi)` : p.name}</b><div class="mut">${p.sub}</div></div>
@@ -67,7 +68,7 @@ r.get('/equipe', (req, res) => {
 r.post('/equipe', (req, res) => {
   const b = req.body;
   if (!/^\d{4}$/.test(b.pin || '')) return res.flashTo('/equipe', 'Le code iPad doit faire 4 chiffres.', 'ko');
-  q.run("INSERT INTO people (name, ini, sub, color, role, pin_hash) VALUES (?, ?, ?, ?, 'ouvrier', ?)", str(b.name), str(b.ini).toUpperCase(), str(b.sub), str(b.color) || '#4A443E', hash(b.pin));
+  q.run("INSERT INTO people (name, ini, sub, color, role, pin_hash, hours_week) VALUES (?, ?, ?, ?, 'ouvrier', ?, ?)", str(b.name), str(b.ini).toUpperCase(), str(b.sub), str(b.color) || '#4A443E', hash(b.pin), Number(String(b.hours_week || 35).replace(',', '.')) || 35);
   res.flashTo('/equipe', `${str(b.name)} est ajouté(e). Son code ouvre « Mon carnet » sur l’iPad.`);
 });
 r.post('/equipe/mot-de-passe', (req, res) => {
@@ -82,7 +83,7 @@ r.post('/equipe/:id', (req, res) => {
   if (!p) return res.redirect('/equipe');
   if (b.toggle && p.role !== 'patron') { q.run('UPDATE people SET active = 1 - active WHERE id = ?', p.id); return res.redirect('/equipe'); }
   if (b.pin && !/^\d{4}$/.test(b.pin)) return res.flashTo('/equipe', 'Le code iPad doit faire 4 chiffres.', 'ko');
-  q.run('UPDATE people SET name = ?, ini = ?, sub = ?, color = ?, pin_hash = COALESCE(?, pin_hash) WHERE id = ?', str(b.name), str(b.ini).toUpperCase(), str(b.sub), str(b.color), b.pin ? hash(b.pin) : null, p.id);
+  q.run('UPDATE people SET name = ?, ini = ?, sub = ?, color = ?, pin_hash = COALESCE(?, pin_hash), hours_week = ? WHERE id = ?', str(b.name), str(b.ini).toUpperCase(), str(b.sub), str(b.color), b.pin ? hash(b.pin) : null, Number(String(b.hours_week || 35).replace(',', '.')) || 35, p.id);
   res.flashTo('/equipe', 'Enregistré.');
 });
 
@@ -92,11 +93,41 @@ r.get('/entreprise', (req, res) => {
 <p class="mut mt8 mw680">Tes coordonnées, reprises sur les documents imprimés (carnet, bon de commande, PV) et en bas du portail client.</p>
 <form method="post" action="/entreprise" class="card form mt20 mw680">
 ${COMPANY_FIELDS.map(([k, label, def]) => h`<label>${label} <input name="${k}" value="${setting(k, def) || ''}"${k === 'company_name' ? ' required' : ''}></label>`)}
-<button class="btn">Enregistrer</button></form>`;
+<div class="grid2"><label>Taux horaire de l'atelier (€ / h, pour le coût réel) <input name="hourly_rate" inputmode="decimal" value="${setting('hourly_rate', '')}"></label>
+<label>Garantie des pièces (mois) <input name="warranty_months" inputmode="numeric" value="${setting('warranty_months', '24')}"></label></div>
+<button class="btn">Enregistrer</button></form>
+<section class="card mt20 mw680" id="cockpit"><h2>Liaison avec Cockpit</h2>
+<p class="mut mt8">Cockpit envoie les affaires signées et les acomptes à Carchon OS, et lit l'avancement, les dates et le coût réel des OF. Adresse : <b>${process.env.PUBLIC_URL || ''}/api/v1</b> · clé : ${setting('api_token') ? 'créée (masquée)' : 'pas encore créée'}.</p>
+<form method="post" action="/entreprise/cle" data-confirm="Créer une nouvelle clé ? L’ancienne ne marchera plus."><button class="btn alt sm">${setting('api_token') ? 'Créer une nouvelle clé' : 'Créer la clé'}</button></form>
+<p class="mut t12 mt8">Détail technique pour Cockpit : POST /api/v1/affaires, POST /api/v1/affaires/{réf}/acompte, GET /api/v1/ofs, en-tête « Authorization: Bearer &lt;clé&gt; ».</p></section>`;
   res.send(layout({ title: 'Entreprise', tab: 'pilotage', sub: '/entreprise', body, flash: req.flash }));
 });
+// Clé de la liaison avec Cockpit (montrée une fois à la création).
+r.post('/entreprise/cle', (req, res) => {
+  const key = require('node:crypto').randomBytes(24).toString('base64url');
+  setSetting('api_token', key);
+  res.flashTo('/entreprise', '', 'ok', { html: `Nouvelle clé de liaison : <code style="user-select:all">${key}</code> · copie-la dans Cockpit, l’ancienne ne marche plus.` });
+});
+
+// Coût réel par OF : heures déclarées × taux horaire.
+r.get('/pilotage/couts', (req, res) => {
+  const rate = Number(String(setting('hourly_rate', '0')).replace(',', '.')) || 0;
+  const rows = q.all(`SELECT projects.id, projects.ref, projects.name, projects.canal, projects.status, projects.qty, COALESCE(SUM(steps.est_hours), 0) e, COALESCE(SUM(steps.declared_hours), 0) d
+    FROM projects LEFT JOIN steps ON steps.project_id = projects.id GROUP BY projects.id HAVING e > 0 OR d > 0 ORDER BY projects.status = 'en_cours' DESC, projects.id DESC LIMIT 60`);
+  const eur = (x) => `${Math.round(x).toLocaleString('fr-FR')} €`;
+  const body = h`<section class="card" style="border-top:0;padding-top:0">
+${rate ? h`<p class="mut">Coût de main-d'œuvre = heures déclarées × ${String(rate).replace('.', ',')} € / h. Il est aussi envoyé à Cockpit pour calculer la marge de chaque affaire.</p>` : h`<p class="flash ko">Indique le taux horaire de l'atelier dans <a href="/entreprise">Entreprise</a> pour voir les coûts.</p>`}
+<div class="tablebox mt12"><table class="tbl"><thead><tr><th>OF</th><th>Pièce</th><th>Canal</th><th class="num">Prévu</th><th class="num">Réel</th><th class="num">Écart</th><th class="num">Coût réel</th><th class="num">Par pièce</th></tr></thead><tbody>
+${rows.map((x) => h`<tr><td class="ref">${x.ref}</td><td><a href="/projets/${x.id}">${x.name}</a>${x.status === 'termine' ? h` <span class="mut t12">· terminé</span>` : ''}</td><td>${pill('no', x.canal)}</td><td class="num">${hoursLabel(x.e)}</td><td class="num b">${hoursLabel(x.d)}</td>
+<td class="num" style="color:${x.e && x.d > x.e * 1.1 ? 'var(--red)' : 'var(--ink)'}">${x.e ? `${x.d >= x.e ? '+' : '−'}${Math.abs(Math.round((x.d - x.e) / x.e * 100))} %` : '—'}</td><td class="num b">${rate ? eur(x.d * rate) : '—'}</td><td class="num">${rate && x.qty > 1 ? eur(x.d * rate / x.qty) : ''}</td></tr>`)}
+${rows.length ? '' : h`<tr><td colspan="8" class="mut">Aucune heure encore.</td></tr>`}</tbody></table></div></section>`;
+  res.send(layout({ title: 'Coût par OF', heading: 'Heures et coûts', tab: 'pilotage', sub: '/pilotage/couts', body }));
+});
+
 r.post('/entreprise', (req, res) => {
   for (const [k] of COMPANY_FIELDS) setSetting(k, str(req.body[k]).slice(0, 200));
+  setSetting('hourly_rate', str(req.body.hourly_rate).replace(',', '.'));
+  setSetting('warranty_months', String(Math.max(0, Number(req.body.warranty_months) || 24)));
   res.flashTo('/entreprise', 'Coordonnées enregistrées.');
 });
 

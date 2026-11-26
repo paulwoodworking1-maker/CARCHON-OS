@@ -73,4 +73,61 @@ tx(() => {
     p1, d(18), JSON.stringify(['Couvertures', 'Sangles', 'Cornières', 'Visserie allonges', 'Chiffon + huile retouche', 'iPad chargé pour le PV'].map((x, i) => ({ t: x, done: i < 2 }))));
   q.run("INSERT INTO issues (project_id, person_id, body) VALUES (?, ?, 'Petite fente en bout de plateau · stabilisée à la colle époxy teintée ?')", p1, lu);
 });
+
+// --- Version complète : catalogue, bois par lot, machines, lot en fabrication, expédition, SAV ---
+const P = require('./production');
+const pid = (name) => q.get('SELECT id FROM people WHERE name = ?', name)?.id;
+const lu = pid('Lucas'), ni = pid('Nina'), pa = q.get("SELECT id FROM people WHERE role = 'patron'").id;
+tx(() => {
+  q.run('UPDATE people SET hours_week = 20 WHERE id = ?', pa);
+  const sc = q.get("SELECT id FROM suppliers WHERE name = 'Scierie'")?.id || null;
+  const lots = [['N-2611', 'Noyer', '27 mm', 0.62, 'Bourgogne'], ['C-2609', 'Chêne', '27 mm', 0.18, 'Bourgogne'], ['C-2611', 'Chêne', '40 mm', 0.02, 'Bourgogne'], ['F-2604', 'Frêne', '50 mm', 0.12, 'Jura'], ['F-2610', 'Frêne', '27 mm', 0.30, 'Jura'], ['N-2602', 'Noyer', '40 mm', 0.11, 'Bourgogne']];
+  for (const [code, ess, th, vol, orig] of lots) q.run('INSERT INTO wood_lots (code, essence, thickness, volume, origin, supplier_id, received_at) VALUES (?, ?, ?, ?, ?, ?, ?)', code, ess, th, vol, orig, sc, d(-30));
+  const douille = q.run("INSERT INTO stock_items (category, name, ord) VALUES ('Électricité', 'Douilles E27 laiton', 1)").lastInsertRowid;
+  const rosace = q.run("INSERT INTO stock_items (category, name, state, ord) VALUES ('Électricité', 'Rosaces laiton', 2, 2)").lastInsertRowid;
+  const huile = q.get("SELECT id FROM stock_items WHERE name = 'Huile-cire'").id;
+  const model = (code, name, family, woods, threshold, care, bom, steps) => {
+    const id = q.run('INSERT INTO models (code, name, family, woods, threshold, care, checks) VALUES (?, ?, ?, ?, ?, ?, ?)', code, name, family, woods, threshold, care,
+      JSON.stringify(['Veinage et teinte du lot', 'Ponçage sans rayure en lumière rasante', family === 'Luminaire' ? 'Câblage : continuité et serrage, essai 30 min' : 'Assemblages et stabilité', 'Numéro marqué sous la pièce'])).lastInsertRowid;
+    bom.forEach(([article, qty, unit, essence, thickness, item], i) => q.run('INSERT INTO model_bom (model_id, article, qty, unit, essence, thickness, stock_item_id, ord) VALUES (?, ?, ?, ?, ?, ?, ?, ?)', id, article, qty, unit, essence || '', thickness || '', item || null, i));
+    steps.forEach(([title, geste, est, perUnit], i) => q.run('INSERT INTO model_steps (model_id, ord, title, geste, est_hours, per_unit) VALUES (?, ?, ?, ?, ?, ?)', id, i + 1, title, geste, est, perUnit === false ? 0 : 1));
+    return id;
+  };
+  model('S1', 'Suspension S1', 'Luminaire', 'Frêne, chêne, noyer', 3, 'Dépoussiérer avec un chiffon sec. Une fois par an, une fine couche d’huile-cire.',
+    [['Frêne 50 mm', 0.007, 'm³', 'Frêne', '50 mm'], ['Douille E27 laiton', 1, '', '', '', douille], ['Câble textile noir', 1.5, 'm'], ['Rosace laiton', 1, '', '', '', rosace], ['Huile-cire', 0.05, 'L', '', '', huile]],
+    [['Débit des pavillons', 'Débit, corroyage', 0.5], ['Tournage', 'Autre', 1.5], ['Câblage et douille', 'Assemblage', 0.7], ['Huile-cire', 'Huile-cire', 0.5], ['Contrôle et emballage', 'Contrôle', 0.3]]);
+  model('L2', 'Lampe à poser L2', 'Luminaire', 'Chêne, noyer', 2, 'Chiffon sec. Ampoule E14 de 40 W maximum.',
+    [['Chêne 40 mm', 0.005, 'm³', 'Chêne', '40 mm'], ['Abat-jour lin', 1, ''], ['Douille E14', 1, '']],
+    [['Débit', 'Débit, corroyage', 0.5], ['Tournage du pied', 'Autre', 1.5], ['Câblage', 'Assemblage', 0.7], ['Finition', 'Huile-cire', 0.5], ['Contrôle', 'Contrôle', 0.3]]);
+  model('T1', 'Tabouret T1', 'Mobilier', 'Chêne, frêne', 2, 'Éviter l’humidité stagnante. Huile-cire une fois par an.',
+    [['Chêne 40 mm', 0.012, 'm³', 'Chêne', '40 mm'], ['Huile-cire', 0.08, 'L', '', '', huile]],
+    [['Débit et corroyage', 'Débit, corroyage', 1], ['Tenons et mortaises', 'Assemblage', 2], ['Collage', 'Collage', 0.5], ['Ponçage et finition', 'Ponçage', 1.2], ['Contrôle', 'Contrôle', 0.3]]);
+  const mach = (name, type, gestes, tasks, wear) => {
+    const id = q.run("INSERT INTO machines (name, type, brand, since, gestes) VALUES (?, ?, '[Marque · modèle]', ?, ?)", name, type, '2019', gestes).lastInsertRowid;
+    for (const [title, hrs, days, last] of tasks) q.run('INSERT INTO machine_tasks (machine_id, title, every_hours, every_days, last_done) VALUES (?, ?, ?, ?, ?)', id, title, hrs, days, last);
+    for (const [w, st] of wear) q.run("INSERT INTO stock_items (category, name, state, machine_id) VALUES ('Usure machines', ?, ?, ?)", w, st, id);
+    return id;
+  };
+  mach('Scie à format', 'Débit', 'Débit, corroyage', [['Changer la lame', 200, null, d(-50)], ['Nettoyer et graisser les guides', null, 30, d(-21)], ['Contrôler l’arrêt d’urgence', null, 365, d(-300)]], [['Lame Ø 300', 0]]);
+  mach('Dégauchisseuse', 'Corroyage', 'Débit, corroyage', [['Changer ou affûter les fers', 120, null, d(-40)], ['Graisser les tables', null, 30, d(-26)]], [['Fers 410 mm (jeu)', 1]]);
+  mach('Raboteuse', 'Corroyage', 'Débit, corroyage', [['Changer ou affûter les fers', 120, null, d(-20)], ['Nettoyer les rouleaux', null, 30, d(-12)]], [['Fers 400 mm (jeu)', 0]]);
+  mach('Toupie', 'Moulurage', 'Assemblage', [['Vérifier outils et serrages', null, 30, d(-35)]], []);
+  mach('Ponceuse à bande', 'Finition', 'Ponçage', [['Changer la bande', 30, null, d(-10)]], [['Bandes grain 120', 0]]);
+  mach('Aspiration', 'Atelier', '', [['Vider et nettoyer les filtres', null, 14, d(-9)]], [['Sacs à copeaux', 0]]);
+  q.run("INSERT INTO absences (person_id, start_date, end_date, label) VALUES (?, ?, ?, 'Congé')", lu, d(30), d(34));
+});
+// Un lot de suspensions lancé, 5 pièces contrôlées dont 2 réservées, 1 expédiée puis en SAV.
+const s1 = q.get("SELECT id FROM models WHERE code = 'S1'").id;
+const lot = P.launchFromModel(s1, { qty: 12, canal: 'Revendeur', forWhom: '[Revendeur]', dueDate: d(20), personId: pa });
+tx(() => {
+  q.run('UPDATE steps SET sent = 1, seen = 1, who_id = ? WHERE project_id = ?', lu, lot);
+  q.run("UPDATE steps SET status = 'done', declared_hours = 6, declared_label = '6 h', started_at = ?, done_at = ? WHERE project_id = ? AND ord = 1", `${d(-6)} 08:00:00`, `${d(-5)} 17:00:00`, lot);
+  q.run("UPDATE steps SET status = 'doing', started_at = ? WHERE project_id = ? AND ord = 2", `${d(-3)} 08:00:00`, lot);
+  const units = q.all('SELECT id FROM units WHERE project_id = ? ORDER BY serial', lot);
+  units.slice(0, 5).forEach((u, i) => q.run("UPDATE units SET status = 'en_stock', controlled_at = ?, controlled_by = ?, checks = ?, reserved_for = ? WHERE id = ?", `${d(-2)} 16:00:00`, pa,
+    JSON.stringify(['Veinage et teinte du lot', 'Câblage : continuité et serrage, essai 30 min']), i < 2 ? 'Boutique · commande web' : '', u.id));
+  const sh = q.run("INSERT INTO shipments (project_id, recipient, carrier, tracking, packing, shipped_at, delivered_at) VALUES (?, 'Boutique · client web', '[Transporteur]', '[N° de suivi]', 'Carton double cannelure', ?, ?)", lot, `${d(-1)} 10:00:00`, `${d(0)} 09:00:00`).lastInsertRowid;
+  q.run("UPDATE units SET status = 'livree', shipment_id = ?, reserved_for = '' WHERE id = ?", sh, units[0].id);
+  q.run("INSERT INTO sav (unit_id, project_id, client, body) VALUES (?, ?, 'Client boutique', 'La lumière clignote quand on touche le pavillon.')", units[0].id, lot);
+});
 console.log('Démo chargée. Patron : demo-atelier · iPad : Lucas 1111, Nina 2222, patron 0000 · adresse de test du portail : test@example.com');

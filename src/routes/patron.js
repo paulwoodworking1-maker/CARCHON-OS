@@ -2,7 +2,7 @@
 // Patron : Aujourd'hui, recherche, liste des projets et fiche projet.
 const express = require('express');
 const { q, tx, PHASES, logActivity } = require('../db');
-const { h, raw, layout, pill, avatar, postBtn, options, hidden, ddmm, longDate, today, addDays, rel, hoursLabel, dayMonth, hhmm } = require('../html');
+const { icon, h, raw, layout, pill, avatar, postBtn, options, hidden, ddmm, longDate, today, addDays, rel, hoursLabel, dayMonth, hhmm } = require('../html');
 const L = require('../logic');
 const { upload, fileUrl, isImage } = require('../uploads');
 
@@ -22,76 +22,73 @@ ${friseBar(p.frise)}
 
 // ---------- Aujourd'hui ----------
 r.get('/', (req, res) => {
+  const t = today();
   const projects = q.all("SELECT * FROM projects WHERE status = 'en_cours' ORDER BY due_date IS NULL, due_date").map(L.projectSummary);
   const decide = L.toDecide();
   const issues = q.all("SELECT issues.*, projects.name pname, people.name who FROM issues LEFT JOIN projects ON projects.id = issues.project_id LEFT JOIN people ON people.id = issues.person_id WHERE issues.status = 'open' ORDER BY issues.created_at DESC");
-  const t = today(), end = addDays(t, 6);
-  const crew = L.people().map((p) => {
-    const doing = q.get(`SELECT steps.title, projects.name pname FROM steps JOIN projects ON projects.id = steps.project_id WHERE who_id = ? AND steps.status = 'doing' ORDER BY started_at DESC LIMIT 1`, p.id);
-    const bar = q.get('SELECT bars.*, projects.name pname FROM bars LEFT JOIN projects ON projects.id = bars.project_id WHERE person_id = ? AND start_date <= ? AND end_date >= ? LIMIT 1', p.id, t, t);
-    const next = doing ? null : L.stepsFor(p.id)[0];
-    let line = 'Rien de prévu', sub = '';
-    if (doing) { line = doing.pname; sub = doing.title; }
-    else if (bar) { line = bar.pname || bar.label; sub = bar.detail || bar.label; }
-    else if (next) { line = next.pname; sub = `Prochaine fiche : ${next.title}`; }
-    return { p, line, sub };
-  });
-  const week = [
-    ...q.all('SELECT expected_at d, suppliers.name s, what FROM orders LEFT JOIN suppliers ON suppliers.id = orders.supplier_id WHERE arrived_at IS NULL AND expected_at BETWEEN ? AND ?', t, end).map((o) => ({ d: o.d, t: 'Livraison fournisseur', s: `${o.s || ''} · ${o.what}` })),
-    ...q.all('SELECT trips.date d, projects.name pname, what FROM trips JOIN projects ON projects.id = trips.project_id WHERE date BETWEEN ? AND ? AND done_at IS NULL', t, end).map((x) => ({ d: x.d, t: 'Livraison / pose', s: `${x.pname} · ${x.what}` })),
-    ...q.all('SELECT events.*, projects.name pname FROM events LEFT JOIN projects ON projects.id = events.project_id WHERE date BETWEEN ? AND ?', t, end).map((e) => ({ d: e.date, t: e.title, s: [e.pname, e.detail].filter(Boolean).join(' · ') })),
-    ...q.all("SELECT bars.*, projects.name pname FROM bars LEFT JOIN projects ON projects.id = bars.project_id WHERE lane = 'event' AND start_date BETWEEN ? AND ?", t, end).map((b) => ({ d: b.start_date, t: b.label, s: [b.pname, b.detail].filter(Boolean).join(' · ') })),
-  ].sort((a, b) => a.d.localeCompare(b.d));
-  const deposits = q.all("SELECT name FROM projects WHERE status = 'en_cours' AND client_id IS NOT NULL AND deposit_needed = 1 AND deposit_at IS NULL");
+  const { weeks, rows } = require('./charge').compute();
+  const tot = weeks.map((w, i) => rows.reduce((a, x) => ({ h: a.h + x.cells[i].hrs, c: a.c + x.cells[i].cap }), { h: 0, c: 0 }));
+  const four = tot.slice(0, 4).reduce((a, x) => ({ h: a.h + x.h, c: a.c + x.c }), { h: 0, c: 0 });
+  const worst = rows.flatMap((x) => x.cells.slice(0, 4).map((c, i) => ({ p: x.p, c, i }))).sort((a, b) => b.c.pct - a.c.pct)[0];
+  const capMax = Math.max(...tot.map((x) => x.c), 1);
+  const scaleMax = Math.max(capMax * 1.35, ...tot.map((x) => x.h), 1);
+  const N = 16;
   const monthEnd = t.slice(0, 7) + '-31';
-  const toDeliver = q.all("SELECT name, due_date FROM projects WHERE status = 'en_cours' AND due_date BETWEEN ? AND ?", t, monthEnd);
-  const balance = q.all('SELECT projects.name, pv_signed_at FROM trips JOIN projects ON projects.id = trips.project_id WHERE pv_signed_at IS NOT NULL AND balance_paid_at IS NULL');
-  const nextDelivery = q.get('SELECT expected_at FROM orders WHERE arrived_at IS NULL AND expected_at >= ? ORDER BY expected_at LIMIT 1', t);
-  const counters = [
-    `${projects.length} projet${projects.length > 1 ? 's' : ''} en cours`,
-    decide.length ? raw(`<b class="red">${decide.length} chose${decide.length > 1 ? 's' : ''} à décider</b>`) : 'rien à décider',
-    issues.length ? `${issues.length} problème${issues.length > 1 ? 's' : ''} signalé${issues.length > 1 ? 's' : ''}` : null,
-    nextDelivery ? `livraison fournisseur ${longDate(nextDelivery.expected_at).split(' ')[0]}` : null,
-  ].filter(Boolean);
-
+  const toDeliver = q.get("SELECT COUNT(*) n, COALESCE(SUM(qty), 0) pcs FROM projects WHERE status = 'en_cours' AND due_date BETWEEN ? AND ?", t, monthEnd);
+  const late = projects.filter((p) => p.slack.text === 'en retard');
+  const ready = q.get("SELECT COUNT(*) n, SUM(reserved_for != '') r FROM units WHERE status = 'en_stock'");
+  const mach = require('../machines').all();
+  const machDue = mach.flatMap((m) => [...(m.down_since ? [{ m, t: { title: 'En panne', st: { label: m.down_note || 'signalée' } }, down: true }] : []), ...m.tasks.filter((x) => x.st.late).map((x) => ({ m, t: x }))]);
+  const crew = rows.map((x) => {
+    const p = x.p;
+    const doing = q.get(`SELECT steps.title, projects.name pname FROM steps JOIN projects ON projects.id = steps.project_id WHERE who_id = ? AND steps.status = 'doing' ORDER BY started_at DESC LIMIT 1`, p.id);
+    const next = doing ? null : L.stepsFor(p.id)[0];
+    return { p, line: doing ? doing.pname : next ? next.pname : 'Rien de prévu', sub: doing ? doing.title : next ? `Prochaine fiche : ${next.title}` : '', load: x.cells[0].pct };
+  });
+  const head = decide[0];
+  const ofs = projects.slice(0, 8).map((p) => {
+    const hrs = q.get('SELECT COALESCE(SUM(declared_hours), 0) d, COALESCE(SUM(est_hours), 0) e, SUM(status = \'done\') nd, COUNT(*) n FROM steps WHERE project_id = ?', p.id);
+    const pctv = hrs.n ? Math.round((hrs.nd || 0) / hrs.n * 100) : 0;
+    return { p, hrs, pct: pctv };
+  });
   const body = h`
-<div class="eb">${longDate(t)}</div><h1>Bonjour</h1>
-<p class="mut t15">${counters.map((c, i) => h`${i ? ' · ' : ''}${c}`)}</p>
-<div class="cols">
-<div class="main-col">
-<section class="card" aria-labelledby="dec">
-  <div class="line"><h2 id="dec">À décider</h2>${pill(decide.length ? 'ko' : 'ok', decide.length)}<span class="mut push">Tout ce qui attend ta réponse, au même endroit</span></div>
-  ${decide.length ? decide.map((d, i) => h`<div class="row${i ? '' : ' f'}"><span class="kind">${pill(d.kind, d.tag)}</span><div class="grow"><b>${d.title}</b><span class="mut">${d.text}</span></div>
-    ${d.href2 ? h`<a class="btn sm" href="${d.href2}">${d.cta2}</a>` : ''}
-    ${d.ack ? postBtn(`/achats/besoin/${d.ack}/valider`, 'Valider', 'btn alt sm') : h`<a class="btn ${d.primary ? '' : 'alt '}sm" href="${d.href}">${d.cta}</a>`}</div>`)
-    : h`<p class="mut">Rien n’attend ta réponse. Bonne journée à l’atelier.</p>`}
+<section class="band" style="padding-top:0;margin-top:-8px"><h2>Ton point du matin</h2><span class="count">${decide.length}</span><span class="count">${longDate(t)} · ${decide.length} décision${decide.length > 1 ? 's' : ''} · ${issues.length} problème${issues.length > 1 ? 's' : ''} signalé${issues.length > 1 ? 's' : ''} · ${machDue.length} alerte${machDue.length > 1 ? 's' : ''} machine</span></section>
+${head ? h`<section class="row f" style="padding:22px 0;border-bottom:1px solid var(--line)"><span class="kind">${pill(head.kind, head.tag)}</span><div class="grow"><b class="t16">${head.title}</b><span class="mut">${head.text}</span></div>
+${head.href2 ? h`<a class="btn" href="${head.href2}">${head.cta2}</a>` : ''}${head.ack ? postBtn(`/achats/besoin/${head.ack}/valider`, 'Valider', 'btn') : h`<a class="btn" href="${head.href}">${head.cta}</a>`}</section>` : ''}
+<section class="kpis">
+<div class="kpi"><div class="kpi-h"><span class="kpi-l">${icon('load', 15)}Charge</span>${worst && worst.c.pct > 100 ? pill('ko', `${worst.p.role === 'patron' ? 'Toi' : worst.p.name} ${worst.c.pct} %`) : pill('ok', 'ça passe')}</div><div class="big">${four.c ? Math.round(four.h / four.c * 100) : 0} %</div><div class="sub2">des heures disponibles, 4 semaines</div></div>
+<div class="kpi"><div class="kpi-h"><span class="kpi-l">${icon('truck', 15)}À livrer</span>${pill('no', 'ce mois')}</div><div class="big">${toDeliver.n}</div><div class="sub2">OF · ${toDeliver.pcs} pièce${toDeliver.pcs > 1 ? 's' : ''}</div></div>
+<div class="kpi"><div class="kpi-h"><span class="kpi-l">${icon('cal', 15)}En retard</span>${pill(late.length ? 'ko' : 'ok', late.length ? 'prévu' : 'aucun')}</div><div class="big">${late.length}</div><div class="sub2">${late.map((p) => p.name).slice(0, 2).join(', ') || 'OF dans les temps'}</div></div>
+<div class="kpi"><div class="kpi-h"><span class="kpi-l">${icon('box', 15)}Prêtes</span>${pill('wa', `${ready.r || 0} réservée${(ready.r || 0) > 1 ? 's' : ''}`)}</div><div class="big">${ready.n}</div><div class="sub2">pièces contrôlées en stock</div></div>
 </section>
-<section aria-labelledby="pr">
-  <div class="line mb12"><h2 id="pr">Projets en cours</h2><a class="push b" href="/projets">Tous les projets</a></div>
-  <div class="stack12">${projects.length ? projects.map(projectCard) : h`<div class="card"><p class="mut">Aucun projet en cours. Les projets clients se créent quand un devis est accepté sur le portail (<a href="/portails?nouveau=1">envoyer un devis</a>) ; les projets d’atelier se créent dans <a href="/projets/nouveau">Projets</a>.</p></div>`}</div>
+<div class="split">
+<section style="flex:2 1 560px"><div class="line"><h2 class="h-light">Charge de l'atelier</h2><a class="btn sm push" href="/charge">12 semaines</a></div>
+<div class="big">${Math.round(four.h)} h</div><div class="sub2">prévues sur 4 semaines, pour ${Math.round(four.c)} h disponibles</div>
+<div role="img" aria-label="Heures prévues par semaine face à la capacité" style="display:grid;grid-template-columns:repeat(${weeks.length},minmax(0,1fr));gap:6px;margin-top:26px;align-items:end">
+${tot.map((x) => { const f = Math.round(x.h / scaleMax * N), cs = Math.round(x.c / scaleMax * N); return h`<div class="segcol">${Array.from({ length: N }, (_, i) => h`<i class="${i < Math.min(f, cs) ? 'f' : i < f ? 'o' : ''}"></i>`)}</div>`; })}</div>
+<div style="display:grid;grid-template-columns:repeat(${weeks.length},minmax(0,1fr));gap:6px;margin-top:10px">${weeks.map((w) => h`<div class="mut t13" style="text-align:center">${ddmm(w)}</div>`)}</div>
+<div class="legend"><span><i class="c" style="background:var(--sand);min-width:14px"></i>Prévu</span><span><i class="c" style="background:var(--overload);min-width:14px"></i>Au-delà de la capacité</span><span><i class="c" style="background:var(--line2);min-width:14px"></i>Disponible</span></div>
 </section>
-</div>
-<aside class="side-col">
-<section class="card" aria-labelledby="at"><h2 id="at">L'atelier aujourd'hui</h2>
-  ${crew.map((c, i) => h`<div class="who${i ? '' : ' f'}">${avatar(c.p)}<div class="grow"><b class="t14">${c.p.role === 'patron' ? 'Toi' : c.p.name} · ${c.line}</b><span class="mut">${c.sub}</span></div></div>`)}
+<section style="flex:1 1 340px"><div class="line"><h2 class="h-light">L'atelier aujourd'hui</h2><span class="count push">${crew.length} personne${crew.length > 1 ? 's' : ''}</span></div>
+<div class="big" style="font-size:32px">${projects.length} OF en cours</div>
+${crew.map((c, i) => h`<div class="who${i ? '' : ' f'}" style="margin-top:${i ? 0 : 10}px"><span class="ini">${c.p.ini}</span><div class="grow"><b class="t15">${c.p.role === 'patron' ? 'Toi' : c.p.name} · ${c.line}</b><span class="mut t13">${c.sub}</span></div><b class="t14" style="color:${c.load > 100 ? 'var(--red)' : 'var(--ink)'}">${c.load} %</b></div>`)}
+${issues.map((s) => h`<div class="who">${pill('ko', 'Signalé')}<div class="grow"><b class="t14">${s.body}</b><span class="mut t12">${s.pname || ''} · ${s.who || ''} · ${rel(s.created_at)}</span></div><a class="btn alt sm" href="/projets/${s.project_id}#probleme">Traiter</a></div>`)}
+${machDue.slice(0, 3).map((x) => h`<div class="who">${pill(x.down ? 'ko' : 'wa', x.down ? 'Panne' : 'Entretien')}<div class="grow"><b class="t14">${x.m.name} : ${x.t.title}</b><span class="mut t12">${x.t.st.label}</span></div><a class="btn alt sm" href="/machines?m=${x.m.id}">Voir</a></div>`)}
+</section></div>
+<section class="card" id="decider"><div class="line"><h2>À décider</h2>${pill(decide.length ? 'ko' : 'ok', decide.length)}<span class="mut push">Tout ce qui attend ta réponse</span></div>
+${decide.length ? decide.map((d, i) => h`<div class="row${i ? '' : ' f'}"><span class="kind">${pill(d.kind, d.tag)}</span><div class="grow"><b>${d.title}</b><span class="mut">${d.text}</span></div>
+${d.href2 ? h`<a class="btn sm" href="${d.href2}">${d.cta2}</a>` : ''}${d.ack ? postBtn(`/achats/besoin/${d.ack}/valider`, 'Valider', 'btn alt sm') : h`<a class="btn ${d.primary ? '' : 'alt '}sm" href="${d.href}">${d.cta}</a>`}</div>`) : h`<p class="mut">Rien n'attend ta réponse.</p>`}
 </section>
-${issues.length ? h`<section class="card danger" aria-labelledby="sig"><div class="line"><h2 id="sig">Signalé par l'atelier</h2>${pill('ko', issues.length)}</div>
-  ${issues.map((s) => {
-    const ph = s.photo_id ? q.get('SELECT file FROM photos WHERE id = ?', s.photo_id) : null;
-    return h`<div class="line mt12">${ph ? h`<img class="thumb" src="${fileUrl(ph.file)}" alt="Photo du problème">` : ''}<div class="grow"><b class="t14">${s.body}</b><span class="mut">${s.pname || ''} · ${s.who || ''} · ${rel(s.created_at)}</span></div></div>
-    <div class="line mt8"><a class="btn sm" href="/projets/${s.project_id}#probleme">Traiter</a></div>`;
-  })}</section>` : ''}
-<section class="card" aria-labelledby="sem"><h2 id="sem">Cette semaine</h2>
-  ${week.length ? week.map((w, i) => h`<div class="who${i ? '' : ' f'}"><span class="day">${['Dim', 'Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam'][new Date(w.d + 'T12:00').getDay()]} ${Number(w.d.slice(8))}</span><div class="grow"><b class="t14">${w.t}</b><span class="mut">${w.s}</span></div></div>`) : h`<p class="mut">Rien de daté cette semaine.</p>`}
-  <a class="b mt8 inl" href="/planning">Ouvrir le planning</a>
-</section>
-<section class="card" aria-labelledby="chf"><h2 id="chf">En chiffres</h2>
-  <div class="who f"><b class="bignum${deposits.length ? ' red' : ''}">${deposits.length}</b><div class="grow"><b class="t14">Acompte${deposits.length > 1 ? 's' : ''} attendu${deposits.length > 1 ? 's' : ''}</b><span class="mut">${deposits.map((d) => d.name).join(', ') || '—'}</span></div></div>
-  <div class="who"><b class="bignum">${toDeliver.length}</b><div class="grow"><b class="t14">À livrer ce mois</b><span class="mut">${toDeliver.map((d) => `${d.name} · ${ddmm(d.due_date)}`).join(', ') || '—'}</span></div></div>
-  <div class="who"><b class="bignum">${balance.length}</b><div class="grow"><b class="t14">Solde à facturer</b><span class="mut">${balance.map((b) => `${b.name} · PV du ${ddmm(b.pv_signed_at)}`).join(', ') || '—'}</span></div></div>
-</section>
-</aside></div>`;
-  res.send(layout({ title: "Aujourd'hui", tab: 'aujourdhui', body, flash: req.flash }));
+<section class="band" style="border-bottom:0"><h2>Ordres de fabrication</h2><span class="count">${projects.length}</span><span class="count">sur-mesure, boutique, revendeurs et salons</span>
+<span class="line push"><a class="btn" href="/projets">Voir tous les OF</a><a class="btn dark" href="/catalogue">+ Lancer un OF</a></span></section>
+<div class="tablebox"><table class="tbl" style="min-width:960px"><thead><tr><th>OF</th><th>Pièce</th><th>Canal et étape</th><th>Responsable</th><th class="num">Heures</th><th>Avancement</th><th>Fin prévue</th></tr></thead><tbody>
+${ofs.map(({ p, hrs, pct: pc }) => h`<tr><td class="ref">${p.ref}</td><td><a class="b" href="/projets/${p.id}">${p.name}</a><div class="mut t12">${p.client ? p.client.name : p.for_whom || 'atelier'}</div></td>
+<td>${pill('no', p.canal)} ${pill(p.cur.state === 'p' ? 'ko' : 'wa', p.cur.phase)}</td><td>${p.lead ? h`<span class="line" style="gap:8px"><span class="ini" style="width:26px;height:26px">${p.lead.ini}</span><b class="t14">${p.lead.role === 'patron' ? 'Toi' : p.lead.name}</b></span>` : '—'}</td>
+<td class="num">${String(Math.round(hrs.d)).replace('.', ',')} / ${Math.round(hrs.e)} h</td>
+<td><span class="line" style="gap:10px"><span class="segbar">${Array.from({ length: 20 }, (_, i) => h`<i class="${i < Math.round(pc / 5) ? (p.slack.text === 'en retard' ? 'o' : 'f') : ''}"></i>`)}</span><span class="t14">${pc} %</span></span></td>
+<td class="b" style="color:${p.slack.text === 'en retard' ? 'var(--red)' : 'var(--ink)'}">${p.due_date ? ddmm(p.due_date) : 'à fixer'}<div class="t12" style="font-weight:400;color:${p.slack.color}">${p.slack.text}</div></td></tr>`)}
+${ofs.length ? '' : h`<tr><td colspan="7" class="mut">Aucun OF en cours. Lance un lot depuis le catalogue, ou crée un OF sur-mesure.</td></tr>`}</tbody></table></div>`;
+  res.send(layout({ title: 'Tableau de bord', tab: 'aujourdhui', sub: '/', body, flash: req.flash }));
 });
 
 // ---------- Recherche ----------
@@ -126,14 +123,16 @@ r.get('/projets', (req, res) => {
   };
   all.forEach((p) => { p.tags = tag(p); });
   const f = done ? 'all' : (req.query.f || 'all');
-  const rows = f === 'all' ? all : all.filter((p) => p.tags.includes(f));
+  const canal = req.query.canal || '';
+  const rows = (f === 'all' ? all : all.filter((p) => p.tags.includes(f))).filter((p) => !canal || p.canal === canal);
   const n = (k) => all.filter((p) => p.tags.includes(k)).length;
   const chips = [['all', `Tous · ${all.length}`], ['bloque', `À débloquer · ${n('bloque')}`], ['finition', `En finition · ${n('finition')}`], ['livrer', `À livrer ce mois · ${n('livrer')}`]];
   const body = h`
 <div class="head"><div><div class="eb">Fabriquer</div><h1>${done ? 'Projets terminés' : 'Projets'}</h1></div>
 <a class="btn push" href="/projets/nouveau">+ Projet d'atelier</a></div>
 <p class="mut mt8">Les projets clients se créent depuis un devis accepté (bloc « À décider »). Ici, tu peux aussi créer un projet d'atelier, de série ou une reprise. La frise avance toute seule quand l'atelier coche ses fiches.</p>
-${done ? '' : h`<div class="chips" role="group" aria-label="Filtrer">${chips.map(([k, l]) => h`<a class="chip${f === k ? ' on' : ''}" href="/projets?f=${k}">${l}</a>`)}</div>`}
+${done ? '' : h`<div class="chips" role="group" aria-label="Filtrer">${chips.map(([k, l]) => h`<a class="chip${f === k ? ' on' : ''}" href="/projets?f=${k}${canal ? '&canal=' + encodeURIComponent(canal) : ''}">${l}</a>`)}
+<span style="width:16px"></span>${['', 'Sur-mesure', 'Boutique', 'Revendeur', 'Salon', 'Stock', 'SAV'].filter((c) => !c || all.some((p) => p.canal === c)).map((c) => h`<a class="chip${canal === c ? ' on' : ''}" href="/projets?f=${f}${c ? '&canal=' + encodeURIComponent(c) : ''}">${c || 'Tous canaux'}</a>`)}</div>`}
 <div class="tablebox mt12"><table class="frise">
 <thead><tr><th class="pcol">Projet · prochaine action</th>${PHASES.map((p) => h`<th>${p}</th>`)}<th>Échéance</th></tr></thead>
 <tbody>${rows.map((p) => h`<tr><td class="pcol"><span class="ref">${p.ref}</span> <a href="/projets/${p.id}" class="b">${p.name}</a> ${pill('no', p.kind)}<div class="mut">${p.client ? p.client.name : 'hors commande'} → ${p.next}</div></td>
@@ -148,7 +147,10 @@ r.get('/projets/nouveau', (req, res) => {
   const body = h`<div class="eb"><a href="/projets">Projets</a></div><h1>Nouveau projet</h1>
 <form method="post" action="/projets/nouveau" class="card form mt20" style="max-width:640px">
 <label>Nom du projet <input name="name" required placeholder="ex. Maggio, Série de tabourets…"></label>
-<label>Type <select name="kind">${options(['Atelier', 'Série', 'Reprise', 'Particulier', 'Architecte', 'Professionnel'], 'Atelier')}</select></label>
+<p class="mut">Pour une pièce du catalogue, lance plutôt un lot depuis le <a href="/catalogue">catalogue</a> : nomenclature, carnet et numéros sont repris.</p>
+<div class="grid2"><label>Canal <select name="canal">${options(['Sur-mesure', 'Boutique', 'Revendeur', 'Salon', 'Stock'], 'Sur-mesure')}</select></label>
+<label>Type <select name="kind">${options(['Particulier', 'Architecte', 'Professionnel', 'Atelier', 'Reprise'], 'Particulier')}</select></label></div>
+<label>Pour (client, revendeur, salon…) <input name="for_whom"></label>
 <label>Client (facultatif) <select name="client_id"><option value="">Hors commande client</option>${options(q.all('SELECT id, name FROM clients ORDER BY name').map((c) => [c.id, c.name]))}</select></label>
 <label>Échéance <input type="date" name="due_date"></label>
 <label>Responsable <select name="lead_id">${options(L.people().map((p) => [p.id, p.role === 'patron' ? 'Toi' : p.name]))}</select></label>
@@ -157,8 +159,8 @@ r.get('/projets/nouveau', (req, res) => {
 });
 r.post('/projets/nouveau', (req, res) => {
   const b = req.body;
-  const id = q.run('INSERT INTO projects (name, kind, client_id, due_date, lead_id, deposit_needed) VALUES (?, ?, ?, ?, ?, ?)',
-    str(b.name), str(b.kind), int(b.client_id), str(b.due_date) || null, int(b.lead_id), b.client_id ? 1 : 0).lastInsertRowid;
+  const id = q.run('INSERT INTO projects (name, kind, canal, for_whom, client_id, due_date, lead_id, deposit_needed) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+    str(b.name), str(b.kind), str(b.canal) || 'Sur-mesure', str(b.for_whom), int(b.client_id), str(b.due_date) || null, int(b.lead_id), b.client_id ? 1 : 0).lastInsertRowid;
   logActivity(Number(id), null, 'Projet créé', 'Patron');
   res.flashTo(`/projets/${id}`, 'Projet créé. Prépare son carnet de fabrication quand tu es prêt.');
 });
@@ -183,6 +185,12 @@ r.get('/projets/:id', loadProject, (req, res) => {
   const total = time.reduce((a, t) => a + (t.h || 0), 0);
   const quote = q.get("SELECT * FROM quotes WHERE project_id = ? AND status = 'accepted' ORDER BY id DESC LIMIT 1", p.id);
   const shared = photos.filter((x) => x.shared_client).length;
+  const units = q.all('SELECT * FROM units WHERE project_id = ? ORDER BY serial', p.id);
+  const lots = q.all('SELECT * FROM wood_lots WHERE project_id = ? ORDER BY code', p.id);
+  const pneeds = q.all("SELECT * FROM needs WHERE project_id = ? AND status != 'arrived' ORDER BY id", p.id);
+  const model = p.model_id ? q.get('SELECT * FROM models WHERE id = ?', p.model_id) : null;
+  const ustate = { a_faire: '', en_stock: 'done', expediee: 'done', livree: 'done' };
+  const ulabel = { a_faire: 'À contrôler', en_stock: 'En stock', expediee: 'Expédiée', livree: 'Livrée' };
   const people = L.people();
   const body = h`
 <div class="mut"><a href="/projets">Projets</a> › ${p.name}</div>
@@ -203,6 +211,13 @@ ${issues.map((s) => {
     return h`<section class="card danger mt20" id="probleme"><div class="line">${ph ? h`<a href="${fileUrl(ph.file)}"><img class="thumb" src="${fileUrl(ph.file)}" alt="Photo jointe"></a>` : ''}<div class="grow"><b>Problème signalé · ${s.body}</b><div class="mut">${pm[s.person_id]?.name || ''} · ${rel(s.created_at)}${ph ? ' · photo jointe' : ''}</div></div></div>
 <form method="post" action="/projets/${p.id}/probleme/${s.id}" class="line mt12"><label class="sr" for="rep${s.id}">Réponse</label><input id="rep${s.id}" class="qin" name="reply" placeholder="Ta réponse, elle s’affiche sur l’iPad" value="${s.reply}"><button class="btn alt" name="act" value="reply">Répondre</button><button class="btn" name="act" value="close">Marquer traité</button></form></section>`;
   })}
+
+<section class="card mt20"><div class="line"><h2>Pièces et matière</h2>${pill('no', p.canal)}${model ? h`<a class="mut" href="/catalogue?m=${model.id}">modèle ${model.name}</a>` : ''}${p.for_whom ? h`<span class="mut">pour ${p.for_whom}</span>` : ''}
+<span class="push line">${units.some((u) => u.status === 'a_faire') || !units.length ? postBtn(`/projets/${p.id}/controle`, units.length > 1 ? 'Contrôler la pièce suivante' : 'Contrôle final', 'btn sm') : ''}<a class="btn alt sm" href="/carnets/${p.id}/imprimer">Imprimer le carnet</a></span></div>
+${units.length ? h`<div class="h3 mt12">Pièces · ${units.filter((u) => u.status !== 'a_faire').length} contrôlée(s) sur ${units.length}</div><div class="unitgrid">${units.map((u) => h`<a class="unit ${ustate[u.status]}" href="/unites/${u.id}"><b>${u.serial}</b>${ulabel[u.status]}</a>`)}</div>` : h`<p class="mut mt8">La pièce reçoit son numéro (${p.ref}) au contrôle final.</p>`}
+<div class="line" style="align-items:flex-start;gap:40px;margin-top:12px"><div style="flex:1 1 340px;min-width:0"><div class="h3">Bois réservé</div>${lots.map((l) => h`<div class="row"><b>${l.code}</b><span class="grow">${l.essence} ${l.thickness}</span><span>${String(l.volume).replace('.', ',')} m³</span></div>`)}${lots.length ? '' : h`<p class="mut">Aucun lot réservé. <a href="/bois">Réserver un lot</a></p>`}</div>
+<div style="flex:1 1 340px;min-width:0"><div class="h3">Achats liés</div>${pneeds.map((n) => h`<div class="row"><span class="grow">${n.text}</span>${pill(n.status === 'ordered' ? 'wa' : n.needs_deposit && !n.force ? 'ko' : 'no', n.status === 'ordered' ? 'Commandé' : n.needs_deposit && !n.force ? 'Attend l’acompte' : 'À commander')}</div>`)}${pneeds.length ? '' : h`<p class="mut">Rien à acheter.</p>`}</div></div>
+</section>
 
 <div class="cols mt20">
 <div class="main-col">

@@ -1,5 +1,15 @@
 # Carchon OS
 
+Le logiciel de fabrication et de logistique de Carchon Les Ateliers, pendant de Cockpit (vente et finance).
+
+**Version complète** (présentation alignée sur Cockpit) :
+- **Fabriquer** : ordres de fabrication (sur-mesure, boutique, revendeurs, salons), catalogue des modèles avec nomenclature et carnet type, lancement d'un lot en un clic (pièces numérotées, bois réservé, achats manquants proposés), carnets de fabrication, portails clients.
+- **Planifier** : charge sur 12 semaines par personne (absences déduites), planning automatique, livraisons et poses.
+- **Approvisionner** : bois noble par lot, pièces finies comptées avec seuil boutique, consommables en trois états, achats et fournisseurs.
+- **Livrer et garantir** : contrôle qualité, registre des pièces (numéro, bois, fiches, contrôle, expédition, SAV), expéditions avec bon de livraison, demandes SAV.
+- **Piloter** : heures et chiffrage, coût réel par OF, machines (entretiens à la date ou à l'usage calculé depuis les fiches, pannes, pièces d'usure), automatisations, équipe.
+- **Liaison Cockpit** : API `POST /api/v1/affaires`, `POST /api/v1/affaires/{réf}/acompte`, `GET /api/v1/ofs` (clé dans Équipe et réglages › Entreprise).
+
 Le logiciel de l'atelier, construit d'après les maquettes « Carchon OS · version retenue ».
 
 - **Patron (ordinateur)** : Aujourd'hui (à décider, projets, atelier du jour, signalements), Projets (frise automatique, fiche projet, plans, journal photo, documents), Carnets de fabrication, Portails clients, Planning par personne, Livraisons et poses (avec PV signé au doigt), Stock en 3 états, Achats (à commander, commandes en cours, fournisseurs), Pilotage (heures réelles vs chiffrées par geste, export CSV), Réglages équipe.
