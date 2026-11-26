@@ -67,6 +67,12 @@ Pour que les clients reçoivent leur code par e-mail, renseigner `SMTP_*` (l'adr
 - **SMS de suivi** : `BREVO_API_KEY` (compte Brevo avec un pack de SMS). Un SMS court part au client à chaque nouveauté de son portail, regroupé sur 15 minutes, jamais la nuit ni le dimanche. Modèles modifiables dans Portails clients › Réglages et e-mails.
 - **Brouillons Gmail** : « Créer le brouillon Gmail » ouvre un message rédigé dans Gmail (rangé dans Brouillons).
 
+## Après la signature d'un devis
+
+1. **Cockpit est prévenu** (Réglages › Entreprise › adresse de Cockpit) : évènement `devis.accepte`, signé HMAC. Cockpit édite la facture d'acompte et la renvoie sur `POST /api/v1/affaires/{réf}/factures` ; elle est publiée sur le portail et le client reçoit un SMS. En secours, la facture se dépose à la main sur l'OF.
+2. **Chaîne de production** : l'assistant (API Claude) lit le devis, les vues 3D exportées (PDF, images) et la nomenclature ou le chiffrage (CSV, Excel, PDF) joints à l'envoi du devis. Il crée les pièces, les fiches du carnet (en brouillon, à vérifier puis envoyer) et la matière à commander ; un lot de bois libre qui suffit est réservé.
+3. **Planning** : les fiches de fabrication ne sont pas placées avant la date où toute la matière est là (date de livraison des commandes, sinon délai habituel du fournisseur, plus un jour de réception).
+
 ## Sauvegardes
 
 Chaque nuit, une copie complète de la base est écrite dans `DATA_DIR/sauvegardes/` (les 14 dernières sont gardées). Dans Réglages › Entreprise › Sauvegardes, on peut en télécharger une à tout moment : en ranger une chaque semaine hors du serveur.

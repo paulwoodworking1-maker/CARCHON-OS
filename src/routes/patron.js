@@ -264,6 +264,49 @@ r.post('/projets/nouveau', (req, res) => {
   res.flashTo(`/projets/${id}`, 'Projet créé. Prépare son carnet de fabrication quand tu es prêt.');
 });
 
+// ---------- Chaîne de production (devis + 3D + chiffrage → carnet, matière, planning) ----------
+function chainCard(p) {
+  const C = require('../chain');
+  const { files } = C.filesFor(p.id);
+  const m = C.material(p.id);
+  const nSteps = q.get('SELECT COUNT(*) n, SUM(sent = 0) unsent FROM steps WHERE project_id = ?', p.id);
+  const ai = require('../ai').enabled();
+  const st = p.prod_status;
+  if (!st && !files.length && !m.items.length && nSteps.n) return '';
+  return h`<section class="card mt20" id="chaine"><div class="line"><h2>Chaîne de production</h2>
+${pill(st === 'pret' ? 'ok' : st === 'erreur' ? 'ko' : st === 'en_cours' ? 'wa' : 'no', st === 'pret' ? `Générée ${rel(p.prod_at)}` : st === 'erreur' ? 'Non générée' : st === 'en_cours' ? 'L’assistant prépare…' : 'Pas encore générée')}
+<span class="push line">${st === 'pret' && nSteps.unsent ? h`<a class="btn sm" href="/carnets/${p.id}">Vérifier et envoyer le carnet (${nSteps.unsent} fiches)</a>` : ''}
+${ai && st !== 'en_cours' ? postBtn(`/projets/${p.id}/chaine`, st === 'pret' ? 'Regénérer' : 'Générer avec l’assistant', st === 'pret' ? 'btn ghost sm' : 'btn sm', {}, st === 'pret' ? 'Regénérer ajoute de nouvelles fiches et de nouveaux achats à côté des existants. Continuer ?' : '') : ''}</span></div>
+${st === 'en_cours' ? h`<p class="mut mt8">L’assistant lit le devis, les vues 3D et le chiffrage : compte une à trois minutes. Recharge la page.</p>` : ''}
+${st === 'erreur' ? h`<p class="flash ko mt8">${p.prod_error}</p>` : ''}
+${p.prod_note ? h`<p class="mt8"><span class="mut">Remarques de l’assistant :</span> ${p.prod_note}</p>` : ''}
+${!ai ? h`<p class="mut mt8">L’assistant n’est pas activé (clé ANTHROPIC_API_KEY) : la chaîne ne peut pas être générée automatiquement.</p>` : ''}
+<div class="h3 mt12">Fichiers lus par l’assistant</div>
+${files.length ? h`<div class="mt4">${files.map((f) => h`<div class="who"><span class="grow">${f.name || f.file}</span><span class="mut t12">${require('../chain').KINDS[f.kind] || ''}</span><a class="btn ghost sm" href="${fileUrl(f.file)}" target="_blank">Ouvrir</a></div>`)}</div>` : h`<p class="mut">Devis seul. Ajoute les vues 3D (PDF, images) et la nomenclature ou le chiffrage (CSV, Excel, PDF) pour une chaîne précise.</p>`}
+<form method="post" action="/projets/${p.id}/fichiers-prod" enctype="multipart/form-data" class="line mt8"><select name="kind" aria-label="Type" style="width:auto">${options(Object.entries(require('../chain').KINDS))}</select><input type="file" name="files" multiple required aria-label="Fichiers"><button class="btn alt sm">Ajouter</button></form>
+<div class="h3 mt20">Matière avant fabrication</div>
+${(() => { const lots = q.all('SELECT * FROM wood_lots WHERE project_id = ?', p.id); return lots.length ? h`<p class="mt4">Bois réservé dans le stock : ${lots.map((l) => `lot ${l.code} · ${l.essence} ${l.thickness} · ${String(l.volume).replace('.', ',')} m³`).join(' ; ')}.</p>` : ''; })()}
+${m.items.length ? h`<p class="mt4">${m.date ? h`Fabrication possible à partir du <b>${ddmm(m.date)}</b>${m.estimated ? ' (estimation : délais habituels des fournisseurs, en attendant les dates de commande)' : ''}.` : h`<b>Toute la matière est là.</b>`} <a href="/achats">Voir les achats</a></p>
+<div class="tablebox mt8"><table class="tbl dense"><thead><tr><th>Article</th><th>Fournisseur</th><th>Où en est-on</th><th>Arrivée</th></tr></thead><tbody>
+${m.items.map((i) => h`<tr><td>${i.text}</td><td>${i.sname || '—'}</td><td>${pill(i.how === 'reçu' ? 'ok' : i.how === 'en retard' ? 'ko' : 'wa', i.how)}</td><td>${ddmm(i.when)}</td></tr>`)}</tbody></table></div>` : h`<p class="mut">Pas encore de matière liée. Elle apparaît ici quand la chaîne est générée.</p>`}
+</section>`;
+}
+r.post('/projets/:id/chaine', loadProject, (req, res) => {
+  if (!require('../ai').enabled()) return res.flashTo(`/projets/${req.project.id}#chaine`, 'L’assistant n’est pas activé.', 'ko');
+  require('../chain').start(req.project.id);
+  res.flashTo(`/projets/${req.project.id}#chaine`, 'L’assistant prépare la chaîne de production (une à trois minutes). Recharge la page dans un instant.');
+});
+r.post('/projets/:id/fichiers-prod', loadProject, require('../uploads').uploadDocs.array('files', 12), (req, res) => {
+  const kind = ['plan3d', 'chiffrage'].includes(req.body.kind) ? req.body.kind : 'plan3d';
+  for (const f of req.files || []) q.run('INSERT INTO documents (project_id, title, file, visible_client, kind) VALUES (?, ?, ?, 0, ?)', req.project.id, f.originalname, f.filename, kind);
+  res.flashTo(`/projets/${req.project.id}#chaine`, `${(req.files || []).length} fichier(s) ajouté(s). Clique « Générer » pour que l’assistant les lise.`);
+});
+r.post('/projets/:id/facture', loadProject, upload.single('pdf'), (req, res) => {
+  if (!req.file || !/\.pdf$/.test(req.file.filename)) return res.flashTo(`/projets/${req.project.id}#facture`, 'Il faut le PDF de la facture.', 'ko');
+  require('../cockpit').addInvoice(req.project.id, { file: req.file.filename, type: 'acompte', number: str(req.body.numero), source: 'Patron' });
+  res.flashTo(`/projets/${req.project.id}#facture`, 'Facture d’acompte publiée sur le portail du client.');
+});
+
 // ---------- Fiche projet ----------
 function loadProject(req, res, next) {
   const p = q.get('SELECT * FROM projects WHERE id = ?', req.params.id);
@@ -310,6 +353,8 @@ ${issues.map((s) => {
     return h`<section class="card danger mt20" id="probleme"><div class="line">${ph ? h`<a href="${fileUrl(ph.file)}"><img class="thumb" src="${fileUrl(ph.file)}" alt="Photo jointe"></a>` : ''}<div class="grow"><b>Problème signalé · ${s.body}</b><div class="mut">${pm[s.person_id]?.name || ''} · ${rel(s.created_at)}${ph ? ' · photo jointe' : ''}</div></div></div>
 <form method="post" action="/projets/${p.id}/probleme/${s.id}" class="line mt12"><label class="sr" for="rep${s.id}">Réponse</label><input id="rep${s.id}" class="qin" name="reply" placeholder="Ta réponse, elle s’affiche sur l’iPad" value="${s.reply}"><button class="btn alt" name="act" value="reply">Répondre</button><button class="btn" name="act" value="close">Marquer traité</button></form></section>`;
   })}
+
+${chainCard(p)}
 
 <section class="card mt20"><div class="line"><h2>Pièces et matière</h2>${pill('no', p.canal)}${model ? h`<a class="mut" href="/catalogue?m=${model.id}">modèle ${model.name}</a>` : ''}${p.for_whom ? h`<span class="mut">pour ${p.for_whom}</span>` : ''}
 <span class="push line">${units.some((u) => u.status === 'a_faire') || !units.length ? postBtn(`/projets/${p.id}/controle`, units.length > 1 ? 'Contrôler la pièce suivante' : 'Contrôle final', 'btn sm') : ''}<a class="btn alt sm" href="/carnets/${p.id}/imprimer">Imprimer le carnet</a></span></div>
@@ -369,6 +414,10 @@ ${p.client_id ? h`<section class="card"><div class="line"><h2>Portail client</h2
 <p class="mut">Ce que ${p.client.name} voit dans son espace. Tout part tout seul, sauf la date de pose.</p>
 <div class="who f"><span class="grow">Devis</span><b>${quote ? `Accepté le ${ddmm(quote.accepted_at)}` : '—'}</b></div>
 <div class="who"><span class="grow">Acompte</span><b>${p.deposit_at ? `Reçu le ${ddmm(p.deposit_at)}` : 'Attendu'}</b></div>
+${(() => { const inv = q.get("SELECT * FROM documents WHERE project_id = ? AND kind = 'facture_acompte' ORDER BY id DESC LIMIT 1", p.id);
+    return inv ? h`<div class="who" id="facture"><span class="grow">Facture d’acompte</span><a class="b" href="${fileUrl(inv.file)}" target="_blank">${inv.number ? `n° ${inv.number}` : 'publiée'}</a></div>`
+      : p.deposit_needed && !p.deposit_at ? h`<form method="post" action="/projets/${p.id}/facture" enctype="multipart/form-data" class="who" id="facture"><span class="grow">Facture d’acompte<span class="mut t12" style="display:block">${require('../cockpit').configured() ? 'attendue de Cockpit · ou dépose-la ici' : 'dépose le PDF : il part sur le portail'}</span></span>
+<input type="file" name="pdf" accept="application/pdf" required aria-label="Facture d’acompte (PDF)" style="max-width:190px"><input name="numero" placeholder="N°" aria-label="Numéro de facture" style="max-width:90px"><button class="btn alt sm">Publier</button></form>` : ''; })()}
 <form method="post" action="/projets/${p.id}/infos" class="who"><label class="grow" for="rd">Prête à poser vers le</label><input id="rd" type="date" name="ready_date" value="${p.ready_date || ''}" data-auto><input type="hidden" name="only" value="ready_date"></form>
 <div class="who"><span class="grow">Photos partagées</span><b>${shared} sur ${photos.length}</b></div>
 <div class="line mt12"><a class="btn alt sm" href="/portails#p${p.id}">Gérer le portail</a><a class="btn alt sm" href="/projets/${p.id}/nouvelles">Donner des nouvelles</a></div>

@@ -100,7 +100,11 @@ ${COMPANY_FIELDS.map(([k, label, def]) => h`<label>${label} <input name="${k}" v
 <section class="card mt20 mw680" id="cockpit"><h2>Liaison avec Cockpit</h2>
 <p class="mut mt8">Cockpit envoie les affaires signées et les acomptes à Carchon OS, et lit l'avancement, les dates et le coût réel des OF. Adresse : <b>${process.env.PUBLIC_URL || ''}/api/v1</b> · clé : ${setting('api_token') ? 'créée (masquée)' : 'pas encore créée'}.</p>
 <form method="post" action="/entreprise/cle" data-confirm="Créer une nouvelle clé ? L’ancienne ne marchera plus."><button class="btn alt sm">${setting('api_token') ? 'Créer une nouvelle clé' : 'Créer la clé'}</button></form>
-<p class="mut t12 mt8">Détail technique pour Cockpit : POST /api/v1/affaires, POST /api/v1/affaires/{réf}/acompte, GET /api/v1/ofs, en-tête « Authorization: Bearer &lt;clé&gt; ».</p></section>
+<form method="post" action="/entreprise/cockpit" class="form mt12"><label>Adresse de Cockpit à prévenir quand un devis est signé (webhook) <input name="url" type="url" value="${setting('cockpit_webhook_url') || ''}" placeholder="https://cockpit…/webhooks/carchon"></label><button class="btn alt sm">Enregistrer</button></form>
+${(() => { try { const l = JSON.parse(setting('cockpit_last') || 'null'); return l ? h`<p class="mut t12 mt8">Dernier envoi : ${l.event} · ${l.error ? `échec (${l.error})` : `réponse ${l.status}`} · ${l.at.slice(0, 16).replace('T', ' ')}</p>` : ''; } catch { return ''; } })()}
+<details class="mt12"><summary class="mut t13" style="cursor:pointer">Détail technique pour Cockpit</summary><div class="mut t12 mt8" style="line-height:1.7">
+Entrées (en-tête « Authorization: Bearer &lt;clé&gt; ») : POST /api/v1/affaires · POST /api/v1/affaires/{réf}/acompte · <b>POST /api/v1/affaires/{réf ou n° de devis}/factures</b> (multipart : pdf, type = acompte | solde | autre, numero, montant_ttc, echeance ; ou JSON avec pdf_base64) · GET /api/v1/ofs.<br>
+Sortie : à chaque devis signé, POST JSON vers l’adresse ci-dessus, évènement « devis.accepte » (OF, devis, client, lignes, adresse de retour de la facture). Signature : en-tête « X-Carchon-Signature: sha256=… », HMAC SHA-256 du corps avec la clé de liaison.</div></details></section>
 <section class="card mt20 mw680" id="sauvegardes"><h2>Sauvegardes</h2>
 <p class="mut mt8">Chaque nuit, une copie complète de la base est faite sur le disque du serveur ; les ${B.KEEP} dernières sont gardées. Télécharge-en une de temps en temps (par exemple chaque lundi) et range-la sur ton ordinateur ou ton cloud : c'est ta garantie si l'hébergeur a un souci.</p>
 <div class="line mt12"><a class="btn" href="/sauvegarde/maintenant">Télécharger une sauvegarde maintenant</a></div>
@@ -119,6 +123,12 @@ r.get('/sauvegarde/:name', (req, res) => {
   res.download(f, req.params.name.replace('carchon-', 'carchon-os-'));
 });
 
+r.post('/entreprise/cockpit', (req, res) => {
+  const u = String(req.body.url || '').trim();
+  if (u && !/^https:\/\//.test(u)) return res.flashTo('/entreprise#cockpit', 'L’adresse doit commencer par https://', 'ko');
+  setSetting('cockpit_webhook_url', u);
+  res.flashTo('/entreprise#cockpit', u ? 'Cockpit sera prévenu à chaque devis signé.' : 'Adresse retirée.');
+});
 // Clé de la liaison avec Cockpit (montrée une fois à la création).
 r.post('/entreprise/cle', (req, res) => {
   const key = require('node:crypto').randomBytes(24).toString('base64url');

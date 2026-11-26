@@ -104,6 +104,18 @@ function toDecide() {
   for (const m of q.all('SELECT messages.*, steps.title st, steps.project_id pid, people.name pname FROM messages JOIN steps ON steps.id = messages.step_id LEFT JOIN people ON people.id = messages.person_id WHERE read_by_patron = 0 ORDER BY messages.created_at DESC')) {
     items.push({ kind: 'no', tag: 'Message', title: `${m.pname} · ${m.st}`, text: `« ${m.body} »`, href: `/carnets/${m.pid}?fiche=${m.step_id}`, cta: 'Répondre' });
   }
+  // Chaîne de production générée depuis le devis : à vérifier, puis le carnet part à l'atelier.
+  for (const p of q.all("SELECT * FROM projects WHERE status = 'en_cours' AND prod_status IN ('pret', 'erreur')")) {
+    if (p.prod_status === 'erreur') { items.push({ kind: 'ko', tag: 'Chaîne', title: `${p.name} · chaîne de production non générée`, text: p.prod_error || '', href: `/projets/${p.id}#chaine`, cta: 'Voir' }); continue; }
+    const n = q.get('SELECT COUNT(*) n FROM steps WHERE project_id = ? AND sent = 0', p.id).n;
+    if (n) items.push({ kind: 'wa', tag: 'Chaîne', title: `${p.name} · carnet préparé par l’assistant (${n} fiches)`, text: 'Vérifie les fiches et la matière, puis envoie le carnet à l’atelier. Le planning les montre déjà en prévisionnel.', href: `/carnets/${p.id}`, cta: 'Vérifier le carnet' });
+  }
+  // Devis signé, acompte attendu, mais pas encore de facture d'acompte sur le portail.
+  for (const p of q.all(`SELECT projects.* FROM projects JOIN quotes ON quotes.project_id = projects.id AND quotes.status = 'accepted'
+      WHERE projects.status = 'en_cours' AND projects.deposit_needed = 1 AND projects.deposit_at IS NULL AND quotes.accepted_at <= datetime('now', '-1 day')
+      AND NOT EXISTS (SELECT 1 FROM documents WHERE documents.project_id = projects.id AND documents.kind = 'facture_acompte') GROUP BY projects.id`)) {
+    items.push({ kind: 'wa', tag: 'Facture', title: `${p.name} · facture d’acompte pas encore sur le portail`, text: 'Cockpit ne l’a pas encore envoyée. Tu peux déposer le PDF sur l’OF.', href: `/projets/${p.id}#facture`, cta: 'Déposer' });
+  }
   const all = [...items, ...require('./automations').alerts()];
   const later = new Set(q.all('SELECT key FROM snoozes WHERE until > ?', today()).map((x) => x.key));
   const order = { ko: 0, wa: 1, ok: 2, no: 3 };

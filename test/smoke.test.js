@@ -187,3 +187,86 @@ test('SMS : numéro, lien chiffré, regroupement des nouveautés, texte final', 
   assert.strictEqual(SMS.quietNow(new Date('2026-11-26T10:00:00+01:00')), false);
   assert.strictEqual(SMS.quietNow(new Date('2026-11-26T22:00:00+01:00')), true);
 });
+
+test('chaîne de production : l’assistant (simulé) crée pièces, fiches et matière, le planning attend la matière', async () => {
+  const { q, setting } = require('../src/db');
+  const C = require('../src/chain');
+  const A = require('../src/automations');
+  const fs = require('node:fs');
+  const { filePath } = require('../src/uploads');
+  const pid = Number(q.run("INSERT INTO projects (name, kind, due_date) VALUES ('Bibliothèque test chaîne', 'Particulier', date('now', '+60 days'))").lastInsertRowid);
+  fs.writeFileSync(filePath('vue-test.csv'), 'Pièce;Long;Larg;Ep;Qté\nMontant;2400;300;27;4\n');
+  q.run("INSERT INTO documents (project_id, title, file, visible_client, kind) VALUES (?, 'debit.csv', 'vue-test.csv', 0, 'chiffrage')", pid);
+  const sup = Number(q.run("INSERT INTO suppliers (name, lead_days) VALUES ('Scierie Test', 8)").lastInsertRowid);
+  const lucas = q.get("SELECT * FROM people WHERE name = 'Lucas'");
+  let seen = null;
+  const fakeAI = { enabled: () => true, productionChain: async (args) => { seen = args; return {
+    pieces: [{ nom: 'Caisson', description: '240 × 300' }, { nom: 'Étagères', description: '6 tablettes' }],
+    matiere: [{ categorie: 'Bois massif', designation: 'Chêne', essence: 'Frêne rare', epaisseur: '27 mm', quantite: 0.4, unite: 'm³', fournisseur: 'Scierie Test', avant_fabrication: true },
+      { categorie: 'Finition', designation: 'Vernis mat', essence: '', epaisseur: '', quantite: 2, unite: 'L', fournisseur: '', avant_fabrication: false }],
+    fiches: [{ titre: 'Plans de détail', pieces: 'Tout', qui: 'Lucas', etape_frise: 'Conception', geste: 'Autre', heures: 3, mot_du_patron: '', reperes: [] },
+      { titre: 'Débit du chêne', pieces: 'Caisson', qui: 'Lucas', etape_frise: 'Débit', geste: 'Débit, corroyage', heures: 6, mot_du_patron: 'Garder les beaux fils', reperes: ['Débit à +5 mm'] },
+      { titre: 'Assemblage', pieces: 'Caisson', qui: 'Inconnu', etape_frise: 'Assemblage', geste: 'Assemblage', heures: 8, mot_du_patron: '', reperes: [] }],
+    remarques: 'Vérifier la hauteur sous plafond.' }; } };
+  await C.run(pid, { ai: fakeAI });
+  assert.ok(seen.files.some((b) => b.type === 'text' && /Montant;2400/.test(b.text)), 'la nomenclature CSV est transmise');
+  const p = q.get('SELECT * FROM projects WHERE id = ?', pid);
+  assert.strictEqual(p.prod_status, 'pret');
+  assert.strictEqual(q.get('SELECT COUNT(*) n FROM steps WHERE project_id = ? AND ai_generated = 1 AND sent = 0', pid).n, 3);
+  assert.ok(q.get("SELECT who_id FROM steps WHERE project_id = ? AND title = 'Assemblage'", pid).who_id, 'quelqu’un est désigné même si le prénom est inconnu');
+  assert.strictEqual(q.get('SELECT COUNT(*) n FROM pieces WHERE project_id = ?', pid).n, 2);
+  const needs = q.all('SELECT * FROM needs WHERE project_id = ?', pid);
+  assert.strictEqual(needs.length, 2);
+  assert.strictEqual(needs.find((n) => n.for_chain).supplier_id, sup);
+  // Matière : délai fournisseur 8 jours ouvrés + 1 jour de réception.
+  const m = C.material(pid);
+  assert.strictEqual(m.date, C.addWorkdays(C.addWorkdays(require('../src/html').today(), 8), 1));
+  // Planning : la conception peut démarrer, le débit attend la matière.
+  const { days } = A.allocate(lucas, { ready: A.readyDates() });
+  const dayOf = (title) => Object.keys(days).sort().find((d) => days[d].some((x) => x.step.project_id === pid && x.step.title === title));
+  assert.ok(dayOf('Débit du chêne') >= m.date, `débit le ${dayOf('Débit du chêne')} après la matière ${m.date}`);
+  // Commande passée avec une date : le planning suit la date de livraison.
+  const o = Number(q.run("INSERT INTO orders (supplier_id, what, expected_at) VALUES (?, 'Chêne', date('now', '+20 days'))", sup).lastInsertRowid);
+  q.run("UPDATE needs SET order_id = ?, status = 'ordered' WHERE project_id = ? AND for_chain = 1", o, pid);
+  assert.ok(C.material(pid).date > q.get("SELECT date('now', '+20 days') d").d);
+  q.run("UPDATE needs SET status = 'arrived' WHERE project_id = ?", pid);
+  assert.strictEqual(C.material(pid).date, null);
+  // La page de l'OF montre la chaîne, À décider propose de vérifier le carnet.
+  const page = await (await fetch(`${base}/projets/${pid}`, { headers: { cookie } })).text();
+  assert.match(page, /Chaîne de production/);
+  assert.match(page, /Vérifier la hauteur sous plafond/);
+  assert.ok(require('../src/logic').toDecide().some((d) => d.tag === 'Chaîne' && d.href === `/carnets/${pid}`));
+  void setting;
+});
+
+test('facture d’acompte envoyée par Cockpit : publiée sur le portail', async () => {
+  const { q, setSetting } = require('../src/db');
+  setSetting('api_token', 'cle-test-cockpit');
+  const p = q.get('SELECT * FROM projects WHERE client_id IS NOT NULL LIMIT 1');
+  const form = new FormData();
+  form.append('type', 'acompte'); form.append('numero', 'FA-2026-007'); form.append('montant_ttc', '1 800,00 €');
+  form.append('pdf', new Blob([Buffer.from('%PDF-1.4 test')], { type: 'application/pdf' }), 'facture.pdf');
+  const res = await fetch(`${base}/api/v1/affaires/${p.ref}/factures`, { method: 'POST', headers: { authorization: 'Bearer cle-test-cockpit' }, body: form });
+  assert.strictEqual(res.status, 201);
+  const d = q.get("SELECT * FROM documents WHERE project_id = ? AND kind = 'facture_acompte'", p.id);
+  assert.ok(d && d.visible_client === 1 && d.number === 'FA-2026-007');
+  const j = await fetch(`${base}/api/v1/affaires/${p.ref}/factures`, { method: 'POST', headers: { authorization: 'Bearer cle-test-cockpit', 'content-type': 'application/json' }, body: JSON.stringify({ type: 'solde', pdf_base64: Buffer.from('%PDF-1.4 solde').toString('base64') }) });
+  assert.strictEqual(j.status, 201);
+  assert.strictEqual((await fetch(`${base}/api/v1/affaires/${p.ref}/factures`, { method: 'POST', headers: { authorization: 'Bearer mauvaise' } })).status, 401);
+});
+
+test('Cockpit est prévenu (signé) quand un devis est accepté', async () => {
+  const http = require('node:http');
+  const crypto = require('node:crypto');
+  const { setSetting, setting } = require('../src/db');
+  let got = null;
+  const srv = http.createServer((req, res) => { let b = ''; req.on('data', (c) => (b += c)); req.on('end', () => { got = { body: b, sig: req.headers['x-carchon-signature'], ev: req.headers['x-carchon-event'] }; res.end('ok'); }); });
+  await new Promise((r) => srv.listen(0, r));
+  setSetting('cockpit_webhook_url', `http://127.0.0.1:${srv.address().port}/hook`);
+  const out = await require('../src/cockpit').send('devis.accepte', { of: { ref: 'P-TEST' } });
+  srv.close();
+  assert.ok(out.ok);
+  assert.strictEqual(got.ev, 'devis.accepte');
+  assert.strictEqual(got.sig, 'sha256=' + crypto.createHmac('sha256', setting('api_token')).update(got.body).digest('hex'));
+  setSetting('cockpit_webhook_url', '');
+});
