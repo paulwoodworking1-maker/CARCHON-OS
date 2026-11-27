@@ -8,6 +8,8 @@ Le logiciel de fabrication et de logistique de Carchon Les Ateliers, pendant de 
 - **Approvisionner** : bois noble par lot, pièces finies comptées avec seuil boutique, consommables en trois états, achats et fournisseurs.
 - **Livrer et garantir** : contrôle qualité, registre des pièces (numéro, bois, fiches, contrôle, expédition, SAV), expéditions avec bon de livraison, demandes SAV.
 - **Piloter** : heures et chiffrage, coût réel par OF, machines (entretiens à la date ou à l'usage calculé depuis les fiches, pannes, pièces d'usure), automatisations, équipe.
+- **Google Agenda** : les rendez-vous Google s’affichent dans le planning (adresse secrète iCal, lue toutes les 10 min) et le planning de l’atelier est écrit en direct dans un agenda Google « Atelier » (clé de compte de service Google, ou à défaut abonnement par URL). Réglage : Planning › Google Agenda.
+- **Passer sur Cockpit** : bouton en bas de la colonne (adresse dans Équipe et réglages › Entreprise).
 - **Liaison Cockpit** : API `POST /api/v1/affaires`, `POST /api/v1/affaires/{réf}/acompte`, `GET /api/v1/ofs` (clé dans Équipe et réglages › Entreprise).
 
 Le logiciel de l'atelier, construit d'après les maquettes « Carchon OS · version retenue ».
@@ -76,6 +78,12 @@ Pour que les clients reçoivent leur code par e-mail, renseigner `SMTP_*` (l'adr
 - **Codes de validation des devis** : soit `BREVO_API_KEY` + `MAIL_FROM` (adresse validée comme expéditeur dans Brevo), soit `GMAIL_USER` + `GMAIL_APP_PASSWORD` (mot de passe d'application Google).
 - **SMS de suivi** : `BREVO_API_KEY` (compte Brevo avec un pack de SMS). Un SMS court part au client à chaque nouveauté de son portail, regroupé sur 15 minutes, jamais la nuit ni le dimanche. Modèles modifiables dans Portails clients › Réglages et e-mails.
 - **Brouillons Gmail** : « Créer le brouillon Gmail » ouvre un message rédigé dans Gmail (rangé dans Brouillons).
+
+## Après la signature d'un devis
+
+1. **Cockpit est prévenu** (Réglages › Entreprise › adresse de Cockpit) : évènement `devis.accepte`, signé HMAC. Cockpit édite la facture d'acompte et la renvoie sur `POST /api/v1/affaires/{réf}/factures` ; elle est publiée sur le portail et le client reçoit un SMS. En secours, la facture se dépose à la main sur l'OF.
+2. **Chaîne de production** (Opus 5.5, réflexion maximale) : le modèle 3D (STEP ou Rhino .3dm) est mesuré pièce par pièce sur le serveur et affiché dans l'OF (visionneuse 3D). Au clic « Générer la production », quatre vues du modèle, la nomenclature mesurée, le devis, les plans et le chiffrage partent à l'assistant, qui rend l'analyse technique, la fiche de débit (cotes finies et brutes), la matière à commander et la gamme de fabrication (sans conception : elle est faite avant le chiffrage). Les fiches arrivent en brouillon. **Avec le forfait Claude** (sans coût d'API) : « Préparer la production avec Claude » télécharge un dossier (.zip : instructions + nomenclature 3D, vues, devis, plans, chiffrage) à déposer dans une conversation claude.ai ; la réponse JSON de Claude est recollée dans Carchon OS, vérifiée, puis appliquée de la même façon.
+3. **Planning** : les fiches de fabrication ne sont pas placées avant la date où toute la matière est là (date de livraison des commandes, sinon délai habituel du fournisseur, plus un jour de réception).
 
 ## Sauvegardes
 

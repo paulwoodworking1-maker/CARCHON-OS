@@ -737,3 +737,16 @@ h2{margin-bottom:14px}
 .sst-track li.c{background:var(--ink);color:#fff}.sst-track li.c span{color:#D9D4CC}
 @media (max-width:700px){.sst-track{grid-template-columns:1fr 1fr}}
 .ptab .card,.ptab [id]{scroll-margin-top:64px}
+/* Google Agenda dans le planning, bouton vers Cockpit */
+.pbar.gc{background:#fff;color:var(--ink);box-shadow:inset 3px 0 0 #3E3832,inset 0 0 0 1px var(--line)}
+.legend .gc{background:#fff;box-shadow:inset 0 0 0 1px #3E3832}
+.legend .push{margin-left:auto}
+.side-switch{display:inline-flex;align-items:center;gap:8px}
+
+/* Visionneuse 3D */
+.v3d{position:relative;height:440px;background:#F7F4EF;border:1px solid var(--line);overflow:hidden}
+.v3d canvas{display:block;width:100%!important;height:100%!important;cursor:grab}
+.v3d-msg{position:absolute;inset:0;display:flex;align-items:center;justify-content:center}
+.v3d-bar{position:absolute;left:10px;right:10px;bottom:10px;display:flex;gap:6px;align-items:center;flex-wrap:wrap;pointer-events:none}
+.v3d-bar .chip{pointer-events:auto;min-height:30px;background:#fff}
+.v3d-info{margin-left:auto;background:rgba(255,255,255,.9);padding:4px 8px}

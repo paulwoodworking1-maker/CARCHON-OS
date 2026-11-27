@@ -10,8 +10,9 @@ const { filePath } = require('./uploads');
 const app = express();
 app.disable('x-powered-by');
 app.set('trust proxy', 1);
-app.use(express.urlencoded({ extended: false, limit: '5mb' }));
+app.use(express.urlencoded({ extended: false, limit: '12mb' })); // vues 3D capturées + réponses longues de Claude
 app.use('/static', express.static(path.join(__dirname, '..', 'public'), { maxAge: '1h' }));
+app.use('/static/vendor/three', express.static(path.join(__dirname, '..', 'node_modules', 'three'), { maxAge: '7d' })); // visionneuse 3D
 app.use(sessionMiddleware);
 app.use((req, res, next) => {
   res.set('X-Frame-Options', 'SAMEORIGIN');
@@ -155,13 +156,19 @@ app.use((req, res, next) => {
     res.on('finish', () => {
       if (res.statusCode >= 400 || replanQueued) return;
       replanQueued = true;
-      setImmediate(() => { replanQueued = false; automations.changed(); });
+      setImmediate(() => { replanQueued = false; automations.changed(); require('./gcal').changed(); });
     });
   }
   next();
 });
 
 // --- Routes ---
+// Flux iCal privé de l'atelier, pour l'abonnement Google Agenda (protégé par une clé dans l'adresse).
+app.get('/agenda/:t.ics', (req, res) => {
+  const G = require('./gcal');
+  if (!G.checkToken(req.params.t)) return res.status(404).type('text').send('Introuvable');
+  res.type('text/calendar; charset=utf-8').set('cache-control', 'no-cache').send(G.feed());
+});
 app.use('/api/v1', require('./routes/api'));       // liaison Cockpit (clé API)
 app.use('/p', require('./routes/client'));          // portail client (liens privés)
 app.use('/atelier', require('./routes/atelier'));   // iPad
@@ -178,5 +185,6 @@ if (require.main === module) {
   app.listen(port, () => console.log(`Carchon OS prêt sur http://localhost:${port}`));
   automations.start();
   require('./sms').start();
+  require('./gcal').start();
 }
 module.exports = app;

@@ -264,6 +264,149 @@ r.post('/projets/nouveau', (req, res) => {
   res.flashTo(`/projets/${id}`, 'Projet créé. Prépare son carnet de fabrication quand tu es prêt.');
 });
 
+// ---------- Chaîne de production (devis + 3D + chiffrage → carnet, matière, planning) ----------
+function chainCard(p) {
+  const C = require('../chain');
+  const { files } = C.filesFor(p.id);
+  const m = C.material(p.id);
+  const nSteps = q.get('SELECT COUNT(*) n, SUM(sent = 0) unsent FROM steps WHERE project_id = ?', p.id);
+  const ai = require('../ai').enabled();
+  const st = p.prod_status;
+  if (p.status !== 'en_cours' && !st) return '';
+  return h`<section class="card mt20" id="chaine"><div class="line"><h2>Chaîne de production</h2>
+${pill(st === 'pret' ? 'ok' : st === 'erreur' ? 'ko' : st === 'en_cours' ? 'wa' : 'no', st === 'pret' ? `Générée ${rel(p.prod_at)}` : st === 'erreur' ? 'Non générée' : st === 'en_cours' ? 'L’assistant prépare…' : 'Pas encore générée')}
+<span class="push line">${st === 'pret' && nSteps.unsent ? h`<a class="btn sm" href="/carnets/${p.id}">Vérifier et envoyer le carnet (${nSteps.unsent} fiches)</a>` : ''}
+${st !== 'en_cours' ? h`<form method="post" action="/projets/${p.id}/chaine/claude" class="inline" data-views><button class="btn sm">${st === 'pret' ? 'Refaire avec Claude (forfait)' : 'Préparer la production avec Claude'}</button></form>` : ''}
+${ai && st !== 'en_cours' ? h`<form method="post" action="/projets/${p.id}/chaine" class="inline" data-views data-confirm="Générer par l’API Anthropic (facturé à l’usage, environ 1 à 3 € par projet) ?"><button class="btn ghost sm">Par l’API</button></form>` : ''}</span></div>
+${st === 'en_cours' ? h`<p class="mut mt8">L’assistant (Opus 5.5, réflexion maximale) étudie le devis, le modèle 3D et le chiffrage : compte 3 à 10 minutes. Recharge la page.</p>` : ''}
+${st === 'erreur' ? h`<p class="flash ko mt8">${p.prod_error}</p>` : ''}
+${p.prod_note ? h`<p class="mt8"><span class="mut">Remarques de l’assistant :</span> ${p.prod_note}</p>` : ''}
+
+${(() => { const m3 = q.get("SELECT * FROM documents WHERE project_id = ? AND kind = 'modele3d' ORDER BY id DESC LIMIT 1", p.id) || (() => { const f = files.find((x) => x.kind === 'modele3d'); return f ? { id: 'q' + q.get('SELECT id FROM quote_files WHERE file = ?', f.file).id, title: f.name } : null; })();
+    return m3 ? h`<script type="importmap">{"imports":{"three":"/static/vendor/three/build/three.module.js"}}</script>
+<div class="v3d mt12" data-model="/projets/${p.id}/3d/${m3.id}"><div class="v3d-msg mut">Chargement du modèle 3D…</div>
+<div class="v3d-bar"><button type="button" class="chip" data-view="iso">3D</button><button type="button" class="chip" data-view="face">Face</button><button type="button" class="chip" data-view="dessus">Dessus</button><button type="button" class="chip" data-view="cote">Côté</button><span class="v3d-info mut t12"></span></div></div>
+<p class="mut t12 mt4">${m3.title} · fais tourner à la souris, molette pour zoomer, clic sur une pièce pour ses cotes.</p>
+<script type="module" src="/static/viewer3d.js"></script>` : ''; })()}
+${p.prod_analysis ? h`<details class="mt12"><summary class="b" style="cursor:pointer">Analyse technique de l’assistant</summary><p class="mt8">${p.prod_analysis}</p></details>` : ''}
+${q.get('SELECT id FROM cut_list WHERE project_id = ?', p.id) ? h`<div class="line mt12"><a class="btn alt sm" href="/projets/${p.id}/debit">Fiche de débit (${q.get('SELECT COUNT(*) n FROM cut_list WHERE project_id = ?', p.id).n} lignes)</a><a class="btn ghost sm" href="/projets/${p.id}/debit?imprimer=1" target="_blank">Imprimer</a></div>` : ''}
+<div class="h3 mt12">Fichiers lus par l’assistant</div>
+${files.length ? h`<div class="mt4">${files.map((f) => h`<div class="who"><span class="grow">${f.name || f.file}</span><span class="mut t12">${require('../chain').KINDS[f.kind] || ''}</span><a class="btn ghost sm" href="${fileUrl(f.file)}" target="_blank">Ouvrir</a></div>`)}</div>` : h`<p class="mut">Devis seul. Ajoute le modèle 3D (STEP ou .3dm), les vues (PDF, images) et la nomenclature ou le chiffrage (CSV, Excel, PDF) pour une chaîne précise.</p>`}
+<form method="post" action="/projets/${p.id}/fichiers-prod" enctype="multipart/form-data" class="line mt8"><select name="kind" aria-label="Type" style="width:auto">${options(Object.entries(require('../chain').KINDS))}</select><input type="file" name="files" multiple required aria-label="Fichiers"><button class="btn alt sm">Ajouter</button></form>
+<div class="h3 mt20">Matière avant fabrication</div>
+${(() => { const lots = q.all('SELECT * FROM wood_lots WHERE project_id = ?', p.id); return lots.length ? h`<p class="mt4">Bois réservé dans le stock : ${lots.map((l) => `lot ${l.code} · ${l.essence} ${l.thickness} · ${String(l.volume).replace('.', ',')} m³`).join(' ; ')}.</p>` : ''; })()}
+${m.items.length ? h`<p class="mt4">${m.date ? h`Fabrication possible à partir du <b>${ddmm(m.date)}</b>${m.estimated ? ' (estimation : délais habituels des fournisseurs, en attendant les dates de commande)' : ''}.` : h`<b>Toute la matière est là.</b>`} <a href="/achats">Voir les achats</a></p>
+<div class="tablebox mt8"><table class="tbl dense"><thead><tr><th>Article</th><th>Fournisseur</th><th>Où en est-on</th><th>Arrivée</th></tr></thead><tbody>
+${m.items.map((i) => h`<tr><td>${i.text}</td><td>${i.sname || '—'}</td><td>${pill(i.how === 'reçu' ? 'ok' : i.how === 'en retard' ? 'ko' : 'wa', i.how)}</td><td>${ddmm(i.when)}</td></tr>`)}</tbody></table></div>` : h`<p class="mut">Pas encore de matière liée. Elle apparaît ici quand la chaîne est générée.</p>`}
+</section>`;
+}
+// Vues du modèle 3D capturées dans la visionneuse : remplacent les précédentes.
+function saveViews(req) {
+  const views = { iso: 'Vue en perspective', face: 'Vue de face', dessus: 'Vue de dessus', cote: 'Vue de côté' };
+  const got = Object.keys(views).filter((k) => /^data:image\/jpeg;base64,/.test(String(req.body['vue_' + k] || '')));
+  if (got.length) {
+    for (const d of q.all("SELECT * FROM documents WHERE project_id = ? AND kind = 'vue_auto'", req.project.id)) { try { require('node:fs').unlinkSync(require('../uploads').filePath(d.file)); } catch {} }
+    q.run("DELETE FROM documents WHERE project_id = ? AND kind = 'vue_auto'", req.project.id);
+    for (const k of got) {
+      const buf = Buffer.from(String(req.body['vue_' + k]).split(',')[1], 'base64');
+      if (buf.length > 4 * 1024 * 1024) continue;
+      const name = require('node:crypto').randomBytes(12).toString('hex') + '.jpg';
+      require('node:fs').writeFileSync(require('../uploads').filePath(name), buf);
+      q.run("INSERT INTO documents (project_id, title, file, visible_client, kind) VALUES (?, ?, ?, 0, 'vue_auto')", req.project.id, views[k], name);
+    }
+  }
+  return got;
+}
+
+// Avec le forfait Claude : dossier à déposer dans claude.ai, réponse à recoller.
+r.post('/projets/:id/chaine/claude', loadProject, (req, res) => { saveViews(req); res.redirect(`/projets/${req.project.id}/claude`); });
+r.get('/projets/:id/claude/dossier.zip', loadProject, async (req, res, next) => {
+  try {
+    const pk = await require('../chain').claudePackage(req.project.id);
+    res.set('content-type', 'application/zip').set('content-disposition', `attachment; filename="${pk.name}.zip"`).send(pk.zip);
+  } catch (e) { next(e); }
+});
+r.get('/projets/:id/claude', loadProject, async (req, res, next) => {
+  try {
+    const p = req.project;
+    const pk = await require('../chain').claudePackage(p.id);
+    const body = h`<div class="eb"><a href="/projets/${p.id}#chaine">${p.name}</a></div><h1 class="mt8">Préparer la production avec Claude</h1>
+<p class="mut mt8 mw680">Avec ton forfait Claude, sans coût d’API. Carchon OS a préparé le dossier ; Claude l’étudie dans une conversation ; tu recolles sa réponse ici et tout se crée : fiche de débit, matière, carnet en brouillon, planning.</p>
+<section class="card mt20 mw680"><h2>1. Télécharge le dossier</h2>
+<p class="mt8">${pk.attach.length + 1} fichiers : les instructions (avec la nomenclature mesurée dans la 3D${pk.instructions.includes('Nomenclature et chiffrage') ? ' et ton chiffrage' : ''}) et ${pk.attach.length} document${pk.attach.length > 1 ? 's' : ''} (devis, vues du modèle, plans).</p>
+<div class="line mt12"><a class="btn" href="/projets/${p.id}/claude/dossier.zip">Télécharger le dossier (.zip)</a></div>
+<p class="mut t12 mt8">Double-clique le .zip pour l’ouvrir : un dossier apparaît avec tous les fichiers.</p></section>
+<section class="card mt20 mw680"><h2>2. Donne-le à Claude</h2>
+<ol class="steps mt8"><li>Ouvre <a href="https://claude.ai/new" target="_blank" rel="noopener"><b>claude.ai</b></a> (ou l’application Claude), nouvelle conversation.</li>
+<li>Choisis le modèle <b>Opus 5.5</b> et active la <b>réflexion étendue</b> (bouton sous la zone de texte).</li>
+<li>Glisse <b>tous les fichiers du dossier</b> dans la conversation, y compris <b>00_INSTRUCTIONS.md</b>.</li>
+<li>Écris simplement : « Suis les instructions du fichier 00_INSTRUCTIONS.md » et envoie.</li>
+<li>Quand Claude a fini, clique l’icône <b>Copier</b> sous sa réponse.</li></ol>
+<details class="mt12"><summary class="mut t13" style="cursor:pointer">Si Claude refuse le fichier .md : copier les instructions en texte</summary>
+<textarea id="instr" readonly rows="6" class="mt8">${pk.instructions}</textarea><button type="button" class="btn alt sm mt8" data-copy="#instr">Copier les instructions</button></details></section>
+<section class="card mt20 mw680" id="reponse"><h2>3. Recolle la réponse de Claude</h2>
+<form method="post" action="/projets/${p.id}/claude/import" class="form mt8" data-busy="Carchon OS crée la production…">
+<label class="sr" for="ans">Réponse de Claude</label><textarea id="ans" name="answer" rows="10" required placeholder="Colle ici toute la réponse de Claude (le bloc JSON)"></textarea>
+<button class="btn">Créer la production</button></form>
+<p class="mut t12 mt8">Si la réponse est coupée, écris « continue » à Claude et recolle le tout. Les fiches arrivent en brouillon : tu les vérifies avant de les envoyer à l’atelier.</p></section>`;
+    res.send(layout({ title: 'Production avec Claude', tab: 'projets', sub: '/projets', body, flash: req.flash }));
+  } catch (e) { next(e); }
+});
+r.post('/projets/:id/claude/import', loadProject, (req, res) => {
+  try {
+    const c = require('../chain').importAnswer(req.project.id, req.body.answer);
+    res.flashTo(`/projets/${req.project.id}#chaine`, `Production créée : ${c.fiches} fiches en brouillon, ${c.debit} lignes de débit, ${c.matiere} achats${c.reserve ? `, ${c.reserve} lot(s) de bois réservé(s)` : ''}. Vérifie le carnet puis envoie-le à l’atelier.`);
+  } catch (e) {
+    if (e instanceof require('../ai').AIError) return res.flashTo(`/projets/${req.project.id}/claude#reponse`, e.message, 'ko');
+    throw e;
+  }
+});
+
+r.post('/projets/:id/chaine', loadProject, (req, res) => {
+  if (!require('../ai').enabled()) return res.flashTo(`/projets/${req.project.id}#chaine`, 'L’assistant n’est pas activé.', 'ko');
+  const got = saveViews(req);
+  require('../chain').start(req.project.id);
+  res.flashTo(`/projets/${req.project.id}#chaine`, `L’assistant prépare la production${got.length ? ` avec ${got.length} vues du modèle 3D` : ''} (3 à 10 minutes). Recharge la page dans un instant.`);
+});
+// Modèle 3D allégé pour la visionneuse (calculé une fois, puis gardé à côté du fichier).
+r.get('/projets/:id/3d/:did', loadProject, async (req, res) => {
+  const did = String(req.params.did);
+  const doc = did.startsWith('q') ? q.get('SELECT file, name title FROM quote_files WHERE id = ?', Number(did.slice(1))) : q.get("SELECT * FROM documents WHERE id = ? AND project_id = ? AND kind = 'modele3d'", Number(did), req.project.id);
+  if (!doc) return res.status(404).type('text').send('introuvable');
+  const fp = require('../uploads').filePath(doc.file);
+  try {
+    if (!require('node:fs').existsSync(fp + '.view.json')) await require('../model3d').analyze(fp);
+    res.type('json').sendFile(fp + '.view.json');
+  } catch (e) { res.status(422).type('text').send(e.message); }
+});
+// Fiche de débit (écran et impression atelier).
+r.get('/projets/:id/debit', loadProject, (req, res) => {
+  const p = req.project;
+  const rows = q.all('SELECT * FROM cut_list WHERE project_id = ? ORDER BY ord, id', p.id);
+  const n = (x) => (x ? String(Math.round(x * 10) / 10).replace('.', ',') : '—');
+  const vol = rows.reduce((a, r) => a + (r.bl && r.bw && r.bt ? r.bl * r.bw * r.bt * r.qty : 0), 0) / 1e9;
+  const table = h`<table class="tbl dense"><thead><tr><th>Ensemble</th><th>Pièce</th><th class="num">Qté</th><th>Matériau</th><th class="num">Fini L × l × ép.</th><th class="num">Débit brut</th><th>Fil</th><th>Note</th></tr></thead><tbody>
+${rows.map((r) => h`<tr><td>${r.ensemble}</td><td class="b">${r.piece}</td><td class="num">${n(r.qty)}</td><td>${r.material}</td><td class="num">${n(r.l)} × ${n(r.w)} × ${n(r.t)}</td><td class="num">${n(r.bl)} × ${n(r.bw)} × ${n(r.bt)}</td><td>${r.grain}</td><td class="t12">${r.note}</td></tr>`)}</tbody></table>
+<p class="mut mt8">${rows.length} lignes · volume brut débité ${vol.toFixed(3).replace('.', ',')} m³ (hors chute de débit)</p>`;
+  if (req.query.imprimer) return res.send(require('../html').printPage(`Fiche de débit · ${p.name}`, table, { ref: p.ref }));
+  res.send(layout({ title: 'Fiche de débit', tab: 'projets', sub: '/projets', body: h`<div class="eb"><a href="/projets/${p.id}#chaine">${p.name}</a></div><div class="head"><h1>Fiche de débit</h1><a class="btn alt push" href="/projets/${p.id}/debit?imprimer=1" target="_blank">Imprimer pour l’atelier</a></div>
+<p class="mut mt8">Préparée par l’assistant à partir du modèle 3D, des plans et du chiffrage. Vérifie les cotes avant de débiter.</p><div class="tablebox mt12">${table}</div>` }));
+});
+
+r.post('/projets/:id/fichiers-prod', loadProject, require('../uploads').uploadDocs.array('files', 12), (req, res) => {
+  const M = require('../model3d');
+  for (const f of req.files || []) {
+    const kind = M.is3D(f.originalname) ? 'modele3d' : ['plan3d', 'chiffrage'].includes(req.body.kind) ? req.body.kind : 'plan3d';
+    q.run('INSERT INTO documents (project_id, title, file, visible_client, kind) VALUES (?, ?, ?, 0, ?)', req.project.id, f.originalname, f.filename, kind);
+  }
+  res.flashTo(`/projets/${req.project.id}#chaine`, `${(req.files || []).length} fichier(s) ajouté(s). Clique « Générer » pour que l’assistant les lise.`);
+});
+r.post('/projets/:id/facture', loadProject, upload.single('pdf'), (req, res) => {
+  if (!req.file || !/\.pdf$/.test(req.file.filename)) return res.flashTo(`/projets/${req.project.id}#facture`, 'Il faut le PDF de la facture.', 'ko');
+  require('../cockpit').addInvoice(req.project.id, { file: req.file.filename, type: 'acompte', number: str(req.body.numero), source: 'Patron' });
+  res.flashTo(`/projets/${req.project.id}#facture`, 'Facture d’acompte publiée sur le portail du client.');
+});
+
 // ---------- Fiche projet ----------
 function loadProject(req, res, next) {
   const p = q.get('SELECT * FROM projects WHERE id = ?', req.params.id);
@@ -359,6 +502,7 @@ ${time.map((t, i) => h`<div class="who${i ? '' : ' f'}"><span class="grow">${t.g
 
 <div class="ptab" id="dossier"><div class="cols">
 <div class="main-col">
+${chainCard(p)}
 ${D.dossierSection(p, { dictee })}
 <section class="card" id="plans"><div class="line"><h2>Plans</h2></div>
 ${plans.map((x, i) => h`<div class="row${i ? '' : ' f'}"><div class="grow"><b>${x.version}${x.descr ? ` · ${x.descr}` : ''}</b><span class="mut">${x.status === 'validee' ? `Validée${x.validated_at ? ` le ${ddmm(x.validated_at)}` : ''} · fait foi pour l'atelier` : x.status === 'archivee' ? `${ddmm(x.created_at)} · remplacée` : `${ddmm(x.created_at)} · à valider`}</span></div>
@@ -410,6 +554,10 @@ ${p.client_id ? h`<section class="card"><div class="line"><h2>Portail client</h2
 <p class="mut">Ce que ${p.client.name} voit dans son espace. Tout part tout seul, sauf la date de pose.</p>
 <div class="who f"><span class="grow">Devis</span><b>${quote ? `Accepté le ${ddmm(quote.accepted_at)}` : '—'}</b></div>
 <div class="who"><span class="grow">Acompte</span><b>${p.deposit_at ? `Reçu le ${ddmm(p.deposit_at)}` : 'Attendu'}</b></div>
+${(() => { const inv = q.get("SELECT * FROM documents WHERE project_id = ? AND kind = 'facture_acompte' ORDER BY id DESC LIMIT 1", p.id);
+    return inv ? h`<div class="who" id="facture"><span class="grow">Facture d’acompte</span><a class="b" href="${fileUrl(inv.file)}" target="_blank">${inv.number ? `n° ${inv.number}` : 'publiée'}</a></div>`
+      : p.deposit_needed && !p.deposit_at ? h`<form method="post" action="/projets/${p.id}/facture" enctype="multipart/form-data" class="who" id="facture"><span class="grow">Facture d’acompte<span class="mut t12" style="display:block">${require('../cockpit').configured() ? 'attendue de Cockpit · ou dépose-la ici' : 'dépose le PDF : il part sur le portail'}</span></span>
+<input type="file" name="pdf" accept="application/pdf" required aria-label="Facture d’acompte (PDF)" style="max-width:190px"><input name="numero" placeholder="N°" aria-label="Numéro de facture" style="max-width:90px"><button class="btn alt sm">Publier</button></form>` : ''; })()}
 <form method="post" action="/projets/${p.id}/infos" class="who"><label class="grow" for="rd">Prête à poser vers le</label><input id="rd" type="date" name="ready_date" value="${p.ready_date || ''}" data-auto><input type="hidden" name="only" value="ready_date"></form>
 <div class="who"><span class="grow">Photos partagées</span><b>${shared} sur ${photos.length}</b></div>
 <div class="line mt12"><a class="btn alt sm" href="/portails#p${p.id}">Gérer le portail</a><a class="btn alt sm" href="/projets/${p.id}/nouvelles">Donner des nouvelles</a></div>
