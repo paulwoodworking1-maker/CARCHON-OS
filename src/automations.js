@@ -190,7 +190,7 @@ async function poseReminders() {
     JOIN clients ON clients.id = projects.client_id WHERE trips.date = ? AND trips.reminder_sent_at IS NULL AND trips.done_at IS NULL`, addDays(today(), 2));
   for (const r of rows) {
     if (!r.cemail) continue;
-    { const v = { bonjour: r.cname ? `Bonjour ${r.cname},` : 'Bonjour,', date: longDate(r.date), quoi: r.what || 'la livraison de votre projet', projet: r.pname };
+    { const v = { bonjour: require('./civilite').emailHello(null, r.cname), date: longDate(r.date), quoi: r.what || 'la livraison de votre projet', projet: r.pname };
       await mail.send({ to: r.cemail, subject: M.t('mail_pose_objet', v), text: M.t('mail_pose_texte', v) }); }
     q.run("UPDATE trips SET reminder_sent_at = datetime('now') WHERE id = ?", r.id);
     n++;

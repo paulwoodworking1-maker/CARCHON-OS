@@ -44,7 +44,9 @@ const CATALOG = [
   ['etape_6', G.steps, 'Étape 6', 'Pose', { title: true }],
   ['etape_7', G.steps, 'Étape 7', 'Réception', { title: true }],
   // --- Portail : autres textes ---
-  ['portail_question', G.portal, 'Bloc « Une question ? » en bas de l’accueil', 'Répondez simplement à notre dernier e-mail[ ou appelez-nous au {telephone}]. Gardez ce lien dans vos favoris : il vous ramène toujours ici.', { vars: ['telephone'] }],
+  ['portail_titre', G.portal, 'Titre en haut de chaque page (Bonjour avant 18 h, Bonsoir après)', '{salutation}[ {civilite}] {nom} {prenom}', { title: true, vars: ['salutation', 'civilite', 'nom', 'prenom'] }],
+  ['portail_email', G.portal, 'Adresse e-mail affichée au client (pied de page, bloc « Une question ? »)', 'contact@carchon.com', { title: true }],
+  ['portail_question', G.portal, 'Bloc « Une question ? » en bas de l’accueil', 'Écrivez-nous à {email}, ou répondez simplement à notre dernier e-mail. Gardez ce lien dans vos favoris : il vous ramène toujours ici.', { vars: ['email'] }],
   ['portail_pied', G.portal, 'Pied de chaque page', 'Ce lien est personnel : ne le transférez pas. Vos données servent uniquement au suivi de votre projet.', {}],
   ['portail_accepte', G.portal, 'Bandeau juste après l’acceptation du devis', 'Merci ! Votre devis est accepté (référence {reference}). Voici l’accueil de votre projet : gardez ce lien pour suivre la suite.', { vars: ['reference'] }],
   ['portail_modif_envoyee', G.portal, 'Bandeau après une demande de modification', 'Votre demande est transmise à l’atelier. Vous recevrez la nouvelle version du devis par e-mail.', {}],
@@ -90,7 +92,7 @@ function raw(key) {
 // Remplit {mots} ; un [passage] disparaît si l'une de ses informations est vide.
 function fill(tpl, vars = {}) {
   const c = company();
-  const v = { entreprise: c.name, telephone: c.phone || '', ...vars };
+  const v = { entreprise: c.name, telephone: c.phone || '', email: setting('msg_portail_email', null) ?? 'contact@carchon.com', ...vars };
   const val = (k) => (v[k] === undefined || v[k] === null ? '' : String(v[k]));
   let out = String(tpl).replace(/\[([^\[\]]*)\]/g, (m, inner) => {
     const keys = [...inner.matchAll(/\{(\w+)\}/g)].map((x) => x[1]);
@@ -111,8 +113,8 @@ function reset(key) { const e = find(key); if (e) require('./db').q.run('DELETE 
 
 // Exemples pour l'aperçu.
 const SAMPLE = { version: '2', date_limite: '24 décembre', date_envoi: '26 novembre', date: '12 décembre', montant: '5 952,00 €', numero: 'D-2026-0412', echeance: '3 décembre',
-  date_prete: '18 décembre', date_pose: '20 décembre', reference: 'ACC-412-3F9A', code: '483 912', bonjour: 'Bonjour Jeanne Martin,', quoi: 'la livraison et la pose',
-  projet: 'Bibliothèque courbe · chêne', prenom: 'Jeanne', pourcent: '40', devis: 'D-2026-0412', lien: 'https://…/p/devis/…', signature: 'Carchon Les Ateliers\n[téléphone · e-mail · site]',
+  date_prete: '18 décembre', date_pose: '20 décembre', reference: 'ACC-412-3F9A', code: '483 912', bonjour: 'Bonjour Madame Schifano,', quoi: 'la livraison et la pose',
+  projet: 'Bibliothèque courbe · chêne', prenom: 'Stéphanie', pourcent: '40', devis: 'D-2026-0412', lien: 'https://…/p/devis/…', signature: 'Carchon Les Ateliers\ncontact@carchon.com · www.carchon.com', salutation: 'Bonsoir', civilite: 'Mme', nom: 'Schifano', email: 'contact@carchon.com',
   faits: '- Étape actuelle : assemblage\n- Prêt à poser vers le 18 décembre', atelier: 'Carchon', titre: 'prise de cotes' };
 
 module.exports = { G, CATALOG, all, find, raw, t, fill, save, reset, isDefault, SAMPLE };

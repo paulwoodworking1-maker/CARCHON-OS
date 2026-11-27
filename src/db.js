@@ -178,6 +178,10 @@ addColumn('quotes', 'token_enc', 'TEXT');          // lien chiffré, pour le rem
 addColumn('quotes', 'signer_phone', "TEXT DEFAULT ''");
 addColumn('projects', 'portal_token_enc', 'TEXT');
 addColumn('clients', 'sms_off', 'INTEGER NOT NULL DEFAULT 0');
+// Comment le portail s'adresse au client (vide = deviné depuis le nom).
+addColumn('clients', 'civility', "TEXT DEFAULT ''");
+addColumn('clients', 'first_name', "TEXT DEFAULT ''");
+addColumn('clients', 'last_name', "TEXT DEFAULT ''");
 // Chaîne de production générée depuis le devis, les vues 3D et le chiffrage.
 addColumn('projects', 'prod_status', "TEXT DEFAULT ''");   // '' | en_cours | pret | erreur
 addColumn('projects', 'prod_error', 'TEXT');

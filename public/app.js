@@ -1,5 +1,33 @@
 // Petits comportements côté navigateur. Tout fonctionne aussi sans JavaScript (formulaires classiques).
 (function () {
+  // --- La page reste à sa place après un clic, un enregistrement ou un filtre ---
+  // Avant de partir, on note la position ; si on revient sur la même page, on la remet exactement.
+  var KEY = 'carchon:pos';
+  function remember() {
+    try { sessionStorage.setItem(KEY, JSON.stringify({ p: location.pathname, y: window.scrollY, t: Date.now() })); } catch (x) {}
+  }
+  try {
+    var saved = JSON.parse(sessionStorage.getItem(KEY) || 'null');
+    sessionStorage.removeItem(KEY);
+    if (saved && saved.p === location.pathname && Date.now() - saved.t < 20000) {
+      if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
+      document.documentElement.classList.add('kept');
+      var put = function () { window.scrollTo(0, saved.y); };
+      put(); requestAnimationFrame(put);
+      window.addEventListener('load', function () { put(); setTimeout(put, 0); });
+      // L'ancre (#bloc) de l'adresse ne doit pas faire sauter la page.
+      if (location.hash) history.replaceState(null, '', location.pathname + location.search);
+    }
+  } catch (x) {}
+  var nativeSubmit = HTMLFormElement.prototype.submit;
+  HTMLFormElement.prototype.submit = function () { remember(); return nativeSubmit.call(this); };
+  document.addEventListener('click', function (e) {
+    var a = e.target.closest && e.target.closest('a[href]');
+    if (!a || a.target || e.metaKey || e.ctrlKey || e.shiftKey || a.hasAttribute('download')) return;
+    var u = new URL(a.href, location.href);
+    if (u.origin === location.origin && u.pathname === location.pathname && (u.search !== location.search)) remember();
+  });
+
   // Case à cocher / date qui enregistre tout de suite.
   document.addEventListener('change', function (e) {
     var el = e.target;
@@ -100,6 +128,7 @@
       (navigator.clipboard ? navigator.clipboard.writeText(input.value) : Promise.resolve(document.execCommand('copy'))).then(function () { b.textContent = 'Copié ✓'; });
     }
     if (e.target.closest && e.target.closest('[data-print]')) window.print();
+    if (e.target.closest && e.target.closest('[data-back]') && history.length > 1) { e.preventDefault(); history.back(); }
   });
   // Un seul menu ouvert à la fois ; clic à l'extérieur = fermer.
   document.addEventListener('click', function (e) {
@@ -158,7 +187,8 @@
       if (id && show(id, a.closest('[data-ptabs]') ? null : id)) {
         e.preventDefault();
         history.replaceState(null, '', '#' + id);
-        if (a.closest('[data-ptabs]') || a.hasAttribute('data-tab-link')) tabs.scrollIntoView({ block: 'start', behavior: 'smooth' });
+        // Clic sur un onglet : la page ne bouge pas. Lien vers un onglet depuis plus bas : on remonte seulement si la barre est hors de l'écran.
+        if (!a.closest('[data-ptabs]') && a.hasAttribute('data-tab-link') && tabs.getBoundingClientRect().top < 0) tabs.scrollIntoView({ block: 'start' });
       }
     });
   }
@@ -192,6 +222,14 @@
     if (!svg) return;
     var ops = svg.querySelectorAll('.cnc-op');
     inp.addEventListener('input', function () { var n = Number(inp.value); ops.forEach(function (g, i) { g.classList.toggle('off', i >= n); }); });
+  });
+
+  // Envoi d'un formulaire (après les confirmations) : on garde la position.
+  document.addEventListener('submit', function (e) { if (!e.defaultPrevented) remember(); });
+  // Message de confirmation : affiché en bas de l'écran, sans déplacer la page.
+  document.querySelectorAll('.flash.toast').forEach(function (t) {
+    t.addEventListener('click', function () { t.remove(); });
+    if (!t.classList.contains('ko') && !t.querySelector('code, a, input')) setTimeout(function () { t.classList.add('out'); setTimeout(function () { t.remove(); }, 400); }, 6000);
   });
 })();
 

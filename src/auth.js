@@ -84,5 +84,7 @@ function throttle(key) {
   return a.length >= 8;
 }
 function fail(key) { (attempts.get(key) || attempts.set(key, []).get(key)).push(Date.now()); }
+// Efface les essais d'une clé (utilisé par les tests).
+function forgive(key) { attempts.delete(key); }
 
-module.exports = { sessionMiddleware, requirePatron, requireAtelier, hash, verify, token, sha256, throttle, fail, setSetting, secret };
+module.exports = { sessionMiddleware, requirePatron, requireAtelier, hash, verify, token, sha256, throttle, fail, forgive, setSetting, secret };

@@ -1,5 +1,7 @@
 'use strict';
 // Test rapide : base neuve + démo, connexion patron, toutes les pages répondent sans erreur.
+// Même fuseau que le serveur en production (render.yaml, install-vps.sh) : les heures de l'agenda en dépendent.
+process.env.TZ = 'Europe/Paris';
 const { test, before, after } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
@@ -103,6 +105,20 @@ test('assistant : chaque outil répond sur les données de démo', () => {
     assert.ok(out && !out.erreur, `${t.name} : ${JSON.stringify(out).slice(0, 200)}`);
     JSON.stringify(out);
   }
+});
+
+test('les en-têtes de sécurité sont envoyés', async () => {
+  const res = await fetch(base + '/connexion');
+  assert.strictEqual(res.headers.get('x-content-type-options'), 'nosniff');
+  assert.match(res.headers.get('content-security-policy') || '', /script-src 'self'/);
+});
+
+test('une clé API fausse est refusée, puis bloquée après trop d’essais', async () => {
+  let last;
+  for (let i = 0; i < 9; i++) last = await fetch(base + '/api/v1/ofs', { headers: { authorization: 'Bearer faux' } });
+  assert.strictEqual(last.status, 429);
+  // Le blocage vise l'adresse : on la libère pour les tests suivants.
+  for (const ip of ['127.0.0.1', '::1', '::ffff:127.0.0.1']) require('../src/auth').forgive('api:' + ip);
 });
 
 const post = (p, body) => fetch(base + p, { method: 'POST', redirect: 'manual', headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams(body).toString() });
@@ -596,4 +612,52 @@ test('CNC : liste OpenCutList, travail, programme bloqué puis validé, fiche du
   // Achats : panneaux ajoutés au projet.
   await fetch(base + `/cnc/travaux/${j}/achats`, form({}));
   assert.ok(q.get("SELECT id FROM needs WHERE project_id = 2 AND source = 'cnc'"));
+});
+
+test('portail : « Bonjour / Bonsoir Mme Nom Prénom », référence en tête, e-mail en pied', async () => {
+  const C = require('../src/civilite');
+  assert.deepStrictEqual(C.split('STEPHANIE SCHIFANO'), { first: 'Stéphanie', last: 'Schifano' });
+  assert.deepStrictEqual(C.split('Schifano Stéphanie'), { first: 'Stéphanie', last: 'Schifano' });
+  assert.strictEqual(C.identity({ name: 'STEPHANIE SCHIFANO' }).formal, 'Mme Schifano Stéphanie');
+  assert.strictEqual(C.identity({ name: 'Pierre de la Tour' }).formal, 'M. de la Tour Pierre');
+  assert.strictEqual(C.identity({ name: 'Camille Durand' }).formal, 'Durand Camille');
+  assert.strictEqual(C.identity({ name: 'Camille Durand', civility: 'Mme' }).formal, 'Mme Durand Camille');
+  assert.strictEqual(C.salutation(new Date('2026-11-27T09:00:00Z')), 'Bonjour');
+  assert.strictEqual(C.salutation(new Date('2026-11-27T18:30:00Z')), 'Bonsoir');
+  assert.strictEqual(C.emailHello(null, 'STEPHANIE SCHIFANO'), 'Bonjour Madame Schifano,');
+  const { q } = require('../src/db'); const { sha256 } = require('../src/auth');
+  const cid = Number(q.run("INSERT INTO clients (name, email) VALUES ('STEPHANIE SCHIFANO', 's@example.com')").lastInsertRowid);
+  const pid = Number(q.run("INSERT INTO projects (name, client_id, portal_state, portal_token_hash) VALUES ('STEPHANIE SCHIFANO', ?, 'open', ?)", cid, sha256('espace-schifano')).lastInsertRowid);
+  const html = await (await fetch(`${base}/p/espace/espace-schifano`)).text();
+  const ref = q.get('SELECT ref FROM projects WHERE id = ?', pid).ref;
+  assert.match(html, new RegExp(`class="cl-ref">Dossier ${ref}<`));
+  assert.match(html, /<h1>Bon(jour|soir) Mme Schifano Stéphanie<\/h1>/);
+  assert.doesNotMatch(html, /class="cl-meta">STEPHANIE/);
+  assert.match(html, /contact@carchon\.com/);
+});
+
+test('portail : nom sans accent ou en majuscules reconnu, feuille de style versionnée', async () => {
+  const C = require('../src/civilite');
+  assert.strictEqual(C.identity({ name: 'Stephanie Schifano' }).formal, 'Mme Schifano Stéphanie');
+  assert.ok(C.same('STEPHANIE SCHIFANO', 'Stephanie Schifano'));
+  const { q } = require('../src/db'); const { sha256 } = require('../src/auth');
+  const cid = Number(q.run("INSERT INTO clients (name) VALUES ('Stephanie Schifano')").lastInsertRowid);
+  q.run("INSERT INTO projects (name, client_id, portal_state, portal_token_hash) VALUES ('STEPHANIE SCHIFANO', ?, 'open', ?)", cid, sha256('espace-schifano-2'));
+  const html = await (await fetch(`${base}/p/espace/espace-schifano-2`)).text();
+  assert.match(html, /Mme Schifano Stéphanie<\/h1>/);
+  assert.doesNotMatch(html, /cl-meta/);
+  assert.match(html, /\/static\/style\.css\?v=\w+/);
+});
+
+test('portails : « Copier le lien » redonne le lien existant sans en créer un nouveau', async () => {
+  const { q } = require('../src/db'); const { sha256 } = require('../src/auth'); const SMS = require('../src/sms');
+  const cid = Number(q.run("INSERT INTO clients (name, email) VALUES ('Lien Existant', 'l@example.com')").lastInsertRowid);
+  const pid = Number(q.run("INSERT INTO projects (name, client_id, portal_state, portal_token_hash, portal_token_enc) VALUES ('Projet lien', ?, 'open', ?, ?)", cid, sha256('jeton-garde'), SMS.seal('jeton-garde')).lastInsertRowid);
+  const list = await (await fetch(base + '/portails?f=espaces', { headers: { cookie } })).text();
+  assert.match(list, new RegExp(`id="lk-p${pid}" value="[^"]*/p/espace/jeton-garde"`));
+  const r = await fetch(base + `/portails/espace/${pid}/lien`, { redirect: 'manual', headers: { cookie } });
+  assert.strictEqual(r.status, 302);
+  assert.strictEqual(q.get('SELECT portal_token_hash h FROM projects WHERE id = ?', pid).h, sha256('jeton-garde'));
+  const page = await (await fetch(base + '/projets/' + pid, { headers: { cookie } })).text();
+  assert.match(page, /\/p\/espace\/jeton-garde/);
 });

@@ -5,8 +5,8 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const { q, tx, setting, logActivity, company } = require('../db');
 const { h, page, ddmm, ddmmyyyy, dayMonth, today } = require('../html');
-const { sha256, verify, hash } = require('../auth');
-const { filePath, isImage } = require('../uploads');
+const { sha256, verify, hash, throttle, fail } = require('../auth');
+const { filePath, isImage, sendUpload } = require('../uploads');
 const mail = require('../mail');
 const L = require('../logic');
 const M = require('../messages');
@@ -17,12 +17,21 @@ const J = (v, d) => { try { return JSON.parse(v || '') ?? d; } catch { return d;
 r.use((req, res, next) => { res.set('X-Robots-Tag', 'noindex, nofollow'); res.set('Cache-Control', 'no-store'); next(); });
 
 const siteUrl = (s) => (/^https?:\/\//.test(s) ? s : `https://${s}`);
-const shell = (title, inner, test, c = company()) => page(title, h`<div class="phone">
-<header class="cl-head"><a href="${siteUrl(c.site)}" target="_blank" rel="noopener" aria-label="${c.name}, site web"><img src="/static/logo.png" alt="Carchon Les Ateliers"></a></header>
+// Habillage commun : logo et référence du dossier en tête, e-mail de contact en pied.
+const shell = (title, inner, test, ref = '') => {
+  const c = company(); const mail = M.t('portail_email');
+  return page(title, h`<div class="phone">
+<header class="cl-head"><a href="${siteUrl(c.site)}" target="_blank" rel="noopener" aria-label="${c.name}, site web"><img src="/static/logo.png" alt="Carchon Les Ateliers"></a>${ref ? h`<span class="cl-ref">${ref}</span>` : ''}</header>
 ${test ? h`<div class="testband">Page de test — sans valeur contractuelle.</div>` : ''}
 ${inner}
-<p class="cl-foot">${M.t('portail_pied')}<br><span class="cl-co">${c.name}${c.phone ? ` · ${c.phone}` : ''}${c.email ? ` · ${c.email}` : ''}</span>
-<br><a class="cl-site" href="${siteUrl(c.site)}" target="_blank" rel="noopener">${c.site}</a></p></div>`, { bodyClass: 'client' });
+<footer class="cl-foot"><p>${M.t('portail_pied')}</p>${mail ? h`<a class="cl-mail" href="mailto:${mail}">${mail}</a>` : ''}
+<a class="cl-site" href="${siteUrl(c.site)}" target="_blank" rel="noopener">${c.site}</a></footer></div>`, { bodyClass: 'client' });
+};
+// « Bonsoir Mme Schifano Stéphanie »
+const C = require('../civilite');
+const greeting = (client, fallbackName) => { const id = C.identity(client, fallbackName); return M.t('portail_titre', { salutation: C.salutation(), civilite: id.civ, nom: id.last, prenom: id.first }); };
+// Le nom du projet n'est rappelé que s'il dit autre chose que le nom du client.
+const sameAsClient = (projName, client, fallbackName) => !projName || C.same(projName, client?.name || fallbackName || '') || C.same(projName, C.identity(client, fallbackName).full);
 
 // ---------- Devis à accepter ----------
 function findQuote(req) {
@@ -59,8 +68,8 @@ r.get('/devis/:t', (req, res) => {
   const client = x.client_id ? q.get('SELECT * FROM clients WHERE id = ?', x.client_id) : null;
   const needBill = Q.on() && !x.test;
   res.send(shell(`Devis ${x.number}`, h`<main class="cl">${flash}
-<div class="cl-eyebrow">${x.signer_name}</div><h1>${x.project_name || `Devis n° ${x.number}`}</h1>
-<p class="cl-meta">Devis n° ${x.number} · version ${x.version} du ${ddmmyyyy(x.link_at || x.created_at)}</p>
+<h1>${greeting(client, x.signer_name)}</h1>
+<p class="cl-meta">${sameAsClient(x.project_name, client, x.signer_name) ? '' : `${x.project_name} · `}Votre devis n° ${x.number}${x.version > 1 ? `, version ${x.version}` : ''} du ${ddmmyyyy(x.link_at || x.created_at)}</p>
 ${tabsHtml(`/p/devis/${t}`, 'devis', true)}
 <dl class="cl-sum">
 ${amounts ? h`<div><dt>Montant HT</dt><dd>${E0(x.amount_ht)}<small>${E0(x.amount_ht * (1 + vat / 100))} TTC</small></dd></div>
@@ -92,7 +101,7 @@ ${verified ? '' : h`<p class="mut">Disponible dès que votre code est validé.</
 ${amounts && Q.on() && !x.test ? h`<p class="mut t12 center">Vous recevrez aussitôt par e-mail la facture d’acompte de ${Q.eur(amounts.ttc)} TTC.</p>` : ''}</form></section>
 <section class="cl-step"><h2>Vous souhaitez changer quelque chose ?</h2><p class="mut">Dimensions, essence, finition, délai… ligne par ligne : nous vous renvoyons une nouvelle version.</p>
 <a class="btn alt wfull" href="/p/devis/${t}/modifier">Demander une modification</a></section>
-</main>`, x.test));
+</main>`, x.test, `Devis ${x.number}`));
 });
 
 // Demande de modification guidée : ligne par ligne, puis sujets, puis message libre.
@@ -104,7 +113,7 @@ r.get('/devis/:t/modifier', (req, res) => {
   const lines = J(x.lines, []);
   const flash = req.flash ? h`<div class="flash ${req.flash.kind}">${req.flash.text}</div>` : '';
   res.send(shell('Modifier le devis', h`<main class="cl">${flash}
-<div class="cl-eyebrow">Devis n° ${x.number} · version ${x.version}</div><h1>Demander une modification</h1>
+<h1>Demander une modification</h1><p class="cl-meta">Devis n° ${x.number} · version ${x.version}</p>
 <p class="mut">Indiquez simplement ce que vous souhaitez changer. Nous vous renvoyons une nouvelle version du devis par e-mail, en général sous 48 h ouvrées.</p>
 <form method="post" action="/p/devis/${t}/repondre" class="form">
 <input type="hidden" name="kind" value="modif">
@@ -152,6 +161,10 @@ r.post('/devis/:t/code', async (req, res, next) => {
     if (x.code_sent_at && q.get("SELECT datetime('now', '-60 seconds') < ? recent", x.code_sent_at).recent && !canShow) {
       return res.flashTo(back, `Un code vient de vous être envoyé à ${maskEmail(x.signer_email)}. Il peut mettre une minute à arriver : regardez aussi dans les indésirables (spam).`);
     }
+    // Au plus 8 codes par devis et 8 par adresse IP toutes les 10 minutes (pas d'inondation de la boîte du client).
+    const kq = `otp:${x.id}`, ki = `otp-ip:${req.ip}`;
+    if (throttle(kq) || throttle(ki)) return res.flashTo(back, 'Trop de codes demandés. Réessayez dans 10 minutes.', 'ko');
+    fail(kq); fail(ki);
     const code = String(crypto.randomInt(0, 1000000)).padStart(6, '0');
     q.run("UPDATE quotes SET otp_hash = ?, otp_expires = datetime('now', '+15 minutes'), otp_tries = 0, code_sent_at = datetime('now'), last_seen_at = datetime('now') WHERE id = ?", hash(code), x.id);
     try {
@@ -327,7 +340,7 @@ function renderSpace(p, { token = null, preview = false, tab = 'accueil', quote:
   const co = company();
   const inner = h`<main class="cl">${flash}
 ${preview ? h`<div class="testband">Aperçu patron : c’est ce que voit ${client.name}. <a href="/portails?f=espaces">Revenir</a></div>` : ''}
-<div class="cl-eyebrow">${client.name}${p ? ` · dossier ${p.ref}` : ''}</div><h1>${p ? p.name : viaQuote.project_name || `Devis n° ${viaQuote.number}`}</h1>
+<h1>${greeting(p ? client : null, client.name)}</h1>${(() => { const pn = p ? p.name : viaQuote.project_name; return pn && !sameAsClient(pn, p ? client : null, client.name) ? h`<p class="cl-meta">${pn}</p>` : ''; })()}
 ${tabsHtml(baseUrl, T, withQuoteTab)}
 ${T === 'accueil' ? h`
 ${next ? h`<section class="next-box${next.you ? ' you' : ''}"><span class="cl-eyebrow">${next.you ? 'À faire de votre côté' : 'Prochaine étape'}</span><h2>${next.t}</h2><p>${next.d}</p>${next.href ? h`<a class="btn wfull" href="${next.href}"${next.ext ? h` target="_blank" rel="noopener"` : ''}>${next.cta}</a>` : ''}</section>` : ''}
@@ -347,7 +360,7 @@ ${p?.deposit_invoice_url ? h`<a class="docrow" href="${p.deposit_invoice_url}" t
 ${docs.map((d) => h`<a class="docrow" href="${f(d.file)}" target="_blank">${d.title}</a>`)}
 ${quotes.length || pvs.length || docs.length ? '' : h`<p class="mut">Bientôt ici : votre devis, les conditions de vente, le procès-verbal et la facture.</p>`}</section>` : ''}
 </main>`;
-  return shell(p ? p.name : `Devis ${viaQuote.number}`, inner, setting('portal_test_mode') === '1');
+  return shell(p ? p.name : `Devis ${viaQuote.number}`, inner, setting('portal_test_mode') === '1', p ? `Dossier ${p.ref}` : `Devis ${viaQuote.number}`);
 }
 
 r.get('/espace/:t', (req, res) => {
@@ -369,7 +382,7 @@ for (const kind of ['espace', 'devis']) {
     const n = req.params.name;
     const ok = c?.p && (q.get('SELECT id FROM photos WHERE project_id = ? AND file = ? AND shared_client = 1', c.p.id, n) || q.get('SELECT id FROM documents WHERE project_id = ? AND file = ? AND visible_client = 1', c.p.id, n));
     if (!ok || !fs.existsSync(filePath(n))) return res.status(404).send('Introuvable');
-    res.sendFile(filePath(n));
+    sendUpload(res, filePath(n));
   });
   // Une version du devis (même numéro que ceux du client).
   r.get(`/${kind}/:t/v/:id`, (req, res) => {
