@@ -102,7 +102,8 @@ r.post('/projets/:id/controle', (req, res) => {
 
 // ---------- Expéditions ----------
 r.get('/expeditions', (req, res) => {
-  const ready = q.all(`SELECT units.*, models.name mname, projects.name pname FROM units LEFT JOIN models ON models.id = units.model_id LEFT JOIN projects ON projects.id = units.project_id
+  const ready = q.all(`SELECT units.*, models.name mname, projects.name pname, projects.descr pdescr, clients.name cname, clients.address caddr, clients.phone cphone FROM units LEFT JOIN models ON models.id = units.model_id
+    LEFT JOIN projects ON projects.id = units.project_id LEFT JOIN clients ON clients.id = projects.client_id
     WHERE units.status = 'en_stock' ORDER BY units.reserved_for = '', units.reserved_for, units.serial`);
   const ships = q.all(`SELECT shipments.*, (SELECT GROUP_CONCAT(serial, ', ') FROM units WHERE shipment_id = shipments.id) serials, (SELECT COUNT(*) FROM units WHERE shipment_id = shipments.id) n
     FROM shipments ORDER BY delivered_at IS NOT NULL, shipped_at DESC LIMIT 40`);
@@ -117,11 +118,11 @@ r.get('/expeditions', (req, res) => {
 <div class="cols">
 <section class="card main-col"><h2>Préparer une expédition</h2>
 ${ready.length ? h`<form method="post" action="/expeditions" class="form mt12">
-${ready.map((u) => h`<label class="ck"><input type="checkbox" name="units" value="${u.id}"> <b>${u.serial}</b> ${u.mname || u.pname || ''} ${u.reserved_for ? pill('wa', u.reserved_for) : ''}</label>`)}
-<div class="grid2"><label>Destinataire <input name="recipient" required></label><label>Adresse <input name="address"></label></div>
+${ready.map((u) => h`<label class="ck"><input type="checkbox" name="units" value="${u.id}" data-recipient="${u.cname || u.reserved_for || ''}" data-address="${u.caddr || ''}"> <b>${u.serial}</b> ${u.pname || u.mname || ''}${u.pdescr ? ` · ${u.pdescr}` : ''} ${u.reserved_for ? pill('wa', u.reserved_for) : ''}</label>`)}
+<div class="grid2"><label>Destinataire <input name="recipient" placeholder="repris de la fiche client"></label><label>Adresse <input name="address" placeholder="reprise de la fiche client"></label></div>
 <div class="grid2"><label>Transporteur <input name="carrier" placeholder="ex. Colissimo, transporteur meubles…"></label><label>N° de suivi <input name="tracking"></label></div>
 <label>Emballage <input name="packing" placeholder="ex. carton double cannelure, calage"></label>
-<button class="btn">Expédier</button><p class="mut t12">Le bon de livraison, avec la fiche d'entretien de chaque pièce, s'imprime ensuite.</p></form>` : h`<p class="mut">Aucune pièce en stock fini. Les pièces y entrent au contrôle.</p>`}
+<button class="btn">Expédier</button><p class="mut t12">Destinataire et adresse se remplissent tout seuls depuis la fiche client du projet. Le bon de livraison, avec la fiche d'entretien de chaque pièce, s'imprime ensuite.</p></form>` : h`<p class="mut">Aucune pièce en stock fini. Les pièces y entrent au contrôle.</p>`}
 </section>
 <section class="card side-col"><h2>Expéditions</h2>
 ${ships.map((s, i) => h`<div class="who${i ? '' : ' f'}"><div class="grow"><b class="t14">${s.recipient || '—'}</b><span class="mut t12">${s.serials || ''} · ${[s.carrier, s.tracking].filter(Boolean).join(' · ')}</span><span class="mut t12">${s.delivered_at ? `livrée le ${ddmm(s.delivered_at)}` : `expédiée le ${ddmm(s.shipped_at)}`}</span></div>
@@ -136,6 +137,10 @@ r.post('/expeditions', (req, res) => {
   let sid;
   tx(() => {
     const first = q.get('SELECT project_id FROM units WHERE id = ?', ids[0]);
+    const cl = first?.project_id ? q.get('SELECT clients.* FROM projects JOIN clients ON clients.id = projects.client_id WHERE projects.id = ?', first.project_id) : null;
+    const ru = q.get('SELECT reserved_for FROM units WHERE id = ?', ids[0]);
+    b.recipient = str(b.recipient) || cl?.name || ru?.reserved_for || '';
+    b.address = str(b.address) || cl?.address || '';
     sid = q.run("INSERT INTO shipments (project_id, recipient, address, carrier, tracking, packing, shipped_at) VALUES (?, ?, ?, ?, ?, ?, datetime('now'))",
       first?.project_id || null, str(b.recipient), str(b.address), str(b.carrier), str(b.tracking), str(b.packing)).lastInsertRowid;
     for (const id of ids) {

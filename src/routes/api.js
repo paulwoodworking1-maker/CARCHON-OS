@@ -1,7 +1,9 @@
 'use strict';
 // Liaison avec Cockpit (ou tout autre logiciel) : API JSON protégée par une clé (Pilotage › Équipe et réglages › Entreprise).
 //   POST /api/v1/affaires            une affaire signée devient un OF (sur-mesure, ou lot depuis un modèle du catalogue)
+//                                    champs utiles à l'Analyse : amount_ht (€ HT), family, source
 //   POST /api/v1/affaires/:ref/acompte   l'acompte est encaissé : les achats bloqués se débloquent
+//   POST /api/v1/affaires/:ref/factures  facture d'acompte / de solde (PDF) : publiée sur le portail client
 //   GET  /api/v1/ofs                 avancement, dates, heures et coût réel de chaque OF
 const express = require('express');
 const crypto = require('node:crypto');
@@ -11,7 +13,6 @@ const P = require('../production');
 const L = require('../logic');
 
 const r = express.Router();
-r.use(express.json({ limit: '200kb' }));
 const str = (v) => String(v ?? '').trim();
 
 r.use((req, res, next) => {
@@ -22,6 +23,7 @@ r.use((req, res, next) => {
   if (!key || got.length !== key.length || !crypto.timingSafeEqual(Buffer.from(got), Buffer.from(key))) { fail(k); return res.status(401).json({ error: 'Clé API absente ou invalide' }); }
   next();
 });
+r.use(express.json({ limit: '30mb' })); // après la clé : seules les requêtes autorisées sont lues
 
 const rate = () => Number(String(setting('hourly_rate', '0')).replace(',', '.')) || 0;
 
@@ -33,10 +35,7 @@ r.post('/affaires', (req, res) => {
   try {
     tx(() => {
       let clientId = null;
-      if (str(c.name)) {
-        const ex = str(c.email) ? q.get('SELECT id FROM clients WHERE lower(email) = lower(?)', str(c.email)) : null;
-        clientId = ex ? ex.id : Number(q.run('INSERT INTO clients (name, kind, email, phone, address) VALUES (?, ?, ?, ?, ?)', str(c.name), str(c.kind) || 'Particulier', str(c.email), str(c.phone), str(c.address)).lastInsertRowid);
-      }
+      if (str(c.name)) clientId = require('../cockpit').upsert(c);
       const canal = P.CANALS.includes(b.canal) ? b.canal : (str(b.model_code) ? 'Revendeur' : 'Sur-mesure');
       if (str(b.model_code)) {
         const m = q.get('SELECT id FROM models WHERE code = ? AND active = 1', str(b.model_code).toUpperCase());
@@ -48,12 +47,27 @@ r.post('/affaires', (req, res) => {
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, 'Préparer le carnet')`, str(b.name), str(c.kind) || canal, canal, clientId, str(b.due_date) || null, L.patron().id, str(c.name),
           b.deposit_needed === false ? 0 : 1, b.deposit_received ? new Date().toISOString().slice(0, 10) : null).lastInsertRowid);
       }
+      if (str(b.name)) q.run("UPDATE projects SET descr = ? WHERE id = ? AND COALESCE(descr, '') = ''", str(b.name), projectId);
+      L.syncProjectName(projectId);
+      const amt = Number(String(b.amount_ht ?? b.amount ?? '').replace(/[\s\u00a0\u202f€]/g, '').replace(',', '.'));
+      const { FAMILIES, SOURCES } = require('../db');
+      q.run('UPDATE projects SET amount_ht = ?, family = ?, source = ? WHERE id = ?', Number.isFinite(amt) && amt > 0 ? amt : null,
+        FAMILIES.includes(b.family) ? b.family : '', SOURCES.includes(b.source) ? b.source : '', projectId);
       logActivity(projectId, null, `Affaire signée reçue de Cockpit${str(b.reference) ? ` (réf. ${str(b.reference)})` : ''}${str(b.amount) ? ` · ${str(b.amount)}` : ''}`, 'Cockpit');
     });
   } catch (e) { return res.status(e.status || 500).json({ error: e.message }); }
   const p = q.get('SELECT id, ref FROM projects WHERE id = ?', projectId);
   res.status(201).json({ id: p.id, ref: p.ref });
 });
+
+// Base clientèle de Cockpit : un client ou une liste ({ clients: [...] }).
+r.post('/clients', (req, res) => {
+  const b = req.body || {};
+  const list = Array.isArray(b) ? b : Array.isArray(b.clients) ? b.clients : [b];
+  const n = require('../cockpit').upsertMany(list);
+  res.json({ ok: true, clients: n });
+});
+r.get('/clients', (req, res) => res.json({ clients: q.all('SELECT id, cockpit_id, name, kind, email, phone, address FROM clients ORDER BY name') }));
 
 r.post('/affaires/:ref/acompte', (req, res) => {
   const p = q.get('SELECT * FROM projects WHERE ref = ?', req.params.ref);
@@ -63,7 +77,29 @@ r.post('/affaires/:ref/acompte', (req, res) => {
     q.run('UPDATE needs SET needs_deposit = 0 WHERE project_id = ?', p.id);
     logActivity(p.id, null, 'Acompte encaissé (Cockpit) : achats débloqués', 'Cockpit');
   });
+  if (!p.deposit_at) require('../sms').notify('acompte', { projectId: p.id });
   res.json({ ok: true });
+});
+
+// Facture éditée par Cockpit (acompte, solde…) : publiée sur le portail du client, qui reçoit un SMS.
+// :ref = référence de l'OF (P2026-012) ou numéro du devis. Envoi en multipart (champ « pdf ») ou en JSON (pdf_base64).
+const { uploadDocs, filePath } = require('../uploads');
+r.post('/affaires/:ref/factures', uploadDocs.single('pdf'), (req, res) => {
+  const b = req.body || {};
+  const ref = str(req.params.ref);
+  const p = q.get('SELECT * FROM projects WHERE ref = ?', ref) || q.get('SELECT projects.* FROM quotes JOIN projects ON projects.id = quotes.project_id WHERE quotes.number = ? ORDER BY quotes.version DESC LIMIT 1', ref);
+  if (!p) return res.status(404).json({ error: 'OF ou devis introuvable' });
+  let file = req.file && /\.pdf$/i.test(req.file.originalname || req.file.filename) ? req.file.filename : null;
+  if (!file && b.pdf_base64) {
+    const buf = Buffer.from(String(b.pdf_base64), 'base64');
+    if (buf.subarray(0, 4).toString() !== '%PDF') return res.status(400).json({ error: 'pdf_base64 n’est pas un PDF' });
+    file = crypto.randomBytes(12).toString('hex') + '.pdf';
+    require('node:fs').writeFileSync(filePath(file), buf);
+  }
+  if (!file) return res.status(400).json({ error: 'PDF requis (champ « pdf » ou « pdf_base64 »)' });
+  const type = ['acompte', 'solde', 'autre'].includes(str(b.type)) ? str(b.type) : 'acompte';
+  const id = require('../cockpit').addInvoice(p.id, { file, type, number: str(b.numero), amount: str(b.montant_ttc), due: str(b.echeance), source: 'Cockpit' });
+  res.status(201).json({ ok: true, document_id: id, of: p.ref });
 });
 
 r.get('/ofs', (req, res) => {

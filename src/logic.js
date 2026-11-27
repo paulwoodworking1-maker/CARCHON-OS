@@ -91,7 +91,7 @@ function toDecide() {
     items.push({ kind: 'ok', tag: 'Devis accepté', title: qt.signer_name, text: `Accepté sur son portail le ${ddmm(qt.accepted_at)} · la commande est créée`, href: `/portails#q${qt.id}`, cta: 'Ouvrir son espace client', primary: true });
   }
   for (const qt of q.all("SELECT * FROM quotes WHERE status IN ('modif','refused') AND treated = 0 ORDER BY responded_at DESC")) {
-    items.push({ kind: qt.status === 'refused' ? 'ko' : 'wa', tag: 'Portail', title: `${qt.status === 'refused' ? 'Devis refusé' : 'Modification demandée'} · ${qt.project_name || qt.number}`, text: `${qt.signer_name} : « ${qt.response_text || '—'} »`, href: `/portails#q${qt.id}`, cta: 'Voir la demande' });
+    items.push({ kind: qt.status === 'refused' ? 'ko' : 'wa', tag: 'Portail', title: `${qt.status === 'refused' ? 'Devis refusé' : 'Modification demandée'} · ${qt.project_name || qt.number}`, text: `${qt.signer_name} : « ${qt.response_text || '—'} »`, href: `/portails#q${qt.id}r`, cta: 'Voir la demande' });
   }
   for (const n of q.all("SELECT needs.*, people.name pname FROM needs LEFT JOIN people ON people.id = needs.person_id WHERE status = 'todo' AND acknowledged = 0 AND source IN ('stock','ipad') ORDER BY created_at DESC")) {
     items.push({ kind: 'wa', tag: 'Achat', title: `${n.text} · ${n.source === 'stock' ? 'signalé vide' : 'il manque'}`, text: `Par ${n.pname || 'l’atelier'} ${n.source === 'ipad' ? 'depuis l’iPad' : 'dans le stock'}`, href: '/achats', cta: 'Valider', ack: n.id });
@@ -99,12 +99,51 @@ function toDecide() {
   for (const p of q.all("SELECT * FROM projects WHERE status = 'en_cours' AND client_id IS NOT NULL AND deposit_needed = 1 AND deposit_at IS NULL")) {
     const since = p.deposit_asked_at || p.created_at;
     const blocks = q.get("SELECT COUNT(*) n FROM needs WHERE project_id = ? AND status = 'todo' AND needs_deposit = 1", p.id).n;
-    items.push({ kind: 'ko', tag: 'Acompte', title: `${p.name} · acompte non reçu`, text: `Demandé ${relDays(since)}${blocks ? ' · bloque des achats' : ''}`, href: `/projets/${p.id}#acompte`, cta: 'Noter reçu' });
+    items.push({ kind: 'ko', tag: 'Acompte', title: `${p.name} · acompte non reçu`, text: `Demandé ${relDays(since)}${blocks ? ' · bloque des achats' : ''}`, href: `/projets/${p.id}#acompte`, cta: 'Ouvrir', act: `/projets/${p.id}/acompte`, actLabel: 'Reçu aujourd’hui' });
   }
   for (const m of q.all('SELECT messages.*, steps.title st, steps.project_id pid, people.name pname FROM messages JOIN steps ON steps.id = messages.step_id LEFT JOIN people ON people.id = messages.person_id WHERE read_by_patron = 0 ORDER BY messages.created_at DESC')) {
     items.push({ kind: 'no', tag: 'Message', title: `${m.pname} · ${m.st}`, text: `« ${m.body} »`, href: `/carnets/${m.pid}?fiche=${m.step_id}`, cta: 'Répondre' });
   }
-  return [...items, ...require('./automations').alerts()];
+  // Sous-traitance : retour en retard, ou prestation proposée encore à commander alors que la livraison approche.
+  for (const s of q.all(`SELECT subcontracts.*, projects.name pname, suppliers.name sname FROM subcontracts JOIN projects ON projects.id = subcontracts.project_id
+    LEFT JOIN suppliers ON suppliers.id = subcontracts.supplier_id WHERE projects.status = 'en_cours' AND subcontracts.back_at IS NULL AND subcontracts.status != 'a_commander' AND subcontracts.due_at < ?`, today())) {
+    items.push({ kind: 'ko', tag: 'Sous-traitance', title: `${s.pname} · ${s.what}`, text: `Retour prévu le ${ddmm(s.due_at)}${s.sname ? ` chez ${s.sname}` : ''} · pas encore revenu`, href: `/projets/${s.project_id}#sst${s.id}`, cta: 'Ouvrir' });
+  }
+  // Chaîne de production générée depuis le devis : à vérifier, puis le carnet part à l'atelier.
+  for (const p of q.all("SELECT * FROM projects WHERE status = 'en_cours' AND prod_status IN ('pret', 'erreur')")) {
+    if (p.prod_status === 'erreur') { items.push({ kind: 'ko', tag: 'Chaîne', title: `${p.name} · chaîne de production non générée`, text: p.prod_error || '', href: `/projets/${p.id}#chaine`, cta: 'Voir' }); continue; }
+    const n = q.get('SELECT COUNT(*) n FROM steps WHERE project_id = ? AND sent = 0', p.id).n;
+    if (n) items.push({ kind: 'wa', tag: 'Chaîne', title: `${p.name} · carnet préparé par l’assistant (${n} fiches)`, text: 'Vérifie les fiches et la matière, puis envoie le carnet à l’atelier. Le planning les montre déjà en prévisionnel.', href: `/carnets/${p.id}`, cta: 'Vérifier le carnet' });
+  }
+  // Devis signé, acompte attendu, mais pas encore de facture d'acompte sur le portail.
+  for (const p of q.all(`SELECT projects.* FROM projects JOIN quotes ON quotes.project_id = projects.id AND quotes.status = 'accepted'
+      WHERE projects.status = 'en_cours' AND projects.deposit_needed = 1 AND projects.deposit_at IS NULL AND quotes.accepted_at <= datetime('now', '-1 day')
+      AND projects.deposit_invoice_id IS NULL AND NOT EXISTS (SELECT 1 FROM documents WHERE documents.project_id = projects.id AND documents.kind = 'facture_acompte') GROUP BY projects.id`)) {
+    if (require('./qonto').on()) continue; // suivi par l'alerte « Facture d’acompte » (Qonto)
+    items.push({ kind: 'wa', tag: 'Facture', title: `${p.name} · facture d’acompte pas encore sur le portail`, text: 'Cockpit ne l’a pas encore envoyée. Tu peux déposer le PDF sur l’OF.', href: `/projets/${p.id}#facture`, cta: 'Déposer' });
+  }
+  const all = [...items, ...require('./automations').alerts()];
+  const later = new Set(q.all('SELECT key FROM snoozes WHERE until > ?', today()).map((x) => x.key));
+  const order = { ko: 0, wa: 1, ok: 2, no: 3 };
+  return all.map((d) => ({ ...d, key: `${d.tag}|${d.href}|${d.title}` }))
+    .filter((d) => !later.has(d.key))
+    .sort((a, b) => (b.primary ? 1 : 0) - (a.primary ? 1 : 0) || (order[a.kind] ?? 9) - (order[b.kind] ?? 9));
+}
+// Au-delà de 3 alertes du même genre, une seule ligne les résume (le détail est sur la page À décider).
+const GROUP_LINK = { Acompte: '/projets?f=acompte', Relance: '/projets?f=acompte', 'Retard prévu': '/projets?f=retard', Entretien: '/machines' };
+function groupDecide(items, max = 3) {
+  const byTag = {};
+  for (const d of items) (byTag[d.tag] = byTag[d.tag] || []).push(d);
+  const out = [], seen = new Set();
+  for (const d of items) {
+    const g = byTag[d.tag];
+    if (g.length <= max) { out.push(d); continue; }
+    if (seen.has(d.tag)) continue;
+    seen.add(d.tag);
+    out.push({ kind: d.kind, tag: d.tag, group: g.length, title: `${g.length} × ${d.tag.toLowerCase()}`, text: g.slice(0, 3).map((x) => x.title.split(' · ')[0]).join(', ') + (g.length > 3 ? '…' : ''),
+      href: GROUP_LINK[d.tag] || `/decider?tag=${encodeURIComponent(d.tag)}`, cta: 'Voir la liste' });
+  }
+  return out;
 }
 function relDays(s) {
   const n = Math.round((parseDate(today()) - parseDate(String(s).slice(0, 10))) / 86400000);
@@ -116,7 +155,7 @@ function projectFromQuote(quote) {
   let clientId = quote.client_id;
   if (!clientId) {
     const existing = q.get('SELECT id FROM clients WHERE lower(email) = lower(?)', quote.signer_email);
-    clientId = existing ? existing.id : Number(q.run('INSERT INTO clients (name, email, kind) VALUES (?, ?, ?)', quote.signer_name, quote.signer_email, 'Particulier').lastInsertRowid);
+    clientId = existing ? existing.id : Number(q.run('INSERT INTO clients (name, email, phone, kind) VALUES (?, ?, ?, ?)', quote.signer_name, quote.signer_email, quote.signer_phone || '', 'Particulier').lastInsertRowid);
     q.run('UPDATE quotes SET client_id = ? WHERE id = ?', clientId, quote.id);
   }
   let projectId = quote.project_id;
@@ -125,9 +164,22 @@ function projectFromQuote(quote) {
     projectId = Number(q.run("INSERT INTO projects (name, kind, client_id, next_action, deposit_asked_at, lead_id) VALUES (?, 'Particulier', ?, 'Lancer le projet', datetime('now'), ?)", name, clientId, patron().id).lastInsertRowid);
     q.run('UPDATE quotes SET project_id = ? WHERE id = ?', projectId, quote.id);
   }
+  q.run("UPDATE projects SET amount_ht = COALESCE(?, amount_ht), family = COALESCE(NULLIF(?, ''), family), source = COALESCE(NULLIF(?, ''), source) WHERE id = ?", quote.amount_ht ?? null, quote.family || '', quote.source || '', projectId);
   q.run("INSERT OR REPLACE INTO phase_overrides (project_id, phase, state, label) VALUES (?, 'Conception', 'c', 'À démarrer')", projectId);
+  syncProjectName(projectId);
   return projectId;
 }
+
+// Le titre d'un projet est le nom du client, en majuscules ; ce qu'on fabrique passe en description.
+const upperName = (s) => String(s || '').trim().toLocaleUpperCase('fr-FR');
+function syncProjectName(projectId) {
+  const p = q.get('SELECT projects.*, clients.name cname FROM projects LEFT JOIN clients ON clients.id = projects.client_id WHERE projects.id = ?', projectId);
+  if (!p || !p.cname) return;
+  const title = upperName(p.cname);
+  if (p.name === title) return;
+  q.run("UPDATE projects SET name = ?, descr = CASE WHEN COALESCE(descr, '') = '' AND ? NOT LIKE 'Commande %' THEN ? ELSE descr END WHERE id = ?", title, p.name, p.name, p.id);
+}
+function syncAllProjectNames() { for (const p of q.all('SELECT id FROM projects WHERE client_id IS NOT NULL')) syncProjectName(p.id); }
 
 // Fiches de l'atelier pour une personne, dans l'ordre du carnet.
 function stepsFor(personId) {
@@ -140,4 +192,4 @@ function stepsFor(personId) {
 const PCOLORS = ['#1A1714', '#6B635A', '#4A443E', '#8C8279', '#2E2925', '#5A534B'];
 const projectColor = (id) => PCOLORS[id % PCOLORS.length];
 
-module.exports = { people, peopleMap, patron, personName, frise, currentPhase, slack, workdays, projectSummary, toDecide, projectFromQuote, stepsFor, projectColor, relDays, iso, addDays };
+module.exports = { upperName, syncProjectName, syncAllProjectNames, people, peopleMap, patron, personName, frise, currentPhase, slack, workdays, projectSummary, toDecide, groupDecide, projectFromQuote, stepsFor, projectColor, relDays, iso, addDays };

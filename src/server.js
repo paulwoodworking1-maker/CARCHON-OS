@@ -10,16 +10,18 @@ const { filePath, sendUpload } = require('./uploads');
 const app = express();
 app.disable('x-powered-by');
 app.set('trust proxy', 1);
-app.use(express.urlencoded({ extended: false, limit: '5mb' }));
+app.use(express.urlencoded({ extended: false, limit: '12mb' })); // vues 3D capturées + réponses longues de Claude
 app.use('/static', express.static(path.join(__dirname, '..', 'public'), { maxAge: '1h' }));
+app.use('/static/vendor/three', express.static(path.join(__dirname, '..', 'node_modules', 'three'), { maxAge: '7d' })); // visionneuse 3D
 app.use(sessionMiddleware);
+const CSP_HASHES = require('./html').inlineHashes().join(' ');
 app.use((req, res, next) => {
   res.set('X-Frame-Options', 'SAMEORIGIN');
   res.set('Referrer-Policy', 'no-referrer');
   res.set('X-Content-Type-Options', 'nosniff');
   res.set('Permissions-Policy', 'camera=(self), microphone=(self), geolocation=()');
   res.set('Content-Security-Policy', [
-    "default-src 'self'", "script-src 'self'", "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+    "default-src 'self'", `script-src 'self' ${CSP_HASHES}`, "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
     "font-src 'self' https://fonts.gstatic.com", "img-src 'self' data: blob:", "media-src 'self' blob:",
     "connect-src 'self'", "object-src 'none'", "base-uri 'self'", "form-action 'self'", "frame-ancestors 'self'",
   ].join('; '));
@@ -27,7 +29,7 @@ app.use((req, res, next) => {
   next();
 });
 
-app.get('/sante', (req, res) => res.type('text').send('ok'));
+app.get('/sante', (req, res) => { try { require('./db').q.get('SELECT 1'); res.type('text').send('ok'); } catch (e) { res.status(500).type('text').send('base indisponible'); } });
 
 // --- Installation (premier démarrage) et connexion du patron ---
 const loginPage = (title, intro, form, flash) => page(title, h`
@@ -78,7 +80,7 @@ const crypto = require('node:crypto');
 const mail = require('./mail');
 const { sha256 } = require('./auth');
 const sessionGen = () => setting('session_gen', '0');
-const patronEmail = () => setting('patron_email', '') || process.env.PATRON_EMAIL || '';
+const patronEmail = () => setting('patron_email', '') || process.env.PATRON_EMAIL || mail.gmailUser();
 
 app.get('/mot-de-passe-oublie', (req, res) => {
   const canMail = mail.configured() && patronEmail();
@@ -157,35 +159,45 @@ app.get('/fichiers/:name', (req, res) => {
 
 // Après chaque modification faite dans le logiciel, le planning automatique se recalcule.
 const automations = require('./automations');
+require('./logic').syncAllProjectNames(); // titres = nom du client en majuscules
 let replanQueued = false;
 app.use((req, res, next) => {
   if (req.method === 'POST' && !req.path.startsWith('/p/') && !req.path.startsWith('/api/')) {
     res.on('finish', () => {
       if (res.statusCode >= 400 || replanQueued) return;
       replanQueued = true;
-      setImmediate(() => { replanQueued = false; automations.changed(); });
+      setImmediate(() => { replanQueued = false; automations.changed(); require('./gcal').changed(); });
     });
   }
   next();
 });
 
 // --- Routes ---
+// Flux iCal privé de l'atelier, pour l'abonnement Google Agenda (protégé par une clé dans l'adresse).
+app.get('/agenda/:t.ics', (req, res) => {
+  const G = require('./gcal');
+  if (!G.checkToken(req.params.t)) return res.status(404).type('text').send('Introuvable');
+  res.type('text/calendar; charset=utf-8').set('cache-control', 'no-cache').send(G.feed());
+});
 app.use('/api/v1', require('./routes/api'));       // liaison Cockpit (clé API)
 app.use('/p', require('./routes/client'));          // portail client (liens privés)
 app.use('/atelier', require('./routes/atelier'));   // iPad
-for (const m of ['patron', 'carnets', 'achats', 'planning', 'reglages', 'portails', 'automatisations', 'catalogue', 'machines', 'charge', 'matiere', 'livraison', 'assistant']) app.use('/', requirePatron, require(`./routes/${m}`));
+for (const m of ['decider', 'patron', 'carnets', 'achats', 'planning', 'reglages', 'portails', 'automatisations', 'catalogue', 'machines', 'charge', 'matiere', 'livraison', 'assistant', 'dossier', 'cnc', 'analyse', 'messages', 'mail', 'chaine', 'panneaux']) app.use('/', requirePatron, require(`./routes/${m}`));
 
 app.use((req, res) => res.status(404).send(page('Introuvable', h`<main class="login"><h1>Page introuvable</h1><p><a href="/">Revenir à l’accueil</a></p></main>`)));
 app.use((err, req, res, next) => {
   console.error(err);
   // Le détail technique n'est montré qu'au patron connecté ; le public voit un message neutre.
-  const detail = req.session?.role === 'patron' ? err.message : 'L’atelier a été prévenu. Réessayez dans un instant.';
-  res.status(500).send(page('Erreur', h`<main class="login"><h1>Un problème est survenu</h1><p class="mut">${detail}</p><p><a href="/" data-back>Revenir</a></p></main>`));
+  const patron = req.session?.role === 'patron';
+  res.status(500).send(page('Erreur', h`<main class="login"><h1>Un problème est survenu</h1><p class="mut">${patron ? 'L’action n’a pas abouti. Reviens en arrière et réessaie ; si ça recommence, note l’heure et ce que tu faisais.' : 'L’atelier a été prévenu. Réessayez dans un instant.'}</p>${patron ? h`<p class="mut t12">Détail : ${err.message}</p>` : ''}<p><a class="btn" href="/" data-back>Revenir</a>${patron ? h` <a class="btn alt" href="/">Tableau de bord</a>` : ''}</p></main>`));
 });
 
 if (require.main === module) {
   const port = Number(process.env.PORT || 3000);
   app.listen(port, () => console.log(`Carchon OS prêt sur http://localhost:${port}`));
   automations.start();
+  require('./sms').start();
+  require('./cockpit').start();
+  require('./gcal').start();
 }
 module.exports = app;

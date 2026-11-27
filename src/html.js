@@ -110,27 +110,30 @@ const ICONS = {
   users: '<circle cx="9" cy="8" r="3"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6M16 5a3 3 0 010 6M21 20c0-2.6-1.6-4.8-4-5.6"/>',
   home: '<path d="M3 11l9-7 9 7v9H3z"/>',
   spark: '<path d="M12 3l2.2 5.8L20 11l-5.8 2.2L12 19l-2.2-5.8L4 11l5.8-2.2z"/>',
+  moon: '<path d="M20 14.5A8 8 0 019.5 4a8 8 0 1010.5 10.5z"/>',
   ipad: '<rect x="5" y="2" width="14" height="20"/><path d="M11 18h2"/>',
 };
 const icon = (k, size = 18) => raw(`<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true">${ICONS[k] || ''}</svg>`);
 
 // Colonne de navigation : [groupe, [[clé, libellé, lien, icône, chemins qui l'activent]]]
 const SIDE = [
-  ['', [['dash', 'Tableau de bord', '/', 'dash', ['/']], ['decider', 'À décider', '/#decider', 'check', []], ['assistant', 'Assistant', '/assistant', 'spark', ['/assistant']]]],
-  ['Fabriquer', [['of', 'Fabrication', '/projets', 'of', ['/projets', '/carnets']], ['catalogue', 'Catalogue', '/catalogue', 'book', ['/catalogue']], ['portails', 'Portails clients', '/portails', 'globe', ['/portails']]]],
+  ['', [['dash', 'Tableau de bord', '/', 'dash', ['/']], ['decider', 'À décider', '/decider', 'check', ['/decider']], ['assistant', 'Assistant', '/assistant', 'spark', ['/assistant']]]],
+  ['Fabriquer', [['of', 'Fabrication', '/projets', 'of', ['/projets', '/carnets']], ['catalogue', 'Catalogue', '/catalogue', 'book', ['/catalogue']], ['portails', 'Portails clients', '/portails', 'globe', ['/portails', '/messages']]]],
   ['Planifier', [['charge', 'Charge', '/charge', 'load', ['/charge']], ['planning', 'Planning', '/planning', 'cal', ['/planning']], ['poses', 'Livraisons et poses', '/poses', 'truck', ['/poses']]]],
   ['Approvisionner', [['stock', 'Matière et stock', '/stock', 'box', ['/stock', '/bois', '/pieces']], ['achats', 'Achats', '/achats', 'cart', ['/achats', '/commandes', '/fournisseurs']]]],
   ['Livrer et garantir', [['exp', 'Expéditions', '/expeditions', 'send', ['/expeditions']], ['sav', 'Qualité et SAV', '/sav', 'shield', ['/sav', '/unites']]]],
-  ['Piloter', [['pilot', 'Heures et coûts', '/pilotage', 'gauge', ['/pilotage']], ['machines', 'Machines', '/machines', 'gear', ['/machines']], ['auto', 'Automatisations', '/automatisations', 'bolt', ['/automatisations']], ['equipe', 'Équipe et réglages', '/equipe', 'users', ['/equipe', '/entreprise']]]],
+  ['Piloter', [['analyse', 'Analyse', '/analyse', 'dash', ['/analyse']], ['pilot', 'Heures et coûts', '/pilotage', 'gauge', ['/pilotage']], ['machines', 'Machines', '/machines', 'gear', ['/machines', '/cnc']], ['auto', 'Automatisations', '/automatisations', 'bolt', ['/automatisations']], ['equipe', 'Équipe et réglages', '/equipe', 'users', ['/equipe', '/entreprise']]]],
 ];
 const TABHOME = { aujourdhui: '/', projets: '/projets', planning: '/planning', stock: '/stock', achats: '/achats', pilotage: '/pilotage' };
 const SUBNAV = {
   projets: [['/projets', 'En cours'], ['/carnets', 'Carnets de fabrication'], ['/projets?vue=termines', 'Terminés']],
   achats: [['/achats', 'À commander'], ['/commandes', 'Commandes en cours'], ['/fournisseurs', 'Fournisseurs']],
-  stock: [['/stock', 'Consommables'], ['/bois', 'Bois noble'], ['/pieces', 'Pièces finies']],
+  stock: [['/stock', 'Consommables'], ['/bois', 'Panneaux et bois'], ['/pieces', 'Pièces finies']],
   pilotage: [['/pilotage', 'Heures et chiffrage'], ['/pilotage/couts', 'Coût par OF']],
   reglages: [['/equipe', 'Équipe'], ['/entreprise', 'Entreprise']],
+  planning: [['/planning', 'Planning atelier'], ['/poses', 'Livraisons et poses'], ['/planning/agenda', 'Google Agenda']],
   sav: [['/sav', 'Demandes SAV'], ['/unites', 'Registre des pièces']],
+  portails: [['/portails', 'Suivi des portails'], ['/portails/envoyer', 'Envoyer un devis'], ['/messages', 'Messages aux clients'], ['/portails/reglages', 'Réglages et e-mails']],
 };
 
 // Compteurs de la colonne (calculés à chaque page, requêtes légères).
@@ -155,6 +158,13 @@ function flashBox(flash) {
   return h`<div class="flash ${flash.kind || 'ok'}" role="status">${flash.html ? raw(flash.html) : flash.text}</div>`;
 }
 
+// Bouton « Passer sur Cockpit » (le CRM) : adresse réglée dans Entreprise › Liaison avec Cockpit.
+function cockpitBtn() {
+  const url = String(require('./db').setting('cockpit_url') || process.env.COCKPIT_URL || '').trim();
+  return url ? h`<a class="btn sm side-switch" href="${url}" target="cockpit" rel="noopener" title="Ouvrir Cockpit, le CRM (vente et finance)">Passer sur Cockpit <span aria-hidden="true">→</span></a>`
+    : h`<a class="btn sm side-switch" href="/entreprise#cockpit" title="Indique l’adresse de Cockpit pour activer ce bouton">Passer sur Cockpit <span aria-hidden="true">→</span></a>`;
+}
+
 // Mise en page « patron » (ordinateur) : colonne à gauche façon Cockpit.
 function layout({ title, tab, sub, body, flash, counts = {}, heading }) {
   const here = sub || TABHOME[tab] || '';
@@ -167,13 +177,14 @@ function layout({ title, tab, sub, body, flash, counts = {}, heading }) {
   return page(title, h`
 <div class="shell">
 <nav class="side" aria-label="Navigation principale">
-  <a href="/" class="side-h"><span class="side-name">Carchon <span>OS</span></span><span class="side-sub">${co.name}</span></a>
+  <a href="/" class="side-h" aria-label="Carchon OS, tableau de bord"><span class="side-brand"><img class="logo side-logo" src="/static/logo.png" alt="Carchon"><span class="side-os">OS</span></span><span class="side-sub">${co.name}</span></a>
   ${SIDE.map(([g, items]) => h`<div class="side-g">${g ? h`<div class="side-gh">${g}</div>` : ''}
     ${items.map(([k, label, href, ic, paths]) => h`<a class="side-a${isOn(paths) ? ' on' : ''}" href="${href}">${icon(ic)}<span>${label}</span>${c[k] ? h`<span class="side-n">${c[k]}</span>` : ''}</a>`)}</div>`)}
   <div class="side-f">
     <a class="side-a" href="/atelier">${icon('ipad')}<span>Mode atelier (iPad)</span></a>
+    <button type="button" class="side-a linkish" data-theme-toggle>${icon('moon')}<span data-theme-label>Mode nuit</span></button>
     <form method="post" action="/deconnexion"><button type="submit" class="side-a linkish">${icon('home')}<span>Se déconnecter</span></button></form>
-    <div class="side-cta"><a class="btn sm" href="/catalogue">+ Lancer un OF</a></div>
+    <div class="side-cta">${cockpitBtn()}</div>
   </div>
 </nav>
 <div class="main">
@@ -182,7 +193,7 @@ function layout({ title, tab, sub, body, flash, counts = {}, heading }) {
   <div class="tools">
     <form action="/recherche" method="get" role="search" class="search"><label class="sr" for="qsearch">Rechercher</label><input id="qsearch" name="q" placeholder="Rechercher un OF, une pièce, un lot" accesskey="k"></form>
     <details class="menu"><summary class="btn sm">+ Créer</summary><div class="menu-list right-al">
-      <a href="/catalogue">Lancer un OF depuis le catalogue</a><a href="/projets/nouveau">OF sur-mesure ou d'atelier</a><a href="/portails?nouveau=1">Envoyer un devis</a><a href="/sav?nouveau=1">Demande SAV</a><a href="/achats#noter">Noter à recommander</a>
+      <a href="/catalogue">Lancer un OF depuis le catalogue</a><a href="/projets/nouveau">OF sur-mesure ou d'atelier</a><a href="/portails/envoyer">Envoyer un devis</a><a href="/sav?nouveau=1">Demande SAV</a><a href="/achats#noter">Noter à recommander</a>
     </div></details>
   </div>
 </header>
@@ -191,6 +202,13 @@ ${subs ? h`<nav class="sub" aria-label="Sous-menu">${subs.map(([href, label]) =>
 </div></div>`);
 }
 
+// Scripts écrits dans la page : autorisés un par un par leur empreinte dans la Content-Security-Policy (server.js).
+const INLINE = {
+  theme: "try{var t=localStorage.getItem('theme');if(t==='dark'||(!t&&matchMedia('(prefers-color-scheme: dark)').matches&&localStorage.getItem('theme-auto')!=='0'))document.documentElement.setAttribute('data-theme','dark')}catch(e){}",
+  importmap3d: '{"imports":{"three":"/static/vendor/three/build/three.module.js"}}',
+};
+const inlineHashes = () => Object.values(INLINE).map((js) => `'sha256-${require('node:crypto').createHash('sha256').update(js).digest('base64')}'`);
+
 function page(title, body, { bodyClass = '', head = '' } = {}) {
   return h`<!doctype html>
 <html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
@@ -198,11 +216,12 @@ function page(title, body, { bodyClass = '', head = '' } = {}) {
 <link rel="icon" href="/static/logo.png">
 <link rel="preconnect" href="https://fonts.googleapis.com"><link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/static/style.css">${head}
+<script>${raw(INLINE.theme)}</script>
 </head><body class="${bodyClass}">${body}<script src="/static/app.js" defer></script></body></html>`.toString();
 }
 
 module.exports = {
   icon, h, raw, esc, pill, avatar, hidden, postBtn, options, layout, page, flashBox,
-  hoursExact, pct, printPage,
+  hoursExact, pct, printPage, INLINE, inlineHashes,
   parseDate, iso, today, addDays, ddmm, ddmmyyyy, longDate, dayMonth, hhmm, rel, hoursLabel, JOURS_C, MOIS_C, MOIS,
 };

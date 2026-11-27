@@ -141,6 +141,7 @@ r.get('/fiche/:id', loadStep, (req, res) => {
 ${plan?.file ? h`<a class="ip-card plan-link" href="${fileUrl(plan.file)}" target="_blank"><b>Plan ${plan.version}</b><span class="mut">${plan.descr || 'Ouvrir le plan'}</span></a>` : ''}
 ${s.note ? h`<div class="note big"><b>Mot du patron :</b> ${s.note}</div>` : ''}
 ${s.audio ? h`<div class="ip-card"><b>Vocal du patron</b><audio controls src="${fileUrl(s.audio)}"></audio></div>` : ''}
+${s.geste === 'Usinage CNC' ? (() => { const progs = q.all('SELECT * FROM cnc_programs WHERE project_id = ? AND active = 1 ORDER BY job_id, sheet, name', s.project_id); return progs.length ? h`<div class="ip-card"><b>Programmes CNC</b>${progs.map((x) => h`<a class="row" href="${fileUrl(x.file)}" download="${x.name}"><span class="grow">${x.name}</span><span class="mut">V${x.version}${x.minutes ? ` · ${Math.round(x.minutes)} min` : ''}</span></a>`)}<p class="mut t12 mt8">Premier passage : lancer d’abord l’essai à vide depuis l’ordinateur.</p></div>` : ''; })() : ''}
 <div class="ip-card"><div class="line"><b>Échanges sur cette fiche</b></div>
 ${msgs.map((m) => h`<div class="msg${m.person_id === req.person.id ? ' me' : ''}"><b>${m.prole === 'patron' ? 'Patron' : m.pname}</b> ${m.body} <span class="mut t12">· ${rel(m.created_at)}</span></div>`)}
 <form method="post" action="/atelier/fiche/${s.id}/message" class="line mt8"><label class="sr" for="m">Écrire au patron</label><input id="m" class="qin" name="body" placeholder="Écrire au patron" required><button class="btn alt">Envoyer</button></form></div>
@@ -166,6 +167,8 @@ r.post('/fiche/:id/prendre', loadStep, (req, res) => {
 r.post('/fiche/:id/commencer', loadStep, (req, res) => {
   if (!mineOrFree(req)) return res.redirect(`/atelier/fiche/${req.step.id}`);
   if (req.step.status !== 'doing') logActivity(req.step.project_id, req.person.id, `Fiche commencée : ${req.step.title}`, req.person.name);
+  // Premier coup de scie sur ce projet : le client est prévenu.
+  if (!q.get('SELECT id FROM steps WHERE project_id = ? AND started_at IS NOT NULL', req.step.project_id)) require('../sms').notify('maj', { projectId: req.step.project_id, quoi: 'début de la fabrication' });
   q.run("UPDATE steps SET status = 'doing', started_at = COALESCE(started_at, datetime('now')), who_id = COALESCE(who_id, ?), seen = 1 WHERE id = ?", req.person.id, req.step.id);
   res.redirect(`/atelier/fiche/${req.step.id}`);
 });
