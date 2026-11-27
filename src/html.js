@@ -118,11 +118,11 @@ const icon = (k, size = 18) => raw(`<svg width="${size}" height="${size}" viewBo
 // Colonne de navigation : [groupe, [[clé, libellé, lien, icône, chemins qui l'activent]]]
 const SIDE = [
   ['', [['dash', 'Tableau de bord', '/', 'dash', ['/']], ['decider', 'À décider', '/decider', 'check', ['/decider']], ['assistant', 'Assistant', '/assistant', 'spark', ['/assistant']]]],
-  ['Fabriquer', [['of', 'Fabrication', '/projets', 'of', ['/projets', '/carnets']], ['catalogue', 'Catalogue', '/catalogue', 'book', ['/catalogue']], ['portails', 'Portails clients', '/portails', 'globe', ['/portails']]]],
+  ['Fabriquer', [['of', 'Fabrication', '/projets', 'of', ['/projets', '/carnets']], ['catalogue', 'Catalogue', '/catalogue', 'book', ['/catalogue']], ['portails', 'Portails clients', '/portails', 'globe', ['/portails', '/messages']]]],
   ['Planifier', [['charge', 'Charge', '/charge', 'load', ['/charge']], ['planning', 'Planning', '/planning', 'cal', ['/planning']], ['poses', 'Livraisons et poses', '/poses', 'truck', ['/poses']]]],
   ['Approvisionner', [['stock', 'Matière et stock', '/stock', 'box', ['/stock', '/bois', '/pieces']], ['achats', 'Achats', '/achats', 'cart', ['/achats', '/commandes', '/fournisseurs']]]],
   ['Livrer et garantir', [['exp', 'Expéditions', '/expeditions', 'send', ['/expeditions']], ['sav', 'Qualité et SAV', '/sav', 'shield', ['/sav', '/unites']]]],
-  ['Piloter', [['pilot', 'Heures et coûts', '/pilotage', 'gauge', ['/pilotage']], ['machines', 'Machines', '/machines', 'gear', ['/machines']], ['auto', 'Automatisations', '/automatisations', 'bolt', ['/automatisations']], ['equipe', 'Équipe et réglages', '/equipe', 'users', ['/equipe', '/entreprise']]]],
+  ['Piloter', [['analyse', 'Analyse', '/analyse', 'dash', ['/analyse']], ['pilot', 'Heures et coûts', '/pilotage', 'gauge', ['/pilotage']], ['machines', 'Machines', '/machines', 'gear', ['/machines', '/cnc']], ['auto', 'Automatisations', '/automatisations', 'bolt', ['/automatisations']], ['equipe', 'Équipe et réglages', '/equipe', 'users', ['/equipe', '/entreprise']]]],
 ];
 const TABHOME = { aujourdhui: '/', projets: '/projets', planning: '/planning', stock: '/stock', achats: '/achats', pilotage: '/pilotage' };
 const SUBNAV = {
@@ -131,8 +131,9 @@ const SUBNAV = {
   stock: [['/stock', 'Consommables'], ['/bois', 'Panneaux et bois'], ['/pieces', 'Pièces finies']],
   pilotage: [['/pilotage', 'Heures et chiffrage'], ['/pilotage/couts', 'Coût par OF']],
   reglages: [['/equipe', 'Équipe'], ['/entreprise', 'Entreprise']],
+  planning: [['/planning', 'Planning atelier'], ['/poses', 'Livraisons et poses'], ['/planning/agenda', 'Google Agenda']],
   sav: [['/sav', 'Demandes SAV'], ['/unites', 'Registre des pièces']],
-  portails: [['/portails', 'Suivi des portails'], ['/portails/envoyer', 'Envoyer un devis'], ['/portails/reglages', 'Réglages et e-mails']],
+  portails: [['/portails', 'Suivi des portails'], ['/portails/envoyer', 'Envoyer un devis'], ['/messages', 'Messages aux clients'], ['/portails/reglages', 'Réglages et e-mails']],
 };
 
 // Compteurs de la colonne (calculés à chaque page, requêtes légères).
@@ -157,6 +158,13 @@ function flashBox(flash) {
   return h`<div class="flash ${flash.kind || 'ok'}" role="status">${flash.html ? raw(flash.html) : flash.text}</div>`;
 }
 
+// Bouton « Passer sur Cockpit » (le CRM) : adresse réglée dans Entreprise › Liaison avec Cockpit.
+function cockpitBtn() {
+  const url = String(require('./db').setting('cockpit_url') || process.env.COCKPIT_URL || '').trim();
+  return url ? h`<a class="btn sm side-switch" href="${url}" target="cockpit" rel="noopener" title="Ouvrir Cockpit, le CRM (vente et finance)">Passer sur Cockpit <span aria-hidden="true">→</span></a>`
+    : h`<a class="btn sm side-switch" href="/entreprise#cockpit" title="Indique l’adresse de Cockpit pour activer ce bouton">Passer sur Cockpit <span aria-hidden="true">→</span></a>`;
+}
+
 // Mise en page « patron » (ordinateur) : colonne à gauche façon Cockpit.
 function layout({ title, tab, sub, body, flash, counts = {}, heading }) {
   const here = sub || TABHOME[tab] || '';
@@ -176,7 +184,7 @@ function layout({ title, tab, sub, body, flash, counts = {}, heading }) {
     <a class="side-a" href="/atelier">${icon('ipad')}<span>Mode atelier (iPad)</span></a>
     <button type="button" class="side-a linkish" data-theme-toggle>${icon('moon')}<span data-theme-label>Mode nuit</span></button>
     <form method="post" action="/deconnexion"><button type="submit" class="side-a linkish">${icon('home')}<span>Se déconnecter</span></button></form>
-    <div class="side-cta"><a class="btn sm" href="/catalogue">+ Lancer un OF</a></div>
+    <div class="side-cta">${cockpitBtn()}</div>
   </div>
 </nav>
 <div class="main">

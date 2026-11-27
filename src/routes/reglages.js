@@ -102,12 +102,18 @@ ${COMPANY_FIELDS.map(([k, label, def]) => h`<label>${label} <input name="${k}" v
 <form method="post" action="/entreprise/cle" data-confirm="Créer une nouvelle clé ? L’ancienne ne marchera plus."><button class="btn alt sm">${setting('api_token') ? 'Créer une nouvelle clé' : 'Créer la clé'}</button></form>
 <h3 class="mt20">Base clientèle</h3>
 <p class="mut mt8">Les clients des projets viennent de Cockpit. ${q.get('SELECT COUNT(*) n FROM clients WHERE cockpit_id IS NOT NULL').n} client(s) synchronisé(s)${setting('cockpit_synced_at') ? `, dernière mise à jour ${rel(setting('cockpit_synced_at'))}` : ''}.${setting('cockpit_error') ? ` Dernière erreur : ${setting('cockpit_error')}.` : ''}</p>
-<form method="post" action="/entreprise/cockpit" class="form mt12"><div class="grid2"><label>Adresse de Cockpit <input name="cockpit_url" value="${setting('cockpit_url') || ''}" placeholder="https://cockpit.carchon.com"></label>
+<form method="post" action="/entreprise/cockpit-clients" class="form mt12"><div class="grid2"><label>Adresse de Cockpit (base clientèle et bouton « Passer sur Cockpit ») <input type="url" name="cockpit_url" value="${setting('cockpit_url') || process.env.COCKPIT_URL || ''}" placeholder="https://cockpit.carchon.com"></label>
 <label>Clé d’accès à Cockpit <input type="password" name="cockpit_key" autocomplete="new-password" placeholder="${setting('cockpit_key') ? 'enregistrée · vide pour la garder' : 'facultative'}"></label></div>
 <div class="line"><button class="btn sm" name="act" value="save">Enregistrer</button>${require('../cockpit').local() ? '' : h`<button class="btn alt sm" name="act" value="sync">Synchroniser les clients maintenant</button>`}</div></form>
 ${require('../cockpit').local() ? h`<p class="mut t13 mt12">Cockpit tourne sur ton ordinateur (${setting('cockpit_url')}) : Carchon OS, en ligne, ne peut pas l’atteindre tout seul. La synchronisation passe par ton navigateur, sur l’ordinateur où Cockpit est ouvert.</p>` : ''}
 ${require('./cockpit-sync').syncTools('/entreprise#cockpit')}
-<p class="mut t12 mt8">Détail technique pour Cockpit : POST /api/v1/affaires, POST /api/v1/affaires/{réf}/acompte, POST /api/v1/clients (sa base clientèle), GET /api/v1/ofs, en-tête « Authorization: Bearer &lt;clé&gt; ». Carchon OS lit aussi GET {Cockpit}/api/v1/clients toutes les heures.</p></section>
+<h3 class="mt20">Devis signés</h3>
+<form method="post" action="/entreprise/cockpit" class="form mt12"><label>Adresse de Cockpit à prévenir quand un devis est signé (webhook) <input name="url" type="url" value="${setting('cockpit_webhook_url') || ''}" placeholder="https://cockpit…/webhooks/carchon"></label><button class="btn alt sm">Enregistrer</button></form>
+${(() => { try { const l = JSON.parse(setting('cockpit_last') || 'null'); return l ? h`<p class="mut t12 mt8">Dernier envoi : ${l.event} · ${l.error ? `échec (${l.error})` : `réponse ${l.status}`} · ${l.at.slice(0, 16).replace('T', ' ')}</p>` : ''; } catch { return ''; } })()}
+<details class="mt12"><summary class="mut t13" style="cursor:pointer">Détail technique pour Cockpit</summary><div class="mut t12 mt8" style="line-height:1.7">
+Entrées (en-tête « Authorization: Bearer &lt;clé&gt; ») : POST /api/v1/affaires · POST /api/v1/affaires/{réf}/acompte · <b>POST /api/v1/affaires/{réf ou n° de devis}/factures</b> (multipart : pdf, type = acompte | solde | autre, numero, montant_ttc, echeance ; ou JSON avec pdf_base64) · <b>POST /api/v1/clients</b> (sa base clientèle) · GET /api/v1/ofs.<br>
+Lecture : Carchon OS lit GET {adresse de Cockpit}/api/v1/clients toutes les heures (clé d’accès ci-dessus en « Bearer »).<br>
+Sortie : à chaque devis signé, POST JSON vers l’adresse ci-dessus, évènement « devis.accepte » (OF, devis, client, lignes, adresse de retour de la facture). Signature : en-tête « X-Carchon-Signature: sha256=… », HMAC SHA-256 du corps avec la clé de liaison.</div></details></section>
 <section class="card mt20 mw680" id="sauvegardes"><h2>Sauvegardes</h2>
 <p class="mut mt8">Chaque nuit, une copie complète de la base est faite sur le disque du serveur ; les ${B.KEEP} dernières sont gardées. Télécharge-en une de temps en temps (par exemple chaque lundi) et range-la sur ton ordinateur ou ton cloud : c'est ta garantie si l'hébergeur a un souci.</p>
 <div class="line mt12"><a class="btn" href="/sauvegarde/maintenant">Télécharger une sauvegarde maintenant</a></div>
@@ -126,13 +132,23 @@ r.get('/sauvegarde/:name', (req, res) => {
   res.download(f, req.params.name.replace('carchon-', 'carchon-os-'));
 });
 
-r.post('/entreprise/cockpit', async (req, res) => {
-  setSetting('cockpit_url', String(req.body.cockpit_url || '').trim());
+r.post('/entreprise/cockpit-clients', async (req, res) => {
+  const url = String(req.body.cockpit_url || '').trim();
+  if (url && !/^https?:\/\/[^\s]+$/i.test(url)) return res.flashTo('/entreprise#cockpit', 'L’adresse de Cockpit doit commencer par https://', 'ko');
+  setSetting('cockpit_url', url);
   if (String(req.body.cockpit_key || '').trim()) setSetting('cockpit_key', String(req.body.cockpit_key).trim());
   if (req.body.act !== 'sync') return res.flashTo('/entreprise#cockpit', 'Liaison Cockpit enregistrée.');
   try { const n = await require('../cockpit').pull(); res.flashTo('/entreprise#cockpit', `${n} client(s) repris de Cockpit.`); }
   catch (e) { res.flashTo('/entreprise#cockpit', `Synchronisation impossible : ${e.message}`, 'ko'); }
 });
+
+r.post('/entreprise/cockpit', (req, res) => {
+  const u = String(req.body.url || '').trim();
+  if (u && !/^https:\/\//.test(u)) return res.flashTo('/entreprise#cockpit', 'L’adresse doit commencer par https://', 'ko');
+  setSetting('cockpit_webhook_url', u);
+  res.flashTo('/entreprise#cockpit', u ? 'Cockpit sera prévenu à chaque devis signé.' : 'Adresse retirée.');
+});
+
 // Clé de la liaison avec Cockpit (montrée une fois à la création).
 r.post('/entreprise/cle', (req, res) => {
   const key = require('node:crypto').randomBytes(24).toString('base64url');

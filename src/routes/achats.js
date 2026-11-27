@@ -163,12 +163,18 @@ ${(lines.length ? lines : o.what.split(', ').map((t) => ({ text: t }))).map((l, 
 r.get('/commandes', (req, res) => {
   const rows = q.all('SELECT orders.*, suppliers.name sname FROM orders LEFT JOIN suppliers ON suppliers.id = orders.supplier_id WHERE arrived_at IS NULL OR arrived_at >= date(\'now\', \'-14 days\') ORDER BY arrived_at IS NOT NULL, ordered_at DESC');
   const waiting = q.all("SELECT needs.text, projects.name FROM needs JOIN projects ON projects.id = needs.project_id WHERE needs.status = 'todo' AND needs.needs_deposit = 1 AND needs.force = 0");
+  const D = require('./dossier');
+  const sst = q.all(`SELECT subcontracts.*, suppliers.name sname, projects.name pname FROM subcontracts JOIN projects ON projects.id = subcontracts.project_id
+    LEFT JOIN suppliers ON suppliers.id = subcontracts.supplier_id WHERE projects.status = 'en_cours' AND subcontracts.status NOT IN ('controle') ORDER BY COALESCE(subcontracts.due_at, '9999')`);
   const body = h`<div class="eb">Achats</div><h1>Commandes en cours</h1>
 <p class="mut mt8">Deux états seulement : commandé, puis arrivé. Un tap quand le colis est là, et l'article repasse en « OK » dans le stock.</p>
 <section class="card mt20">${rows.map((o, i) => h`<div class="it${i ? '' : ' f'}"><div class="grow"><b>${o.sname || '—'}</b><div>${o.what}</div><div class="mut">Commandé le ${ddmm(o.ordered_at)}${o.expected_at ? ` · attendu le ${ddmm(o.expected_at)}` : ''}${o.arrived_at ? ` · arrivé le ${ddmm(o.arrived_at)}` : ''}</div></div>
 <a class="btn alt sm" href="/commandes/${o.id}/bon">Bon de commande</a>${o.arrived_at ? postBtn(`/commandes/${o.id}/arrivee`, 'Arrivé ✓', 'btn sm done', { undo: 1 }) : postBtn(`/commandes/${o.id}/arrivee`, 'Arrivé', 'btn alt')}</div>`)}
 ${rows.length ? '' : h`<p class="mut">Aucune commande en cours.</p>`}</section>
-${waiting.map((w) => h`<p class="mut mt12">${w.text} (${w.name}) n'est pas encore commandé : il attend l'acompte, dans <a href="/achats">« À commander »</a>.</p>`)}`;
+${waiting.map((w) => h`<p class="mut mt12">${w.text} (${w.name}) n'est pas encore commandé : il attend l'acompte, dans <a href="/achats">« À commander »</a>.</p>`)}
+${sst.length ? h`<section class="card mt20"><h2>Chez les sous-traitants</h2><p class="mut">Ce qui est confié à l’extérieur, projet par projet. Le suivi se fait dans l’onglet « Achats et sous-traitance » du projet.</p>
+${sst.map((s, i) => h`<div class="it${i ? '' : ' f'}"><div class="grow"><b>${s.sname || 'Sous-traitant à choisir'}</b><div>${s.what}${s.pieces ? ` · ${s.pieces}` : ''}</div><div class="mut">${s.pname}${s.due_at ? ` · retour prévu le ${ddmm(s.due_at)}` : ''}</div></div>
+${D.isLate(s) ? pill('ko', 'En retard') : pill(s.status === 'a_commander' ? 'no' : 'wa', D.SST_LABEL[s.status])}<a class="btn alt sm" href="/projets/${s.project_id}#sst${s.id}">Ouvrir</a></div>`)}</section>` : ''}`;
   res.send(layout({ title: 'Commandes', tab: 'achats', sub: '/commandes', body, flash: req.flash, counts: counts() }));
 });
 r.post('/commandes/:id/arrivee', (req, res) => {
@@ -188,6 +194,7 @@ r.get('/fournisseurs', (req, res) => {
   const form = (s = {}) => h`<label>Nom <input name="name" value="${s.name || ''}" required></label><label>Contact <input name="contact" value="${s.contact || ''}"></label>
 <div class="grid2"><label>Téléphone <input name="phone" type="tel" value="${s.phone || ''}"></label><label>E-mail <input name="email" type="email" value="${s.email || ''}"></label></div>
 <label>Habitude (délai, mode de commande) <input name="habit" value="${s.habit || ''}" placeholder="ex. commande par mail · livré en 2 jours"></label>
+<label>Délai de livraison habituel (jours ouvrés, sert au planning) <input name="lead_days" inputmode="numeric" value="${s.lead_days ?? ''}" placeholder="ex. 5"></label>
 <label>Note pour l'équipe <textarea name="note" rows="2">${s.note || ''}</textarea></label>`;
   const body = h`<div class="head"><div><div class="eb">Achats</div><h1>Fournisseurs</h1><p class="mut mt8">Un contact et une note, écrits une fois. L'équipe sait qui appeler.</p></div>
 <details class="menu push"><summary class="btn">+ Fournisseur</summary><form method="post" action="/fournisseurs" class="menu-list right-al form pad wide">${form()}<button class="btn sm">Ajouter</button></form></details></div>
@@ -197,11 +204,11 @@ r.get('/fournisseurs', (req, res) => {
 ${rows.length ? '' : h`<section class="card"><p class="mut">Ajoute tes fournisseurs habituels : scierie, droguerie, quincaillerie, négoce de panneaux…</p></section>`}</div>`;
   res.send(layout({ title: 'Fournisseurs', tab: 'achats', sub: '/fournisseurs', body, flash: req.flash, counts: counts() }));
 });
-const supFields = (b) => [str(b.name), str(b.contact), str(b.phone), str(b.email), str(b.habit), str(b.note)];
-r.post('/fournisseurs', (req, res) => { q.run('INSERT INTO suppliers (name, contact, phone, email, habit, note) VALUES (?, ?, ?, ?, ?, ?)', ...supFields(req.body)); res.redirect('/fournisseurs'); });
+const supFields = (b) => [str(b.name), str(b.contact), str(b.phone), str(b.email), str(b.habit), str(b.note), Number(b.lead_days) > 0 ? Math.round(Number(b.lead_days)) : null];
+r.post('/fournisseurs', (req, res) => { q.run('INSERT INTO suppliers (name, contact, phone, email, habit, note, lead_days) VALUES (?, ?, ?, ?, ?, ?, ?)', ...supFields(req.body)); res.redirect('/fournisseurs'); });
 r.post('/fournisseurs/:id', (req, res) => {
   if (req.body.del) q.run('DELETE FROM suppliers WHERE id = ?', req.params.id);
-  else q.run('UPDATE suppliers SET name = ?, contact = ?, phone = ?, email = ?, habit = ?, note = ? WHERE id = ?', ...supFields(req.body), req.params.id);
+  else q.run('UPDATE suppliers SET name = ?, contact = ?, phone = ?, email = ?, habit = ?, note = ?, lead_days = ? WHERE id = ?', ...supFields(req.body), req.params.id);
   res.redirect('/fournisseurs');
 });
 

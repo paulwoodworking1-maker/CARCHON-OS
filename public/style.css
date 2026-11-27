@@ -757,3 +757,190 @@ html[data-theme=dark] [data-keep-colors]{filter:invert(1) hue-rotate(180deg)}
 @media (max-width:760px){.ch-two,.ch-grid{grid-template-columns:1fr}.ch-title{font-size:30px}.ch-panels{grid-template-columns:1fr}}
 .shell .ch-h{font-size:24px;line-height:1.25;text-transform:none;letter-spacing:0}
 .shell .ch-title{font-size:38px;line-height:1.12}
+/* Analyse : diagnostic, barres, colonnes, chiffres. */
+.an-per .btn{min-height:34px}
+.an-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:0 28px}
+.an-grid.one{grid-template-columns:1fr}
+.an-f{display:flex;flex-direction:column;gap:6px;padding:16px 0 16px 14px;border-top:1px solid var(--line2);border-left:3px solid var(--line)}
+.an-f.an-ko{border-left-color:var(--red)}.an-f.an-wa{border-left-color:#6B635A}.an-f.an-ok{border-left-color:var(--ink)}
+.an-split{display:grid;grid-template-columns:minmax(0,2fr) minmax(0,1fr);gap:20px 40px}.an-split.even{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
+@media (max-width:900px){.an-split,.an-split.even{grid-template-columns:1fr}}
+.an-ft{line-height:1.35}
+.an-bars{display:flex;flex-direction:column;gap:6px;margin-top:8px}
+.an-bar{display:grid;grid-template-columns:minmax(110px,26%) minmax(0,1fr) 205px;gap:12px;align-items:center;font-size:13px;padding:3px 0}
+.an-bar:hover{background:var(--gris)}
+.an-bl{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.an-bt{position:relative;height:12px;background:transparent;border-bottom:1px solid var(--line)}
+.an-bt i{position:absolute;left:0;top:1px;bottom:1px;background:var(--ink);border-radius:0 3px 3px 0}
+.an-bt i.bad{background:var(--red)}
+.an-tg{position:absolute;top:-4px;bottom:-4px;width:2px;background:var(--red);margin-left:-1px}
+.an-bv{text-align:right;font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap;font-size:12.5px}
+.legend i.an-lg{display:inline-block;width:2px;height:12px;background:var(--red)}
+.an-cols{width:100%;height:auto;display:block;margin-top:12px;font-family:'Montserrat',system-ui,sans-serif}
+.an-stats{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:14px 24px;margin-top:18px;padding-top:14px;border-top:1px solid var(--line2)}
+.an-stats>div{display:flex;flex-direction:column;gap:2px;min-width:0}
+.an-stats b{font-size:20px;font-weight:600;font-variant-numeric:tabular-nums}
+@media (max-width:640px){.an-bar{grid-template-columns:1fr auto}.an-bt{grid-column:1 / -1;grid-row:2}.an-grid{grid-template-columns:1fr}}
+
+.an-tbl{min-width:0}
+@media (max-width:640px){#objectifs .tbl td,#objectifs .tbl th{padding:10px 4px;font-size:13px}#objectifs .tbl .pill{white-space:normal}}
+.kpi-h{flex-wrap:wrap;row-gap:6px}
+
+/* Portail client · version allégée : texte plus petit, blocs nets, une action principale par écran. */
+body.client{font-size:14px;line-height:1.5}
+body.client .phone{max-width:520px}
+body.client .cl{padding:18px 20px 8px}
+body.client .cl-head{padding:12px 20px}body.client .cl-head img{height:30px}
+body.client .cl h1{font-size:21px;line-height:1.25;margin-top:6px}
+body.client .cl-meta{margin:4px 0 0;font-size:12.5px;color:var(--mut)}
+body.client .mut{font-size:13px}
+body.client .cl-eyebrow{font-size:11px;letter-spacing:.12em}
+body.client .cl-tabs{margin-top:14px}
+body.client .cl-tabs a{font-size:13px;padding:10px 0}
+body.client .cl-step{padding:16px 0 14px}
+body.client .cl-step h2{display:flex;align-items:center;gap:10px;font-size:12px;line-height:16px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;margin:0 0 10px}
+body.client .cl-step h2 .n{flex:none;width:22px;height:22px;border-radius:50%;background:var(--ink);color:#fff;display:inline-flex;align-items:center;justify-content:center;font-size:11px;letter-spacing:0}
+body.client .cl-step.ok h2 .n{background:var(--mut)}
+body.client .cl-step.dim{opacity:.5}
+body.client .cl-step p{margin:0 0 10px}
+body.client .btn{min-height:44px;font-size:14px;padding:10px 16px}
+body.client label{font-size:13px}
+body.client input:not([type=checkbox]):not([type=radio]),body.client select,body.client textarea{min-height:42px;font-size:15px}
+body.client .form{gap:10px}
+body.client .ck.top span{font-size:12.5px;line-height:1.5;color:var(--mut)}
+body.client .cl-btns{display:grid;gap:8px}
+body.client .cl-ok{font-weight:600}
+body.client .code-in{font-size:22px;letter-spacing:10px}
+.cl-sum{display:grid;grid-template-columns:repeat(auto-fit,minmax(0,1fr));grid-auto-flow:column;gap:0;margin:16px 0 0;border-top:1px solid var(--ink);border-bottom:1px solid var(--filet)}
+.cl-sum>div{padding:12px 12px 12px 0;min-width:0}.cl-sum>div+div{border-left:1px solid var(--filet);padding-left:12px}
+.cl-sum dt{font-size:10px;line-height:13px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--mut)}
+.cl-sum dd{margin:4px 0 0;font-size:15px;white-space:nowrap;font-weight:700;font-variant-numeric:tabular-nums}
+.cl-sum dd small{white-space:normal;display:block;font-size:12px;font-weight:400;color:var(--mut)}
+.cl-prog{list-style:none;display:flex;gap:0;margin:16px 0 0;padding:0;counter-reset:s}
+.cl-prog li{flex:1;display:flex;align-items:center;gap:8px;font-size:12px;font-weight:600;color:var(--mut);position:relative}
+.cl-prog li+li::before{content:"";position:absolute;left:-14%;width:12%;top:50%;height:1px;background:var(--filet)}
+.cl-prog span{flex:none;width:24px;height:24px;border-radius:50%;border:1px solid var(--filet);display:inline-flex;align-items:center;justify-content:center;font-size:11px}
+.cl-prog li.c{color:var(--ink)}.cl-prog li.c span{border-color:var(--ink);color:var(--ink)}
+.cl-prog li.d{color:var(--ink)}.cl-prog li.d span{background:var(--ink);border-color:var(--ink);color:#fff}
+body.client .howto{border:0;border-radius:0;background:var(--gris);padding:10px 14px;margin-top:14px;font-size:13px}
+body.client .howto summary{font-weight:600}body.client .howto p{margin:8px 0 2px}
+.cl-bill{border:0;padding:0;margin:4px 0 0;display:grid;gap:10px}
+.cl-bill legend{font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;padding:0;margin-bottom:6px}
+.cl-bill .grid2.cp{grid-template-columns:120px 1fr}
+body.client .next-box{border-radius:0;padding:16px 18px;margin-top:16px}
+body.client .next-box h2{font-size:17px;line-height:1.3;margin:6px 0 4px}
+body.client .next-box p{font-size:13.5px;margin:0 0 12px}
+body.client .next-box.you{background:var(--gris);border-left:3px solid var(--red)}
+body.client .next-box.you .cl-eyebrow{color:var(--ink)}
+body.client .vsteps li{padding:6px 0;grid-template-columns:26px 1fr auto;font-size:13px}
+body.client .vsteps li b{font-size:14px}
+body.client .vsteps .mk{width:20px;height:20px;font-size:10px}
+body.client .hrow{padding:9px 0;font-size:13.5px}body.client .hrow p{font-size:13px}
+body.client .docrow{padding:12px 0;font-size:14px}
+body.client .cl-foot{padding:16px 20px}
+@media (max-width:380px){.cl-prog li{font-size:11px;gap:5px}.cl-bill .grid2,.cl-bill .grid2.cp{grid-template-columns:1fr}}
+
+/* ============ Fiche projet : bandeau « À suivre », onglets, dossier de production, sous-traitance ============ */
+.suivi{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px}
+@media (max-width:900px){.suivi{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.suivi-t{display:flex;flex-direction:column;gap:4px;padding:14px 16px;background:var(--grey2,#F2EFEA);text-decoration:none;color:var(--ink);border-left:3px solid transparent;min-width:0}
+.suivi-t b{font-size:17px;line-height:1.3}
+.suivi-t .h3{margin:0}
+.suivi-t:hover{background:var(--sand2,#EFE6D4)}
+.suivi-t.wa{border-left-color:var(--sandt,#8A6A2E)}
+.suivi-t.ko{border-left-color:var(--red,#A20212)}.suivi-t.ko .mut{color:var(--red,#A20212)}
+.ptabs{display:flex;gap:28px;border-bottom:1px solid var(--line);overflow-x:auto;position:sticky;top:0;background:var(--bg,#fff);z-index:5}
+.ptabs a{white-space:nowrap;padding:14px 0 12px;font-size:12px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:var(--soft,#6B635A);text-decoration:none;border-bottom:2px solid transparent}
+.ptabs a.on{color:var(--ink);border-bottom-color:var(--ink)}
+.ptabs .dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--sandt,#8A6A2E);vertical-align:middle;margin-left:4px}
+.js-tabs .ptab:not(.on){display:none}
+.ptab>.cols{margin-top:8px}
+.carnet-mini{list-style:none;padding:0;margin:0;counter-reset:f}
+.carnet-mini li{display:flex;align-items:center;gap:12px;border-top:1px solid var(--line2);padding:10px 0;counter-increment:f}
+.carnet-mini li::before{content:counter(f);width:26px;font-weight:700;color:var(--mut2,#8B847A);font-size:13px}
+.carnet-mini li a{flex:1;display:flex;flex-direction:column;text-decoration:none;color:var(--ink);min-width:0}
+.carnet-mini li.done a b{text-decoration:line-through;text-decoration-color:var(--mut2,#8B847A)}
+.plansel{border:0;padding:0;margin:0;display:flex;flex-direction:column;gap:8px}
+.plansel legend{font-weight:700;font-size:13px;margin-bottom:6px}
+.dictee{position:relative;display:flex;flex-direction:column;gap:8px}
+.dictee [data-dictee]{align-self:flex-start}
+.dictee [data-dictee].rec{background:var(--red2,#F7E3E3);color:var(--red,#A20212);box-shadow:inset 0 0 0 1px var(--red,#A20212)}
+.qlist{margin:6px 0 0;padding-left:18px}.qlist li{margin:4px 0}
+.sst{border-top:1px solid var(--line2);padding:4px 0}
+.sst.f{border-top:0}
+.sst>summary{list-style:none;cursor:pointer;display:flex;align-items:center;gap:12px;padding:12px 0;flex-wrap:wrap}
+.sst>summary::-webkit-details-marker{display:none}
+.sst>summary .grow{display:flex;flex-direction:column;min-width:0}
+.sst.late>summary b{color:var(--red,#A20212)}
+.sst[open]{padding-bottom:16px}
+.sst-track{list-style:none;padding:0;margin:4px 0 0;display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:4px}
+.sst-track li{background:var(--grey2,#F2EFEA);padding:8px 10px;display:flex;flex-direction:column;font-size:12px;min-width:0}
+.sst-track li span{color:var(--mut2,#8B847A)}
+.sst-track li.d{background:var(--sand2,#EFE6D4)}
+.sst-track li.c{background:var(--ink);color:#fff}.sst-track li.c span{color:#D9D4CC}
+@media (max-width:700px){.sst-track{grid-template-columns:1fr 1fr}}
+.ptab .card,.ptab [id]{scroll-margin-top:64px}
+/* Google Agenda dans le planning, bouton vers Cockpit */
+.pbar.gc{background:#fff;color:var(--ink);box-shadow:inset 3px 0 0 #3E3832,inset 0 0 0 1px var(--line)}
+.legend .gc{background:#fff;box-shadow:inset 0 0 0 1px #3E3832}
+.legend .push{margin-left:auto}
+.side-switch{display:inline-flex;align-items:center;gap:8px}
+
+/* Visionneuse 3D */
+.v3d{position:relative;height:440px;background:#F7F4EF;border:1px solid var(--line);overflow:hidden}
+.v3d canvas{display:block;width:100%!important;height:100%!important;cursor:grab}
+.v3d-msg{position:absolute;inset:0;display:flex;align-items:center;justify-content:center}
+.v3d-bar{position:absolute;left:10px;right:10px;bottom:10px;display:flex;gap:6px;align-items:center;flex-wrap:wrap;pointer-events:none}
+.v3d-bar .chip{pointer-events:auto;min-height:30px;background:#fff}
+.v3d-info{margin-left:auto;background:rgba(255,255,255,.9);padding:4px 8px}
+
+/* Messages aux clients */
+.msg-item{display:grid;gap:6px;padding:14px 0;border-top:1px solid var(--line2)}
+.msg-item:first-child{border-top:0}
+.msg-item textarea{font-size:14px;line-height:1.5}
+.msg-prev summary{cursor:pointer}
+.msg-prev .pre{white-space:pre-wrap;background:var(--gris);padding:10px 12px;margin-top:6px}
+.linkish{background:none;border:0;padding:0;cursor:pointer;text-decoration:underline;color:var(--mut);font:inherit}
+
+/* ============ CNC ============ */
+.grid4{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+@media (max-width:900px){.grid4{grid-template-columns:1fr 1fr}}
+.cnc-new{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px}
+.cnc-src{display:flex;flex-direction:column;gap:8px;padding:16px;background:var(--grey2,#F2EFEA);min-width:0}
+.cnc-src button{align-self:flex-start}
+.cnc-up input[type=file]{max-width:260px}
+.cnc-view{background:#fff;border:1px solid var(--line);padding:8px;overflow:auto}
+.cnc-svg{width:100%;height:auto;display:block;max-height:70vh}
+.cnc-sheet{fill:#F6F3EE;stroke:#1A1714;stroke-width:3}
+.cnc-part{fill:#EFE6D4;stroke:#8B847A;stroke-width:1.5}
+.cnc-lbl{fill:#4A443E;text-anchor:middle;dominant-baseline:middle;font-family:inherit;font-weight:600}
+.cnc-cut{stroke-width:3;stroke-linejoin:round}
+.cnc-rapid{stroke:#8B847A;stroke-width:1.5;stroke-dasharray:10 8;fill:none}
+.cnc-origin{fill:#A20212}
+.cnc-op.off{display:none}
+.cnc-play{display:flex;align-items:center;gap:12px;font-size:13px}
+.cnc-play input{flex:1}
+.cnc-legend{display:flex;gap:14px;flex-wrap:wrap;font-size:12px}
+.cnc-legend i{display:inline-block;width:14px;height:4px;margin-right:5px;vertical-align:middle}
+.cnc-legend i.dash{background:repeating-linear-gradient(90deg,#8B847A 0 4px,transparent 4px 7px)}
+.cnc-ops{columns:2;font-size:12px;margin:8px 0 0;padding-left:20px}
+@media (max-width:700px){.cnc-ops{columns:1}}
+.cnc-parts td{vertical-align:top}
+.cnc-parts input{min-height:36px}
+.cnc-parts textarea{font:12px/1.5 ui-monospace,monospace;min-width:280px}
+.cnc-parts input.nr{width:84px;text-align:right}
+.cnc-parts tr.new td{background:var(--grey2,#F2EFEA)}
+.cnc-toolrow{display:grid;grid-template-columns:56px minmax(140px,2fr) 120px repeat(6,minmax(64px,1fr)) auto;gap:6px;align-items:center}
+.cnc-toolrow input,.cnc-toolrow select{min-height:36px}
+.cnc-toolrow .nr{text-align:right}
+@media (max-width:1000px){.cnc-toolrow{grid-template-columns:repeat(3,1fr)}}
+.labels{display:grid;grid-template-columns:repeat(3,1fr);gap:0}
+.label{border:1px dashed #8B847A;padding:10px 12px;display:flex;flex-direction:column;gap:2px;font-size:12px;break-inside:avoid;min-height:28mm}
+.label b{font-size:15px}
+.nowrap{white-space:nowrap}
+.cnc-parts td:first-child input{min-width:140px}
+.cnc-parts textarea{width:100%;min-width:240px}
+.cnc-parts td.center{text-align:center}
+.cnc-toolhead{padding:10px 8px;border-bottom:1px solid var(--line);font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase}
+.cnc-toolhead .nr{text-align:right}
+@media (max-width:1000px){.cnc-toolhead{display:none}}

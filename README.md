@@ -8,6 +8,8 @@ Le logiciel de fabrication et de logistique de Carchon Les Ateliers, pendant de 
 - **Approvisionner** : bois noble par lot, pièces finies comptées avec seuil boutique, consommables en trois états, achats et fournisseurs.
 - **Livrer et garantir** : contrôle qualité, registre des pièces (numéro, bois, fiches, contrôle, expédition, SAV), expéditions avec bon de livraison, demandes SAV.
 - **Piloter** : heures et chiffrage, coût réel par OF, machines (entretiens à la date ou à l'usage calculé depuis les fiches, pannes, pièces d'usure), automatisations, équipe.
+- **Google Agenda** : les rendez-vous Google s’affichent dans le planning (adresse secrète iCal, lue toutes les 10 min) et le planning de l’atelier est écrit en direct dans un agenda Google « Atelier » (clé de compte de service Google, ou à défaut abonnement par URL). Réglage : Planning › Google Agenda.
+- **Passer sur Cockpit** : bouton en bas de la colonne (adresse dans Équipe et réglages › Entreprise).
 - **Liaison Cockpit** : API `POST /api/v1/affaires`, `POST /api/v1/affaires/{réf}/acompte`, `GET /api/v1/ofs` (clé dans Équipe et réglages › Entreprise).
 
 Le logiciel de l'atelier, construit d'après les maquettes « Carchon OS · version retenue ».
@@ -17,6 +19,27 @@ Le logiciel de l'atelier, construit d'après les maquettes « Carchon OS · vers
 - **Client (téléphone)** : lien privé pour accepter un devis (vérification de l'e-mail par code à 6 chiffres, signature électronique simple, preuve conservée) puis espace de suivi (avancement, date « prête à poser vers le », photos partagées, documents, PV).
 
 Ce qui est encore **manuel** dans cette première version : le PDF du devis est déposé à la main (export Qonto), l'acompte se note dans la fiche projet, les commandes fournisseurs partent par un e-mail pré-rempli.
+
+## Fiche projet et dossier de production
+
+La fiche d’un projet est rangée en quatre onglets, sous la frise et un bandeau « À suivre » (carnet, sous-traitance, achats, livraison) :
+- **Vue d’ensemble** : prochaine action, infos du projet, acompte, temps passé, historique.
+- **Dossier de production** : le carnet de fabrication, sa génération depuis les plans, la liste de débit, les dictées, les plans, les éléments, le contrôle. « Imprimer le dossier » sort tout sur papier.
+- **Achats et sous-traitance** : les commandes aux sous-traitants (à commander → commandé → chez le sous-traitant → revenu → contrôlé), avec bon de commande imprimable, e-mail pré-rempli et devis joint ; les achats liés et le bois réservé. Un retour en retard remonte dans « À décider ».
+- **Client et documents** : journal photo, portail client, documents.
+
+**Générer le carnet** : coche les plans (PDF ou image JPG/PNG) et dicte le travail (bouton « Dicter » sur iPad/Chrome, ou la dictée du clavier). L’assistant (`AI_MODEL`, par défaut `claude-opus-5-5`) lit cotes, assemblages et matières et propose les fiches, la liste de débit et les éléments. La sous-traitance reste ta décision : il tient compte de celles que tu as saisies, sans en proposer. Rien ne part à l’atelier avant « Envoyer à l’atelier ». Nécessite `ANTHROPIC_API_KEY`.
+
+## Usinage CNC
+
+Dans l’onglet **Dossier de production**, le bloc « Usinage CNC » prépare les pièces plates à détourer :
+- **Sources** : la liste de débit du dossier, un CSV de SketchUp (extension OpenCutList › Fiche de débit › Exporter), la lecture des plans par l’assistant, ou une saisie à la main. Un travail est créé par matière et épaisseur.
+- **Usinages**, une ligne par opération, depuis le coin bas-gauche de la pièce : `trou x=37 y=32 d=5 p=13`, `rainure x1=0 y1=10 x2=720 y2=10 l=8 p=8`, `poche x=100 y=50 lo=200 la=80 p=5` (`p=T` = traversant).
+- **Calcul** (code déterministe, l’IA n’écrit jamais de G-code) : imbrication sur les panneaux en respectant le fil, puis perçages → rainures et poches → détourages (petites pièces d’abord, peau laissée et coupée en dernier), outils regroupés, trajets à vide raccourcis, rampes d’entrée, sens de coupe réglable.
+- **Contrôles** avant tout téléchargement : outil disponible, profondeur jamais au-delà du martyr autorisé, pièces et trajets dans la table et le panneau. Un seul point bloquant empêche de télécharger le programme.
+- **Sorties** : programme `.nc` par panneau (post-processeur Weihong NcStudio / NK105 avec changeur, modifiable), essai à vide (Z remontés), DXF par calques pour un logiciel de FAO, étiquettes des pièces, panneaux ajoutés aux achats.
+- **Valider** fige les programmes en version et crée la fiche « Usinage CNC » du carnet (temps machine prévu) ; l’atelier les télécharge depuis l’iPad. Les programmes faits dans un logiciel de FAO (pièces 3D) se déposent dans le même bloc.
+- **Machines › CNC** : bibliothèque d’outils (numéro dans le changeur, Ø, longueur utile, vitesses et avances par matière), réglages machine et post-processeur. **À vérifier avant le premier usinage**, puis faire chaque nouveau programme d’abord à vide.
 
 ## Démarrer
 
@@ -66,6 +89,24 @@ Pour que les clients reçoivent leur code par e-mail, renseigner `SMTP_*` (l'adr
 - **Codes de validation des devis** : soit `BREVO_API_KEY` + `MAIL_FROM` (adresse validée comme expéditeur dans Brevo), soit `GMAIL_USER` + `GMAIL_APP_PASSWORD` (mot de passe d'application Google).
 - **SMS de suivi** : `BREVO_API_KEY` (compte Brevo avec un pack de SMS). Un SMS court part au client à chaque nouveauté de son portail, regroupé sur 15 minutes, jamais la nuit ni le dimanche. Modèles modifiables dans Portails clients › Réglages et e-mails.
 - **Brouillons Gmail** : « Créer le brouillon Gmail » ouvre un message rédigé dans Gmail (rangé dans Brouillons).
+
+## Après la signature d'un devis
+
+1. **Cockpit est prévenu** (Réglages › Entreprise › adresse de Cockpit) : évènement `devis.accepte`, signé HMAC. Cockpit édite la facture d'acompte et la renvoie sur `POST /api/v1/affaires/{réf}/factures` ; elle est publiée sur le portail et le client reçoit un SMS. En secours, la facture se dépose à la main sur l'OF.
+2. **Chaîne de production** (Opus 5.5, réflexion maximale) : le modèle 3D (STEP ou Rhino .3dm) est mesuré pièce par pièce sur le serveur et affiché dans l'OF (visionneuse 3D). Au clic « Générer la production », quatre vues du modèle, la nomenclature mesurée, le devis, les plans et le chiffrage partent à l'assistant, qui rend l'analyse technique, la fiche de débit (cotes finies et brutes), la matière à commander et la gamme de fabrication (sans conception : elle est faite avant le chiffrage). Les fiches arrivent en brouillon. **Avec le forfait Claude** (sans coût d'API) : « Préparer la production avec Claude » télécharge un dossier (.zip : instructions + nomenclature 3D, vues, devis, plans, chiffrage) à déposer dans une conversation claude.ai ; la réponse JSON de Claude est recollée dans Carchon OS, vérifiée, puis appliquée de la même façon.
+3. **Planning** : les fiches de fabrication ne sont pas placées avant la date où toute la matière est là (date de livraison des commandes, sinon délai habituel du fournisseur, plus un jour de réception).
+
+## Facture d'acompte automatique (Qonto)
+
+Quand Qonto est relié, c'est lui qui émet la facture d'acompte ; Cockpit est prévenu (`facture_acompte: "qonto"`, `acompte_attendu: false`) pour ne pas en éditer une deuxième.
+
+Quand un client accepte son devis sur le portail (montant HT indiqué à l'envoi du devis), Carchon OS :
+1. crée ou retrouve le client dans Qonto (avec l'adresse de facturation saisie à l'acceptation) ;
+2. émet dans Qonto la facture d'acompte (40 % du HT par défaut, TVA 20 %, à régler sous 7 jours, reliée au devis Qonto du même numéro) ;
+3. la fait envoyer par e-mail par Qonto, et l'affiche dans l'espace du client (« Voir la facture et payer ») ;
+4. vérifie toutes les 10 minutes si elle est payée : l'acompte passe alors à « reçu » et les achats bloqués se débloquent.
+
+À régler une fois : dans Qonto, **Paramètres › Intégrations et partenariats › Clé API**, puis dans Render › Environment : `QONTO_LOGIN` (identifiant) et `QONTO_SECRET_KEY` (clé secrète). Pourcentage, TVA, échéance, IBAN et texte de l'e-mail : Portails clients › Réglages et e-mails. Les devis de test ne créent jamais de facture. En cas d'échec, « À décider » propose « Réessayer ».
 
 ## Sauvegardes
 

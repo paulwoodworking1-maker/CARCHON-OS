@@ -91,6 +91,7 @@ const QuoteSchema = z.object({
   client_email: z.string(),
   objet: z.string(),
   montant_ttc: z.string(),
+  montant_ht: z.string(),
   acompte: z.string(),
   resume: z.string(),
   lignes: z.array(z.object({ designation: z.string(), quantite: z.string() })),
@@ -99,6 +100,7 @@ async function readQuotePdf(pdfBuffer) {
   const system = `Tu lis un devis d'ébénisterie (PDF) et tu en extrais les informations demandées, telles qu'elles sont écrites. N'invente rien : si une information n'apparaît pas, renvoie "".
 - "objet" : nom court de la pièce ou de l'ouvrage, 2 à 5 mots, ex. "Table à manger · chêne".
 - "montant_ttc" et "acompte" : tels qu'écrits, avec la devise.
+- "montant_ht" : le total hors taxes, en chiffres seulement (ex. "8400,00").
 - "resume" : une phrase sur ce qui est commandé.
 - "lignes" : les lignes d'ouvrage du devis, dans l'ordre (désignation courte, sans prix ; quantité telle qu'écrite, "1" si absente). Ignore les lignes de total, de TVA, d'acompte et de conditions.`;
   return structured({
@@ -191,7 +193,258 @@ Consigne d'ajustement du patron :
   return structured({ system, content, schema: StudySchema, effort: 'high', maxTokens: 32000, timeout: 15 * 60 * 1000 });
 }
 
-// --- 5. Lire une facture de panneaux ou de bois ---
+
+
+// --- 4. Carnet de fabrication lu dans les plans + ce que le patron dicte ---
+// Les plans (PDF ou images) sont envoyés tels quels : le modèle lit les cotes, les assemblages, les matières.
+const PlanCarnetSchema = z.object({
+  fiches: StepsSchema.shape.fiches,
+  debit: z.array(z.object({
+    piece: z.string(),
+    quantite: z.string(),
+    longueur: z.string(),
+    largeur: z.string(),
+    epaisseur: z.string(),
+    matiere: z.string(),
+    remarque: z.string(),
+  })),
+  elements: z.array(z.object({ nom: z.string(), description: z.string() })),
+  questions: z.array(z.string()),
+  remarques: z.string(),
+});
+
+const PLAN_IMG = { '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.webp': 'image/webp', '.gif': 'image/gif' };
+// Transforme les fichiers de plans en blocs lisibles par l'API. Renvoie aussi ceux qui ont été écartés (format, taille).
+function planBlocks(plans, readFile) {
+  const path = require('node:path');
+  const blocks = [], skipped = [];
+  let total = 0;
+  for (const pl of plans) {
+    if (!pl.file) { skipped.push(`${pl.version} (pas de fichier)`); continue; }
+    const ext = path.extname(pl.file).toLowerCase();
+    let buf;
+    try { buf = readFile(pl.file); } catch { skipped.push(`${pl.version} (fichier introuvable)`); continue; }
+    const limit = ext === '.pdf' ? 24 * 1024 * 1024 : 5 * 1024 * 1024;
+    if (buf.length > limit || total + buf.length > 24 * 1024 * 1024) { skipped.push(`${pl.version} (trop lourd)`); continue; }
+    if (ext === '.pdf') blocks.push({ type: 'document', title: `Plan ${pl.version}`, source: { type: 'base64', media_type: 'application/pdf', data: buf.toString('base64') } });
+    else if (PLAN_IMG[ext]) blocks.push({ type: 'image', source: { type: 'base64', media_type: PLAN_IMG[ext], data: buf.toString('base64') } });
+    else { skipped.push(`${pl.version} (format ${ext} non lu : exporter en PDF ou JPG)`); continue; }
+    blocks.push({ type: 'text', text: `↑ Plan ${pl.version}${pl.descr ? ` · ${pl.descr}` : ''}${pl.status === 'validee' ? ' (version validée, fait foi)' : ''}` });
+    total += buf.length;
+  }
+  return { blocks, skipped };
+}
+
+async function carnetFromPlans({ project, plans, readFile, text, people, phases, gestes, averages, existing, subcontracted = [] }) {
+  const { blocks, skipped } = planBlocks(plans, readFile);
+  if (!blocks.length && !String(text || '').trim()) throw new AIError(`Aucun plan lisible ni dictée : ${skipped.join(', ') || 'ajoute un plan PDF ou image, ou dicte le travail.'}`);
+  const system = `Tu prépares le carnet de fabrication d'un projet d'ébénisterie pour l'atelier Carchon Les Ateliers, à partir des plans fournis et de ce que le patron dicte.
+Le carnet = la suite de fiches que l'équipe suit sur l'iPad. Chaque fiche = une étape de travail concrète, faite par une personne, en quelques heures à 2 jours.
+
+Lis les plans attentivement : vues, cotes, nomenclature, cartouche, matières, chants, quincaillerie, assemblages, finitions.
+La dictée du patron prime sur les plans quand ils divergent (c'est la décision la plus récente) ; signale l'écart dans "questions".
+
+Règles :
+- Français d'atelier, court et concret. Titre de 2 à 6 mots ("Débit des caissons", "Placage des chants").
+- "qui" : exactement un des prénoms fournis, ou "" si rien ne permet de choisir.
+- "etape_frise" : exactement une des étapes fournies. "geste" : exactement un des gestes fournis.
+- "heures" : estimation réaliste ; pars de la moyenne de l'atelier pour ce geste si elle existe.
+- "mot_du_patron" : les consignes dictées ou lues sur le plan qui concernent cette fiche (vide sinon). N'invente aucune consigne technique.
+- "reperes" : 0 à 4 points de contrôle courts (cotes clés, sens du fil, équerrage…), tirés des plans.
+- "pieces" : les éléments concernés, avec leur repère du plan s'il existe.
+- Ordre logique de fabrication. N'ajoute pas les fiches qui existent déjà.
+- "debit" : la liste de débit lue sur les plans (une ligne par élément : quantité, longueur × largeur × épaisseur en mm telles qu'écrites, matière). Mets "" pour une cote illisible ou absente : n'en invente jamais.
+- "elements" : les grands éléments de l'ouvrage (caisson, plateau, façades…), 1 à 12, avec une description courte (dimensions hors tout si lisibles).
+- La sous-traitance est décidée par le patron seul : ne propose aucune prestation à confier à l'extérieur. Pour les prestations déjà sous-traitées (liste fournie), ne crée pas de fiche pour le travail fait dehors ; seulement, si utile, la préparation avant départ et le contrôle au retour.
+- "questions" : cotes manquantes, incohérences, choix à trancher avant de lancer (0 à 6 points).
+- "remarques" : une ou deux phrases sur ce qui paraît risqué (ou "").`;
+  const content = [
+    ...blocks,
+    { type: 'text', text: `Projet : ${project.name}${project.ref ? ` (dossier ${project.ref})` : ''}${project.wood ? `\nBois / matière : ${project.wood}` : ''}${project.due_date ? `\nLivraison prévue : ${project.due_date}` : ''}${project.notes ? `\nNotes du dossier : ${project.notes}` : ''}
+Équipe : ${people.map((p) => `${p.name} (${p.sub || 'atelier'})`).join(', ')}
+Étapes de la frise : ${phases.join(', ')}
+Gestes : ${gestes.join(', ')}
+Moyennes réelles de l'atelier (heures par fiche) : ${Object.entries(averages).map(([g, h]) => `${g} ${h.toFixed(1)} h`).join(', ') || 'pas encore de données'}
+Prestations sous-traitées par le patron : ${subcontracted.join(' ; ') || 'aucune'}
+Fiches déjà dans le carnet : ${existing.join(' ; ') || 'aucune'}
+${blocks.length ? '' : 'Aucun plan lisible : travaille seulement depuis la dictée, laisse "debit" vide.\n'}
+Ce que dicte le patron :
+"""${String(text || '').trim() || '(rien : pars uniquement des plans)'}"""` },
+  ];
+  const out = await structured({ system, content, schema: PlanCarnetSchema, effort: 'high', maxTokens: 32000, timeout: 10 * 60 * 1000 });
+  return { ...out, skipped };
+}
+
+
+// --- 4. Chaîne de production : devis + modèle 3D + vues + nomenclature / chiffrage → débit, matière, gamme ---
+// Opus 5.5 à l'effort maximal, en flux (réponse longue : la fiche de débit et la gamme complète).
+const ChainSchema = z.object({
+  analyse: z.string(),
+  pieces: z.array(z.object({ nom: z.string(), description: z.string() })),
+  debit: z.array(z.object({
+    ensemble: z.string(),
+    piece: z.string(),
+    quantite: z.number(),
+    materiau: z.string(),
+    longueur_mm: z.number(),
+    largeur_mm: z.number(),
+    epaisseur_mm: z.number(),
+    brut_longueur_mm: z.number(),
+    brut_largeur_mm: z.number(),
+    brut_epaisseur_mm: z.number(),
+    sens_du_fil: z.string(),
+    note: z.string(),
+  })),
+  matiere: z.array(z.object({
+    categorie: z.enum(['Bois massif', 'Panneaux', 'Quincaillerie', 'Finition', 'Consommables', 'Autre']),
+    designation: z.string(),
+    essence: z.string(),
+    epaisseur: z.string(),
+    quantite: z.number(),
+    unite: z.string(),
+    fournisseur: z.string(),
+    avant_fabrication: z.boolean(),
+  })),
+  fiches: z.array(z.object({
+    titre: z.string(),
+    pieces: z.string(),
+    qui: z.string(),
+    etape_frise: z.string(),
+    geste: z.string(),
+    machine: z.string(),
+    heures: z.number(),
+    mot_du_patron: z.string(),
+    reperes: z.array(z.string()),
+  })),
+  remarques: z.string(),
+});
+
+async function streamStructured({ system, content, schema, effort = 'max', maxTokens = 64000 }) {
+  if (!enabled()) throw new AIError('L’assistant n’est pas activé (clé ANTHROPIC_API_KEY absente).');
+  let msg;
+  try {
+    const stream = api().beta.messages.stream({
+      model: MODEL,
+      max_tokens: maxTokens,
+      betas: ['server-side-fallback-2026-07-01'],
+      fallbacks: 'default',
+      thinking: { type: 'adaptive' },
+      output_config: { effort, format: zodOutputFormat(schema) },
+      system,
+      messages: [{ role: 'user', content }],
+    }, { timeout: 30 * 60 * 1000 });
+    msg = await stream.finalMessage();
+  } catch (e) {
+    if (e instanceof Anthropic.AuthenticationError) throw new AIError('La clé de l’assistant est refusée : vérifie ANTHROPIC_API_KEY.');
+    if (e instanceof Anthropic.RateLimitError) throw new AIError('L’assistant est très demandé : réessaie dans une minute.');
+    if (e instanceof Anthropic.BadRequestError) throw new AIError(`Demande refusée par l’assistant : ${e.message}`);
+    if (e instanceof Anthropic.APIConnectionError) throw new AIError('Impossible de joindre l’assistant (réseau).');
+    if (e instanceof Anthropic.APIError) throw new AIError(`Erreur de l’assistant (${e.status}).`);
+    throw e;
+  }
+  if (msg.stop_reason === 'refusal') throw new AIError('L’assistant a refusé de traiter cette demande.');
+  if (msg.stop_reason === 'max_tokens') throw new AIError('Réponse trop longue : découpe le projet (un fichier 3D par ensemble) et relance.');
+  const text = msg.content.filter((b) => b.type === 'text').map((b) => b.text).join('');
+  try { return schema.parse(JSON.parse(text)); }
+  catch { throw new AIError('Réponse de l’assistant illisible : relance la génération.'); }
+}
+
+function chainPrompt({ project, people, phases, gestes, averages, suppliers, stock, machines }) {
+  const system = `Tu es chef d'atelier et méthodiste dans une ébénisterie haut de gamme (mobilier et luminaires en bois massif, série et sur-mesure). Un projet vient d'être signé. À partir du devis accepté, du modèle 3D (nomenclature mesurée solide par solide), des vues 3D et de la nomenclature ou du chiffrage de l'atelier, tu prépares tout ce qu'il faut pour fabriquer, comme le ferait un méthodiste exigeant. La conception est terminée (elle a été faite avant le chiffrage) : ne crée aucune fiche de conception, de dessin ou de validation de plans.
+
+Ce que tu rends :
+1. "analyse" : la lecture technique du projet en 5 à 12 phrases : structure et ensembles, principes d'assemblage (tenons-mortaises, queues d'aronde, dominos, lamelles…), sens du fil et choix de débit, points délicats, ordre de fabrication retenu et pourquoi.
+2. "pieces" : les ensembles fabriqués avec une description courte (dimensions, essence).
+3. "debit" : la fiche de débit complète, pièce par pièce.
+   - Cotes finies : celles mesurées dans la 3D font foi, sinon celles des plans ou de la nomenclature. N'invente aucune cote : si elle manque, mets 0 et explique dans "note".
+   - Cotes brutes de débit : surcote réaliste en longueur, largeur et épaisseur selon l'usinage (dégauchissage, rabotage, tenons, coupe d'équerre) et l'essence.
+   - "sens_du_fil" : en long, en travers, ou "panneau" ; "note" : assemblage, usinage particulier, choix du bois (fil, maille, aubier).
+4. "matiere" : tout ce qu'il faut acheter ou sortir du stock, regroupé par article.
+   - Bois massif : volume brut en m³ calculé depuis la fiche de débit, plus 25 à 35 % de chute selon l'essence et la qualité (dis le taux dans la désignation), regroupé par essence et épaisseur commerciale (27, 34, 41, 54, 65 mm…).
+   - Panneaux : nombre de panneaux au format commercial, avec optimisation de découpe.
+   - Quincaillerie, colle, finition, abrasifs, consommables : quantités réalistes et unités.
+   - "fournisseur" : un des fournisseurs connus s'il convient, sinon "".
+   - "avant_fabrication" : vrai si c'est nécessaire avant le débit ou l'assemblage.
+   - Ce qui est déjà en stock en quantité suffisante n'est pas à acheter.
+5. "fiches" : la gamme de fabrication, dans l'ordre réel de l'atelier : débit et corroyage par lot de pièces, usinages, montages à blanc, collages (avec temps de séchage), ponçage, finition (couches et séchages), contrôle final, emballage, livraison et pose si le devis en prévoit.
+   - Une fiche = une étape concrète faite par une personne, de 1 h à 2 jours ; découpe les longues opérations. Titre de 2 à 6 mots en français d'atelier.
+   - "pieces" : les pièces concernées, avec leurs repères de la fiche de débit.
+   - "qui" : exactement un des prénoms fournis, selon les spécialités et en équilibrant la charge, ou "".
+   - "etape_frise" : exactement une des étapes fournies (jamais Conception ni Accord). "geste" : exactement un des gestes fournis. "machine" : la machine principale, parmi celles de l'atelier si elle y est, sinon "".
+   - "heures" : réalistes pour un ébéniste confirmé. Si le chiffrage donne des heures, elles font foi et tu les répartis ; sinon pars des moyennes réelles de l'atelier.
+   - "mot_du_patron" : les consignes utiles tirées des documents (cotes clés, réglages, ordre de collage, finition, points à surveiller).
+   - "reperes" : 1 à 5 points de contrôle mesurables (ex. "Équerrage du caisson : diagonales à 1 mm").
+"remarques" : ce qui manque ou est incertain dans les documents et qu'il faut vérifier avant de commander (ou "").`;
+  const intro = `Projet : ${project.name}${project.due_date ? ` · livraison promise le ${project.due_date}` : ''}
+Équipe : ${people.map((p) => `${p.name} (${p.sub || 'atelier'}, ${p.hours_week || 35} h/semaine)`).join(', ')}
+Étapes de la frise : ${phases.filter((x) => !['Conception', 'Accord'].includes(x)).join(', ')}
+Gestes : ${gestes.join(', ')}
+Machines de l'atelier : ${machines.join(', ') || 'non renseignées'}
+Moyennes réelles de l'atelier (heures par fiche) : ${Object.entries(averages).map(([g, h]) => `${g} ${h.toFixed(1)} h`).join(', ') || 'pas encore de données'}
+Fournisseurs connus : ${suppliers.join(', ') || 'aucun'}
+En stock : ${stock.join(', ') || 'rien de suivi'}
+
+Documents du projet ci-dessous.`;
+  return { system, intro };
+}
+async function productionChain(ctx) {
+  const { system, intro } = chainPrompt(ctx);
+  return streamStructured({ system, content: [{ type: 'text', text: intro }, ...ctx.files], schema: ChainSchema });
+}
+
+
+// --- 5. Pièces à usiner à la CNC, lues dans les plans ---
+// L'assistant décrit les pièces et leurs usinages ; il n'écrit jamais de G-code (le moteur de Carchon le calcule et le contrôle).
+const CncSchema = z.object({
+  pieces: z.array(z.object({
+    nom: z.string(),
+    longueur: z.number(),
+    largeur: z.number(),
+    epaisseur: z.number(),
+    quantite: z.number(),
+    matiere: z.string(),
+    sens_du_fil: z.boolean(),
+    usinages: z.array(z.object({
+      type: z.enum(['trou', 'rainure', 'poche']),
+      x: z.number(), y: z.number(), diametre: z.number(),
+      x2: z.number(), y2: z.number(), largeur: z.number(), longueur: z.number(),
+      profondeur: z.number(), traversant: z.boolean(),
+    })),
+  })),
+  questions: z.array(z.string()),
+});
+async function cncFromPlans({ project, plans, readFile, text, debit, materials }) {
+  const { blocks, skipped } = planBlocks(plans, readFile);
+  if (!blocks.length && !String(text || '').trim() && !(debit || []).length) throw new AIError(`Rien à lire : ${skipped.join(', ') || 'ajoute un plan ou une liste de débit.'}`);
+  const system = `Tu prépares les pièces à usiner sur une CNC à table à dépression, pour un atelier d'ébénisterie, à partir des plans fournis.
+Tu ne produis JAMAIS de G-code : seulement la description des pièces et de leurs usinages ; le logiciel calcule les parcours et les contrôle.
+
+Pour chaque pièce plate à détourer à la CNC (joues, tablettes, fonds, façades, traverses…) :
+- "longueur" (axe X de la pièce) et "largeur" (axe Y) en mm, finies, telles que cotées ; "epaisseur" en mm ; "quantite".
+- "matiere" : une des matières fournies si possible.
+- "sens_du_fil" : true si la pièce a un fil ou un décor à respecter (bois, placage, décor bois) le long de sa longueur ; false pour mélaminé uni, MDF.
+- "usinages", repérés depuis le coin bas-gauche de la pièce vue de dessus (face usinée), en mm :
+  - trou : x, y = centre ; diametre ; profondeur, ou traversant=true.
+  - rainure : de (x, y) à (x2, y2) sur l'axe de la rainure, parallèle à un bord ; largeur ; profondeur.
+  - poche : x, y = coin bas-gauche ; longueur (X) ; largeur (Y) ; profondeur.
+  - Mets 0 dans les champs inutiles pour le type.
+- Système 32 : rangées de trous Ø5 à 37 mm du chant, entraxe 32 mm, seulement s'ils sont dessinés ou dictés.
+- N'invente aucune cote ni aucun usinage : une cote absente va dans "questions" et l'usinage n'est pas ajouté.
+- Ignore les pièces qui ne passent pas à la CNC (massif tourné, quincaillerie, verre…).
+"questions" : cotes manquantes, face d'usinage à confirmer, incohérences (0 à 8).`;
+  const content = [
+    ...blocks,
+    { type: 'text', text: `Projet : ${project.name}${project.wood ? `\nMatière : ${project.wood}` : ''}
+Matières de la bibliothèque : ${materials.join(', ')}
+${(debit || []).length ? `Liste de débit déjà lue dans le dossier :\n${debit.map((d) => `- ${d.piece} · ${d.quantite} × ${d.longueur} × ${d.largeur} × ${d.epaisseur} · ${d.matiere}`).join('\n')}\n` : ''}
+Précisions du patron :
+"""${String(text || '').trim() || '(aucune)'}"""` },
+  ];
+  const out = await structured({ system, content, schema: CncSchema, effort: 'high', maxTokens: 32000, timeout: 10 * 60 * 1000 });
+  return { ...out, skipped };
+}
+
+// --- 6. Lire une facture de panneaux ou de bois ---
 const InvoiceSchema = z.object({
   fournisseur: z.object({ nom: z.string(), email: z.string(), telephone: z.string() }),
   numero: z.string(),
@@ -212,4 +465,4 @@ async function readInvoicePdf(pdfBuffer) {
     content: [{ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: pdfBuffer.toString('base64') } }, { type: 'text', text: 'Extrais les lignes de cette facture.' }] });
 }
 
-module.exports = { enabled, carnetFromText, readQuotePdf, clientUpdate, chainStudy, readInvoicePdf, AIError, MODEL };
+module.exports = { readInvoicePdf, enabled, carnetFromText, carnetFromPlans, cncFromPlans, planBlocks, readQuotePdf, clientUpdate, productionChain, chainPrompt, ChainSchema, chainStudy, AIError, MODEL };

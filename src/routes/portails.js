@@ -2,10 +2,11 @@
 // Portails clients côté patron : envoyer un devis à accepter, ouvrir / couper les espaces clients.
 const express = require('express');
 const fs = require('node:fs');
-const { q, tx, setting, setSetting, logActivity } = require('../db');
+const { q, tx, setting, setSetting, logActivity, FAMILIES, SOURCES } = require('../db');
+const Q = require('../qonto');
 const { h, layout, pill, postBtn, options, ddmm, ddmmyyyy, addDays, today, rel } = require('../html');
 const { token, sha256 } = require('../auth');
-const { upload, filePath } = require('../uploads');
+const { upload, uploadDocs, filePath } = require('../uploads');
 const L = require('../logic');
 const ai = require('../ai');
 
@@ -216,6 +217,21 @@ ${Object.entries(SMS.EVENTS).map(([k, [label, def]]) => h`<fieldset class="smsev
 <div class="line"><button class="btn sm">Enregistrer</button></div></form>
 ${SMS.configured() ? h`<form method="post" action="/portails/sms/test" class="line mt12"><label class="sr" for="smsto">Portable</label><input id="smsto" name="to" type="tel" placeholder="Ton portable" required style="max-width:220px"><button class="btn alt sm">M’envoyer un SMS de test</button></form>` : ''}</section>
 
+<section class="card mt20 mw680" id="qonto"><h2>Facture d’acompte automatique (Qonto)</h2>
+${Q.configured() ? h`<p class="mt8">${pill('ok', 'Relié à Qonto')} Dès qu’un client accepte son devis sur le portail, la facture d’acompte est créée dans Qonto (numéro automatique) et envoyée au client par e-mail depuis Qonto. Quand Qonto la voit payée, l’acompte passe à « reçu » et les achats bloqués se débloquent.</p>
+<form method="post" action="/portails/qonto/test" class="line mt12"><button class="btn alt sm">Tester la liaison</button></form>`
+  : h`<p class="mt8">${pill('ko', 'Pas encore relié')} Pour que la facture parte toute seule :</p>
+<ol class="steps mt8"><li>Dans Qonto (app.qonto.com) : <b>Paramètres › Intégrations et partenariats › Clé API</b>. Note ton <b>identifiant</b> et génère la <b>clé secrète</b>.</li>
+<li>Dans Render › carchon-os › <b>Environment</b> : <code>QONTO_LOGIN</code> = l’identifiant, <code>QONTO_SECRET_KEY</code> = la clé secrète. Save, rebuild and deploy.</li></ol>`}
+<form method="post" action="/portails/qonto" class="form mt12">
+<label class="ck"><input type="checkbox" name="auto" value="1" ${setting('qonto_auto_deposit', '1') === '1' ? 'checked' : ''}> Créer et envoyer la facture d’acompte dès l’acceptation du devis</label>
+<div class="grid2"><label>Acompte (% du montant HT) <input name="percent" inputmode="decimal" value="${Q.opts().percent}"></label><label>TVA (%) <input name="vat" inputmode="decimal" value="${Q.opts().vat}"></label></div>
+<div class="grid2"><label>À régler sous (jours) <input name="due" inputmode="numeric" value="${Q.opts().dueDays}"></label><label>IBAN (vide = compte principal Qonto) <input name="iban" value="${setting('qonto_iban', '')}"></label></div>
+<label>Objet de l’e-mail <input name="title" value="${Q.opts().title}"></label>
+<label>Message <textarea name="body" rows="7">${Q.opts().body}</textarea></label>
+<p class="mut t12">Mots remplacés : {prenom} {projet} {devis} {pourcent} {montant} {echeance} {entreprise}. Le montant HT doit être indiqué à l’envoi du devis. Les devis de test ne créent jamais de facture.</p>
+<button class="btn sm">Enregistrer</button></form></section>
+
 <section class="card mt20 mw680"><h2>${testMode() ? 'Mode test' : 'Mode réel'}</h2>
 <form method="post" action="/portails/reglages" enctype="multipart/form-data" class="form mt12"><label class="ck"><input type="checkbox" name="test" value="1" ${testMode() ? 'checked' : ''}> Mode test (pages marquées « sans valeur contractuelle », seules les adresses de test reçoivent un lien)</label>
 <label>Adresses de test, séparées par des virgules <input name="emails" value="${setting('portal_test_emails') || ''}"></label>
@@ -224,6 +240,21 @@ ${setting('cgv_file') ? h`<p class="mut">CGV actuelles : <a href="/fichiers/${se
 <button class="btn sm">Enregistrer</button></form>
 <p class="mut t12 mt8">Le passage en réel se fait après l'avis de ton juriste.</p></section>`;
   res.send(layout({ title: 'Réglages des portails', heading: 'Portails clients', tab: SUB, sub: '/portails/reglages', body, flash: req.flash }));
+});
+r.post('/portails/qonto', (req, res) => {
+  const b = req.body; const n = (v) => Number(String(v ?? '').replace(',', '.'));
+  setSetting('qonto_auto_deposit', b.auto ? '1' : '0');
+  if (n(b.percent) > 0 && n(b.percent) <= 100) setSetting('deposit_percent', String(n(b.percent)));
+  if (n(b.vat) >= 0 && n(b.vat) <= 30 && str(b.vat) !== '') setSetting('deposit_vat', String(n(b.vat)));
+  if (n(b.due) >= 0 && str(b.due) !== '') setSetting('deposit_due_days', String(Math.round(n(b.due))));
+  setSetting('qonto_iban', str(b.iban).replace(/\s/g, '').toUpperCase());
+  setSetting('deposit_mail_title', str(b.title).slice(0, 200));
+  setSetting('deposit_mail_body', String(b.body || '').trim().slice(0, 3000));
+  res.flashTo('/portails/reglages#qonto', 'Réglages de la facture d’acompte enregistrés.');
+});
+r.post('/portails/qonto/test', async (req, res) => {
+  try { const t = await Q.test(); res.flashTo('/portails/reglages#qonto', `Liaison Qonto OK : ${t.name}${t.iban ? ` · IBAN ${t.iban.slice(0, 4)}…${t.iban.slice(-4)}` : ''}.`); }
+  catch (e) { res.flashTo('/portails/reglages#qonto', e.message, 'ko'); }
 });
 r.post('/portails/sms', (req, res) => {
   const b = req.body;
@@ -276,9 +307,19 @@ ${draft?.resume ? h`<p class="mut mt12">Lu par l’assistant : ${draft.resume}${
 <div class="grid2"><label>N° du devis <input name="number" required placeholder="D-(2026)-00399" value="${draft?.number || ''}"></label><label>Projet (nom court) <input name="project_name" placeholder="ex. Table à manger · chêne" value="${draft?.project_name || ''}"></label></div>
 ${draft?.pdf ? h`<p class="mut">PDF du devis déposé ✓ <a href="/portails/devis/annuler?nouveau=1">changer</a></p>` : h`<label>PDF du devis${from ? ' (nouvelle version)' : ''} (exporté de Qonto) <input type="file" name="pdf" accept="application/pdf" required></label>`}
 <div class="grid2"><label>Qui signe <input name="signer_name" required value="${draft?.signer_name || ''}"></label><label>Son e-mail <input type="email" name="signer_email" required value="${draft?.signer_email || ''}"></label></div>
+<div class="grid2"><label>Montant HT (€) <input name="amount_ht" inputmode="decimal" value="${draft?.amount_ht ?? ''}" placeholder="ex. 8400"></label><label>Famille <select name="family"><option value="">—</option>${options(FAMILIES, draft?.family)}</select></label></div>
+<label>Comment ce client t'a trouvé <select name="source"><option value="">—</option>${options(SOURCES, draft?.source)}</select></label>
 <label>Son portable (pour les SMS de suivi, facultatif) <input type="tel" name="signer_phone" placeholder="06 12 34 56 78" value="${draft?.signer_phone || ''}"></label>
 <label>Lignes du devis, une par ligne : « désignation ; quantité » <textarea name="lines" rows="5" placeholder="Table à manger chêne 220 × 95 cm ; 1&#10;Allonges 50 cm ; 2&#10;Livraison et installation ; 1">${linesText(draft?.lines)}</textarea></label>
 <p class="mut t12">Facultatif, mais conseillé : le client pourra ajuster chaque ligne (modifier, retirer, changer la quantité) au lieu d’écrire un long message.</p>
+<fieldset class="card warm m0"><legend class="b">Pour préparer la fabrication (facultatif)</legend>
+<p class="mut t13">À la signature, l’assistant lit le devis et ces fichiers, puis crée les pièces, le carnet de fabrication et la liste de matière à commander. Le planning démarre quand toute la matière est livrée.</p>
+<label>Modèle 3D : STEP (TopSolid, Rhino…) ou Rhino .3dm <input type="file" name="modele3d" multiple accept=".step,.stp,.3dm,.igs,.iges"></label>
+<label>Vues et plans : PDF ou images <input type="file" name="plan3d" multiple accept=".pdf,.png,.jpg,.jpeg,.webp"></label>
+<label>Nomenclature, liste de débit ou chiffrage : CSV, Excel ou PDF <input type="file" name="chiffrage" multiple accept=".csv,.xlsx,.txt,.pdf"></label>
+${draft?.extra?.length ? h`<p class="mut t12">Déjà joints : ${draft.extra.map((f) => f.name).join(', ')}</p>` : ''}
+${from ? (() => { const prevFiles = q.all('SELECT name FROM quote_files WHERE number = ?', from.number); return prevFiles.length ? h`<p class="mut t12">Fichiers de la version précédente repris : ${prevFiles.map((f) => f.name).join(', ')}</p>` : ''; })() : ''}
+<p class="mut t12">Le modèle 3D est mesuré pièce par pièce (longueur × largeur × épaisseur) et affiché dans l’OF. Garde un nom par pièce et un calque (ou sous-ensemble) par ensemble : la nomenclature en sera plus juste.</p></fieldset>
 <label>Rattacher à un projet existant (nouvelle version) <select name="project_id"><option value="">Non : l’acceptation crée la commande</option>${options(q.all("SELECT id, name FROM projects WHERE status = 'en_cours' ORDER BY name").map((p) => [p.id, p.name]), draft?.project_id)}</select></label>
 <fieldset class="chips m0"><legend>Valable</legend>${['15', '30'].map((d) => h`<label class="chip"><input type="radio" name="days" value="${d}" ${d === '30' ? 'checked' : ''}>${d} jours</label>`)}</fieldset>
 <ul class="mut checklist"><li>PDF du devis repris tel quel, empreinte calculée</li><li>CGV jointes ${setting('cgv_file') ? '' : '(aucune CGV déposée : à ajouter dans Réglages)'}</li><li>Le client accepte exactement ce document</li><li>Même numéro qu’un devis déjà envoyé : l’ancien lien se ferme tout seul</li></ul>
@@ -299,7 +340,7 @@ r.post('/portails/devis/lire', upload.single('pdf'), async (req, res, next) => {
   if (!req.file || !/\.pdf$/.test(req.file.filename)) return res.flashTo('/portails/envoyer', 'Il faut un PDF.', 'ko');
   try {
     const x = await ai.readQuotePdf(fs.readFileSync(req.file.path));
-    req.session.draftQuote = { ...(req.session.draftQuote || {}), pdf: req.file.filename, number: x.numero, signer_name: x.client_nom, signer_email: x.client_email, project_name: x.objet, resume: x.resume, montant: x.montant_ttc, acompte: x.acompte,
+    req.session.draftQuote = { ...(req.session.draftQuote || {}), pdf: req.file.filename, number: x.numero, signer_name: x.client_nom, signer_email: x.client_email, project_name: x.objet, resume: x.resume, montant: x.montant_ttc, acompte: x.acompte, amount_ht: x.montant_ht ? String(x.montant_ht).replace(/[^\d,.]/g, '') : '',
       lines: (x.lignes || []).map((l) => ({ d: l.designation, q: l.quantite || '1' })) };
     res.saveSession();
     res.redirect('/portails/envoyer');
@@ -317,8 +358,11 @@ r.get('/portails/devis/annuler', (req, res) => {
   res.redirect('/portails/envoyer');
 });
 
-r.post('/portails/devis', upload.single('pdf'), (req, res) => {
+r.post('/portails/devis', uploadDocs.fields([{ name: 'pdf', maxCount: 1 }, { name: 'modele3d', maxCount: 4 }, { name: 'plan3d', maxCount: 10 }, { name: 'chiffrage', maxCount: 6 }]), (req, res) => {
   const b = req.body;
+  const extra = [...(req.files?.modele3d || []).map((f) => ({ kind: 'modele3d', file: f.filename, name: f.originalname })), ...(req.files?.plan3d || []).map((f) => ({ kind: 'plan3d', file: f.filename, name: f.originalname })), ...(req.files?.chiffrage || []).map((f) => ({ kind: 'chiffrage', file: f.filename, name: f.originalname }))];
+  req.file = req.files?.pdf?.[0];
+  if (req.file && !/\.pdf$/i.test(req.file.originalname)) req.file = null;
   const draft = req.session.draftQuote;
   if (!req.file && draft?.pdf) req.file = { filename: draft.pdf, path: filePath(draft.pdf) };
   delete req.session.draftQuote;
@@ -328,7 +372,7 @@ r.post('/portails/devis', upload.single('pdf'), (req, res) => {
   if (isTest && req.body.allow_test && email) setSetting('portal_test_emails', [...new Set([...testEmails(), email])].join(', '));
   if (isTest && !testEmails().includes(email)) {
     // On garde le PDF et ce qui a été saisi : il suffit d'autoriser l'adresse puis de renvoyer.
-    req.session.draftQuote = { ...(draft || {}), pdf: req.file.filename, number: str(b.number), project_name: str(b.project_name), signer_name: str(b.signer_name), signer_email: email, signer_phone: str(b.signer_phone), lines: parseLines(b.lines), project_id: b.project_id || null };
+    req.session.draftQuote = { ...(draft || {}), pdf: req.file.filename, amount_ht: str(b.amount_ht), family: str(b.family), source: str(b.source), number: str(b.number), project_name: str(b.project_name), signer_name: str(b.signer_name), signer_email: email, signer_phone: str(b.signer_phone), lines: parseLines(b.lines), project_id: b.project_id || null, extra: [...(draft?.extra || []), ...extra] };
     return res.flashTo('/portails/envoyer', `Mode test : ${email} n’est pas une adresse de test. Clique « Autoriser cette adresse et envoyer », ou passe le portail en mode réel dans Réglages.`, 'ko');
   }
   const number = str(b.number);
@@ -344,6 +388,11 @@ r.post('/portails/devis', upload.single('pdf'), (req, res) => {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?)`, projectId, prev?.client_id || null, number, prev ? prev.version + 1 : 1, req.file.filename, sha256(fs.readFileSync(req.file.path)),
     cgv, cgv ? sha256(fs.readFileSync(filePath(cgv))) : null, str(b.signer_name), email, str(b.project_name) || prev?.project_name || '', addDays(today(), days), sha256(t), isTest ? 1 : 0, JSON.stringify(parseLines(b.lines)), SMS.seal(t), str(b.signer_phone) || prev?.signer_phone || '').lastInsertRowid);
   });
+  { const a = Number(str(b.amount_ht).replace(/[\s\u00a0\u202f€]/g, '').replace(',', '.'));
+    q.run('UPDATE quotes SET amount_ht = ?, family = ?, source = ? WHERE id = ?', str(b.amount_ht) && Number.isFinite(a) ? a : prev?.amount_ht ?? null,
+      FAMILIES.includes(b.family) ? b.family : prev?.family || '', SOURCES.includes(b.source) ? b.source : prev?.source || '', newId); }
+  // Vues 3D et nomenclature / chiffrage : gardés avec le devis, l'assistant s'en sert à l'acceptation.
+  for (const f of [...(draft?.extra || []), ...extra]) q.run('INSERT INTO quote_files (number, kind, file, name) VALUES (?, ?, ?, ?)', number, f.kind, f.file, f.name);
   SMS.notify('devis', { quoteId: newId });
   const url = `${base(req)}/p/devis/${t}`;
   req.session.shownLink = { title: `Lien d’acceptation créé pour ${str(b.signer_name)} · valable ${days} jours`, url, to: email,

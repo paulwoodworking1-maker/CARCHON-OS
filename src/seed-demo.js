@@ -56,6 +56,15 @@ tx(() => {
   const ff = q.run("INSERT INTO suppliers (name, contact, email, habit, note) VALUES ('Fournisseur finition', '[nom]', 'finition@example.com', 'commande habituelle par mail · livré en 2 jours', 'Grouper avec les abrasifs pour le franco de port.')").lastInsertRowid;
   const sc = q.run("INSERT INTO suppliers (name, contact, phone, habit, note) VALUES ('Scierie', '[nom]', '0600000000', 'devis bois sur demande · délai 1 à 2 semaines', 'Demander des plateaux du même lot pour les pièces visibles.')").lastInsertRowid;
   q.run("INSERT INTO suppliers (name, contact, phone, note) VALUES ('Quincaillerie', '[comptoir]', '0600000001', 'Au comptoir, c’est plus rapide quand c’est urgent.')");
+  const lq = q.run("INSERT INTO suppliers (name, contact, email, habit, subcontractor) VALUES ('Laquage', '[nom]', 'laquage@example.com', 'laquage et vernis industriel · délai 8 à 10 jours', 1)").lastInsertRowid;
+  q.run("INSERT INTO subcontracts (project_id, supplier_id, what, pieces, qty, spec, price, status, ordered_at, sent_at, due_at) VALUES (?, ?, 'Laquage des façades', '4 façades de tiroir', '4 pièces', 'Blanc mat, 2 faces, chants compris', 280, 'envoye', date('now', '-9 days'), date('now', '-6 days'), date('now', '-1 days'))", p1, lq);
+  q.run("INSERT INTO carnet_runs (project_id, plans, dictation, questions, debit, n) VALUES (?, 'V2', 'Plateau en noyer, Nina débite. Façades au laquage.', '[\"Épaisseur du plateau non cotée\"]', '[{\"piece\":\"Plateau\",\"quantite\":\"1\",\"longueur\":\"1800\",\"largeur\":\"950\",\"epaisseur\":\"\",\"matiere\":\"Noyer\",\"remarque\":\"\"}]', 6)", p1);
+  q.run("INSERT INTO cnc_jobs (project_id, name, material, thickness, parts, source) VALUES (?, 'Mélaminé 19 mm', 'Mélaminé', 19, ?, 'démo')", p2, JSON.stringify([
+    { name: 'Joue', l: 2100, w: 560, qty: 2, grain: false, ops_text: 'trou x=37 y=37 d=5 p=13\ntrou x=37 y=69 d=5 p=13\nrainure x1=0 y1=10 x2=2100 y2=10 l=8 p=8' },
+    { name: 'Tablette', l: 762, w: 540, qty: 5, grain: false, ops_text: '' },
+    { name: 'Fond', l: 2090, w: 780, qty: 1, grain: false, ops_text: 'poche x=200 y=200 lo=120 la=60 p=6\ntrou x=1045 y=390 d=12 p=T' },
+    { name: 'Taquet', l: 60, w: 40, qty: 4, grain: false, ops_text: '' },
+  ]));
   q.run('UPDATE stock_items SET supplier_id = ? WHERE category = ?', ff, 'Droguerie');
   const vernis = q.get("SELECT id FROM stock_items WHERE name = 'Vernis mat'").id;
   q.run('UPDATE stock_items SET state = 2 WHERE id = ?', vernis);
@@ -129,5 +138,70 @@ tx(() => {
   const sh = q.run("INSERT INTO shipments (project_id, recipient, carrier, tracking, packing, shipped_at, delivered_at) VALUES (?, 'Boutique · client web', '[Transporteur]', '[N° de suivi]', 'Carton double cannelure', ?, ?)", lot, `${d(-1)} 10:00:00`, `${d(0)} 09:00:00`).lastInsertRowid;
   q.run("UPDATE units SET status = 'livree', shipment_id = ?, reserved_for = '' WHERE id = ?", sh, units[0].id);
   q.run("INSERT INTO sav (unit_id, project_id, client, body) VALUES (?, ?, 'Client boutique', 'La lumière clignote quand on touche le pavillon.')", units[0].id, lot);
+});
+// Historique de 12 mois (affaires terminées, devis, problèmes, commandes) pour la page Analyse.
+tx(() => {
+  const { FAMILIES, SOURCES } = require('./db');
+  let seed = 7; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  const pick = (a) => a[Math.floor(rnd() * a.length)];
+  setSetting('hourly_rate', '45');
+  q.run("UPDATE projects SET amount_ht = 6800, material_ht = 1500, family = 'Pièce signature', source = 'Client livré, parrainage' WHERE name = 'Table à manger · chêne'");
+  q.run("UPDATE projects SET amount_ht = 14200, family = 'Agencement sur mesure', source = 'Prescripteur (architecte, décorateur)' WHERE name = 'Bibliothèque · noyer'");
+  const kinds = [
+    ['Table basse · noyer', 'Pièce signature', 4200, 38], ['Buffet · chêne', 'Pièce signature', 7600, 70], ['Dressing · chêne', 'Agencement sur mesure', 12500, 120],
+    ['Bibliothèque murale', 'Agencement sur mesure', 16800, 150], ['Comptoir de boutique', 'Projet pro', 9800, 95], ['Banquette de restaurant', 'Projet pro', 7200, 80],
+    ['Étagère murale', 'Petite pièce', 1100, 14], ['Réparation de commode', 'Hors positionnement', 650, 9], ['Plateau de bureau', 'Petite pièce', 1800, 18],
+  ];
+  const gestes = [['Débit, corroyage', 0.2, 1.05], ['Assemblage', 0.3, 1.25], ["Queues d'aronde", 0.1, 1.45], ['Collage', 0.08, 1.0], ['Ponçage', 0.15, 1.3], ['Vernis', 0.1, 0.95], ['Pose', 0.07, 1.15]];
+  const people = [pa, lu, ni];
+  for (let i = 0; i < 22; i++) {
+    const [name, fam, base, hrs] = pick(kinds);
+    const signedAgo = 20 + Math.floor(rnd() * 340);
+    const amount = Math.round(base * (0.85 + rnd() * 0.4) / 50) * 50;
+    const src = fam === 'Agencement sur mesure' || fam === 'Projet pro' ? pick([SOURCES[0], SOURCES[0], SOURCES[2], SOURCES[4]]) : pick([SOURCES[1], SOURCES[2], SOURCES[3], SOURCES[4], SOURCES[3]]);
+    const dur = Math.round(hrs / 6) + 15;
+    const finishedAgo = signedAgo - dur;
+    const done = finishedAgo > 3;
+    const cl = q.run('INSERT INTO clients (name, kind, email) VALUES (?, ?, ?)', `Client ${i + 1}`, fam === 'Projet pro' ? 'Professionnel' : 'Particulier', `client${i + 1}@example.com`).lastInsertRowid;
+    const due = d(-finishedAgo + Math.round((rnd() - 0.35) * 12));
+    const pid = q.run(`INSERT INTO projects (name, kind, client_id, status, due_date, lead_id, deposit_needed, deposit_asked_at, deposit_at, created_at, finished_at, amount_ht, material_ht, family, source)
+      VALUES (?, 'Particulier', ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?)`, `${name} · ${['Martin', 'Bernard', 'Petit', 'Durand', 'Leroy', 'Moreau', 'Simon', 'Laurent', 'Michel', 'Garcia', 'Roux'][i % 11]}`, cl, done ? 'termine' : 'en_cours', due, pa,
+      `${d(-signedAgo)} 10:00:00`, d(-signedAgo + 2 + Math.floor(rnd() * 12)), `${d(-signedAgo)} 10:00:00`, done ? `${d(-finishedAgo)} 17:00:00` : null, amount,
+      rnd() < 0.8 ? Math.round(amount * (0.22 + rnd() * 0.15)) : null, fam, src).lastInsertRowid;
+    gestes.forEach(([g, share, drift], k) => {
+      const est = Math.max(1, Math.round(hrs * share));
+      const decl = Math.round(est * drift * (0.85 + rnd() * 0.35) * 2) / 2;
+      const isDone = done || k < 4;
+      q.run(`INSERT INTO steps (project_id, ord, title, who_id, phase, geste, est_hours, status, sent, seen, declared_hours, started_at, done_at) VALUES (?, ?, ?, ?, '', ?, ?, ?, 1, 1, ?, ?, ?)`,
+        pid, k + 1, g, people[(i + k) % 3], g, est, isDone ? 'done' : 'todo', isDone && rnd() > 0.08 ? decl : null, isDone ? `${d(-finishedAgo - 3)} 08:00:00` : null, isDone ? `${d(-Math.max(finishedAgo, 1))} 17:00:00` : null);
+    });
+    if (rnd() < 0.3) q.run("INSERT INTO steps (project_id, ord, title, who_id, geste, est_hours, status, sent, seen, added_by_atelier, declared_hours, done_at) VALUES (?, 20, 'Reprise imprévue', ?, 'Autre', 0, 'done', 1, 1, 1, ?, ?)", pid, lu, 2 + Math.round(rnd() * 5), `${d(-finishedAgo)} 12:00:00`);
+    if (rnd() < 0.35) q.run("INSERT INTO issues (project_id, person_id, body, status, created_at) VALUES (?, ?, ?, 'closed', ?)", pid, pick([lu, ni]), pick(['Éclat au corroyage', 'Queue d’aronde trop lâche', 'Teinte différente entre deux plateaux', 'Tuilage après collage']), `${d(-finishedAgo - 5)} 10:00:00`);
+    if (done) q.run("INSERT INTO trips (project_id, date, what, items, done_at, pv_signed_at, pv_name, pv_reserves) VALUES (?, ?, 'Livraison', '[]', ?, ?, 'Client', ?)", pid, d(-finishedAgo), `${d(-finishedAgo)} 16:00:00`, `${d(-finishedAgo)} 16:30:00`, rnd() < 0.2 ? 'Rayure sur un chant' : '');
+    // Le devis signé
+    q.run(`INSERT INTO quotes (project_id, client_id, number, version, pdf, pdf_sha256, signer_name, signer_email, project_name, valid_until, token_hash, status, test, opened_at, pdf_opened_at, code_sent_at, accepted_at, link_at, amount_ht, family, source, created_at)
+      VALUES (?, ?, ?, 1, 'demo.pdf', 'x', ?, ?, ?, ?, ?, 'accepted', 0, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, pid, cl, `D-2026-${String(100 + i)}`, `Client ${i + 1}`, `client${i + 1}@example.com`, name, d(-signedAgo + 20), `h${i}`,
+      `${d(-signedAgo - 6)} 09:00:00`, `${d(-signedAgo - 6)} 09:05:00`, `${d(-signedAgo)} 09:00:00`, `${d(-signedAgo)} 09:10:00`, `${d(-signedAgo - 8)} 18:00:00`, amount, fam, src, `${d(-signedAgo - 8)} 18:00:00`);
+  }
+  // Devis perdus ou en attente
+  const reasons = ['Le prix', 'Le prix', 'Le délai', 'J’ai choisi une autre solution', 'Le projet est reporté', ''];
+  for (let i = 0; i < 26; i++) {
+    const [name, fam, base] = pick(kinds);
+    const ago = 5 + Math.floor(rnd() * 330);
+    const st = ago < 25 ? pick(['sent', 'sent', 'modif']) : pick(['refused', 'refused', 'sent', 'sent', 'sent']);
+    const opened = rnd() < 0.7;
+    q.run(`INSERT INTO quotes (number, version, pdf, pdf_sha256, signer_name, signer_email, project_name, valid_until, token_hash, status, test, opened_at, pdf_opened_at, responded_at, response_json, link_at, amount_ht, family, source, created_at)
+      VALUES (?, 1, 'demo.pdf', 'x', ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, `D-2026-${String(200 + i)}`, `Prospect ${i + 1}`, `prospect${i + 1}@example.com`, name, d(-ago + 30), `x${i}`, st,
+      opened ? `${d(-ago + 1)} 09:00:00` : null, opened && rnd() < 0.7 ? `${d(-ago + 1)} 09:05:00` : null, st === 'refused' || st === 'modif' ? `${d(-ago + 9)} 10:00:00` : null,
+      st === 'refused' ? JSON.stringify({ reason: pick(reasons), text: '' }) : null, `${d(-ago)} 18:00:00`, Math.round(base * (0.9 + rnd() * 0.3) / 50) * 50, fam, pick(SOURCES.slice(1, 5)), `${d(-ago)} 18:00:00`);
+  }
+  const fsup = q.get("SELECT id FROM suppliers WHERE name = 'Scierie'").id, ffin = q.get("SELECT id FROM suppliers WHERE name = 'Fournisseur finition'").id;
+  for (let i = 0; i < 14; i++) {
+    const ago = 10 + Math.floor(rnd() * 300); const sup = i % 3 ? fsup : ffin;
+    q.run('INSERT INTO orders (supplier_id, what, ordered_at, expected_at, arrived_at) VALUES (?, ?, ?, ?, ?)', sup, sup === fsup ? 'Plateaux chêne et noyer' : 'Vernis, abrasifs', d(-ago), d(-ago + 7), `${d(-ago + 7 + (sup === fsup ? Math.floor(rnd() * 8) - 1 : 0))} 10:00:00`);
+  }
+  const deg = q.get("SELECT id FROM machines WHERE name = 'Dégauchisseuse'").id;
+  q.run("INSERT INTO machine_events (machine_id, date, title, kind, who, days_down) VALUES (?, ?, 'Panne : moteur qui chauffe', 'panne', 'Patron', 3)", deg, `${d(-120)} 09:00:00`);
+  q.run("INSERT INTO photos (project_id, file, title, publishable, created_at) VALUES (?, 'demo.jpg', 'Plateau terminé', 1, datetime('now', '-5 days'))", q.get("SELECT id FROM projects WHERE name = 'Table à manger · chêne'").id);
 });
 console.log('Démo chargée. Patron : demo-atelier · iPad : Lucas 1111, Nina 2222, patron 0000 · adresse de test du portail : test@example.com');

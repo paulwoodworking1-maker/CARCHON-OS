@@ -104,6 +104,24 @@ function toDecide() {
   for (const m of q.all('SELECT messages.*, steps.title st, steps.project_id pid, people.name pname FROM messages JOIN steps ON steps.id = messages.step_id LEFT JOIN people ON people.id = messages.person_id WHERE read_by_patron = 0 ORDER BY messages.created_at DESC')) {
     items.push({ kind: 'no', tag: 'Message', title: `${m.pname} · ${m.st}`, text: `« ${m.body} »`, href: `/carnets/${m.pid}?fiche=${m.step_id}`, cta: 'Répondre' });
   }
+  // Sous-traitance : retour en retard, ou prestation proposée encore à commander alors que la livraison approche.
+  for (const s of q.all(`SELECT subcontracts.*, projects.name pname, suppliers.name sname FROM subcontracts JOIN projects ON projects.id = subcontracts.project_id
+    LEFT JOIN suppliers ON suppliers.id = subcontracts.supplier_id WHERE projects.status = 'en_cours' AND subcontracts.back_at IS NULL AND subcontracts.status != 'a_commander' AND subcontracts.due_at < ?`, today())) {
+    items.push({ kind: 'ko', tag: 'Sous-traitance', title: `${s.pname} · ${s.what}`, text: `Retour prévu le ${ddmm(s.due_at)}${s.sname ? ` chez ${s.sname}` : ''} · pas encore revenu`, href: `/projets/${s.project_id}#sst${s.id}`, cta: 'Ouvrir' });
+  }
+  // Chaîne de production générée depuis le devis : à vérifier, puis le carnet part à l'atelier.
+  for (const p of q.all("SELECT * FROM projects WHERE status = 'en_cours' AND prod_status IN ('pret', 'erreur')")) {
+    if (p.prod_status === 'erreur') { items.push({ kind: 'ko', tag: 'Chaîne', title: `${p.name} · chaîne de production non générée`, text: p.prod_error || '', href: `/projets/${p.id}#chaine`, cta: 'Voir' }); continue; }
+    const n = q.get('SELECT COUNT(*) n FROM steps WHERE project_id = ? AND sent = 0', p.id).n;
+    if (n) items.push({ kind: 'wa', tag: 'Chaîne', title: `${p.name} · carnet préparé par l’assistant (${n} fiches)`, text: 'Vérifie les fiches et la matière, puis envoie le carnet à l’atelier. Le planning les montre déjà en prévisionnel.', href: `/carnets/${p.id}`, cta: 'Vérifier le carnet' });
+  }
+  // Devis signé, acompte attendu, mais pas encore de facture d'acompte sur le portail.
+  for (const p of q.all(`SELECT projects.* FROM projects JOIN quotes ON quotes.project_id = projects.id AND quotes.status = 'accepted'
+      WHERE projects.status = 'en_cours' AND projects.deposit_needed = 1 AND projects.deposit_at IS NULL AND quotes.accepted_at <= datetime('now', '-1 day')
+      AND projects.deposit_invoice_id IS NULL AND NOT EXISTS (SELECT 1 FROM documents WHERE documents.project_id = projects.id AND documents.kind = 'facture_acompte') GROUP BY projects.id`)) {
+    if (require('./qonto').on()) continue; // suivi par l'alerte « Facture d’acompte » (Qonto)
+    items.push({ kind: 'wa', tag: 'Facture', title: `${p.name} · facture d’acompte pas encore sur le portail`, text: 'Cockpit ne l’a pas encore envoyée. Tu peux déposer le PDF sur l’OF.', href: `/projets/${p.id}#facture`, cta: 'Déposer' });
+  }
   const all = [...items, ...require('./automations').alerts()];
   const later = new Set(q.all('SELECT key FROM snoozes WHERE until > ?', today()).map((x) => x.key));
   const order = { ko: 0, wa: 1, ok: 2, no: 3 };
@@ -146,6 +164,7 @@ function projectFromQuote(quote) {
     projectId = Number(q.run("INSERT INTO projects (name, kind, client_id, next_action, deposit_asked_at, lead_id) VALUES (?, 'Particulier', ?, 'Lancer le projet', datetime('now'), ?)", name, clientId, patron().id).lastInsertRowid);
     q.run('UPDATE quotes SET project_id = ? WHERE id = ?', projectId, quote.id);
   }
+  q.run("UPDATE projects SET amount_ht = COALESCE(?, amount_ht), family = COALESCE(NULLIF(?, ''), family), source = COALESCE(NULLIF(?, ''), source) WHERE id = ?", quote.amount_ht ?? null, quote.family || '', quote.source || '', projectId);
   q.run("INSERT OR REPLACE INTO phase_overrides (project_id, phase, state, label) VALUES (?, 'Conception', 'c', 'À démarrer')", projectId);
   syncProjectName(projectId);
   return projectId;

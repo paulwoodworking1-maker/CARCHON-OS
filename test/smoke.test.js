@@ -27,7 +27,7 @@ test('sans connexion, on est renvoyé vers la connexion', async () => {
 });
 
 const pages = ['/', '/projets', '/projets?vue=termines', '/projets/1', '/projets/nouveau', '/carnets', '/carnets/1', '/stock', '/achats', '/commandes',
-  '/fournisseurs', '/planning', '/planning?semaines=4', '/poses', '/poses/1/pv', '/pilotage', '/pilotage/export.csv', '/equipe', '/portails', '/portails?nouveau=1', '/recherche?q=chêne', '/automatisations', '/automatisations/resume', '/projets/1/nouvelles', '/entreprise', '/carnets/1/imprimer', '/poses/1/pv/imprimer', '/commandes/1/bon', '/catalogue', '/catalogue?m=1&qty=12', '/machines', '/machines?m=2', '/charge', '/charge?p=2&w=1', '/bois', '/pieces', '/expeditions', '/expeditions/1/bon', '/sav', '/sav?nouveau=1', '/unites', '/unites/1', '/unites/6', '/pilotage/couts', '/projets/4', '/assistant', '/decider', '/decider?tag=Achat', '/projets?f=retard', '/projets?vue=frise', '/projets?resp=1&canal=Boutique', '/projets?f=acompte', '/portails/envoyer', '/portails/reglages', '/portails/parcours?p=1', '/portails?f=espaces', '/portails?f=signes', '/portails/envoyer?depuis=1'];
+  '/fournisseurs', '/planning', '/planning?semaines=4', '/poses', '/poses/1/pv', '/pilotage', '/pilotage/export.csv', '/equipe', '/portails', '/portails?nouveau=1', '/recherche?q=chêne', '/automatisations', '/automatisations/resume', '/projets/1/nouvelles', '/entreprise', '/carnets/1/imprimer', '/poses/1/pv/imprimer', '/commandes/1/bon', '/catalogue', '/catalogue?m=1&qty=12', '/machines', '/machines?m=2', '/charge', '/charge?p=2&w=1', '/bois', '/pieces', '/expeditions', '/expeditions/1/bon', '/sav', '/sav?nouveau=1', '/unites', '/unites/1', '/unites/6', '/pilotage/couts', '/projets/4', '/assistant', '/decider', '/decider?tag=Achat', '/projets?f=retard', '/projets?vue=frise', '/projets?resp=1&canal=Boutique', '/projets?f=acompte', '/portails/envoyer', '/portails/reglages', '/portails/parcours?p=1', '/portails?f=espaces', '/portails?f=signes', '/portails/envoyer?depuis=1', '/projets/1/sous-traitance/1/bon', '/projets/1/dossier/imprimer', '/projets/2/dossier/imprimer', '/projets/1?dictee=1', '/cnc', '/cnc/travaux/1', '/cnc/travaux/1/etiquettes', '/projets/2', '/planning/agenda', '/projets/1/chaine', '/projets/1/chaine/devis', '/projets/1/chaine/etiquettes', '/mail/nouveau', '/analyse', '/messages', '/analyse?periode=90', '/analyse?periode=0'];
 for (const p of pages) {
   test(`GET ${p}`, async () => {
     const res = await fetch(base + p, { headers: { cookie } });
@@ -63,10 +63,12 @@ test('API Cockpit : clé requise, affaire créée, OF listés', async () => {
   setSetting('api_token', 'cle-de-test-123456');
   assert.strictEqual((await fetch(base + '/api/v1/ofs')).status, 401);
   const auth = { authorization: 'Bearer cle-de-test-123456', 'content-type': 'application/json' };
-  const res = await fetch(base + '/api/v1/affaires', { method: 'POST', headers: auth, body: JSON.stringify({ name: 'Buffet · noyer', client: { name: 'Client test', email: 'c@example.com' }, due_date: '2027-02-01' }) });
+  const res = await fetch(base + '/api/v1/affaires', { method: 'POST', headers: auth, body: JSON.stringify({ name: 'Buffet · noyer', client: { name: 'Client test', email: 'c@example.com' }, due_date: '2027-02-01', amount_ht: '8 400,00', family: 'Pièce signature', source: 'Site web' }) });
   assert.strictEqual(res.status, 201);
   const { ref } = await res.json();
   assert.match(ref, /^P\d{4}-\d{3}$/);
+  const saved = require('../src/db').q.get('SELECT amount_ht, family, source FROM projects WHERE ref = ?', ref);
+  assert.deepStrictEqual({ ...saved }, { amount_ht: 8400, family: 'Pièce signature', source: 'Site web' });
   assert.strictEqual((await fetch(`${base}/api/v1/affaires/${ref}/acompte`, { method: 'POST', headers: auth })).status, 200);
   const list = await (await fetch(base + '/api/v1/ofs', { headers: auth })).json();
   assert.ok(list.ofs.some((o) => o.ref === ref));
@@ -186,4 +188,412 @@ test('SMS : numéro, lien chiffré, regroupement des nouveautés, texte final', 
   assert.strictEqual(SMS.quietNow(new Date('2026-11-29T12:00:00+01:00')), true); // dimanche
   assert.strictEqual(SMS.quietNow(new Date('2026-11-26T10:00:00+01:00')), false);
   assert.strictEqual(SMS.quietNow(new Date('2026-11-26T22:00:00+01:00')), true);
+});
+
+test('analyse : chiffres de la démo, diagnostic classé, objectifs modifiables', async () => {
+  const A = require('../src/analyse');
+  const R = A.compute(365);
+  assert.ok(R.profit.rate > 0 && R.profit.rate < 200, 'taux horaire réel calculé');
+  assert.ok(R.ca.period > 0);
+  assert.ok(R.sales.n > 0 && R.sales.funnel[0][1] >= R.sales.funnel[4][1]);
+  assert.ok(R.estim.gap > 0, 'la démo dépasse le prévu');
+  const order = { ko: 0, wa: 1, idea: 2, ok: 3 };
+  R.findings.forEach((f, i) => { if (i) assert.ok(order[R.findings[i - 1].level] <= order[f.level]); assert.ok(f.title && f.action); });
+  const res = await fetch(base + '/analyse/objectifs', { method: 'POST', redirect: 'manual', headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' }, body: 'obj_rate=90&obj_ca_month=60000' });
+  assert.strictEqual(res.status, 302);
+  assert.strictEqual(A.objectives().rate, 90);
+  assert.strictEqual(A.objectives().ca_month, 60000);
+  const page = await (await fetch(base + '/analyse', { headers: { cookie } })).text();
+  assert.match(page, /objectif de 90 €/);
+});
+
+test('fiche projet : montant, matière, famille et origine enregistrés', async () => {
+  const res = await fetch(base + '/projets/1/infos', { method: 'POST', redirect: 'manual', headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ name: 'Table à manger · chêne', amount_ht: '7 200,50', material_ht: '1500', family: 'Pièce signature', source: 'Site web', lead_id: '' }).toString() });
+  assert.strictEqual(res.status, 302);
+  const p = require('../src/db').q.get('SELECT amount_ht, material_ht, family, source FROM projects WHERE id = 1');
+  assert.deepStrictEqual({ ...p }, { amount_ht: 7200.5, material_ht: 1500, family: 'Pièce signature', source: 'Site web' });
+});
+
+test('Qonto : à l’acceptation du devis, facture d’acompte créée, envoyée, puis acompte reçu quand elle est payée', async () => {
+  const http = require('node:http');
+  const { q, setSetting } = require('../src/db');
+  const { sha256 } = require('../src/auth');
+  const calls = [];
+  let status = 'unpaid';
+  const fake = http.createServer((req, res) => {
+    let b = ''; req.on('data', (c) => { b += c; }); req.on('end', () => {
+      calls.push({ m: req.method, u: req.url, auth: req.headers.authorization, body: b ? JSON.parse(b) : null });
+      const send = (code, o) => { res.writeHead(code, { 'content-type': 'application/json' }); res.end(o ? JSON.stringify(o) : ''); };
+      if (req.url === '/v2/organization') return send(200, { organization: { legal_name: 'Carchon', bank_accounts: [{ iban: 'FR7616958000010000000000001', main: true }] } });
+      if (req.url.startsWith('/v2/clients?')) return send(200, { clients: [] });
+      if (req.url === '/v2/clients') return send(200, { client: { id: 'c-1' } });
+      if (req.url.startsWith('/v2/quotes')) return send(200, { quotes: [{ id: 'q-1', number: 'D-QONTO-1' }], meta: { next_page: null } });
+      if (req.url === '/v2/client_invoices') return send(201, { client_invoice: { id: 'inv-1', number: 'F-2026-001', invoice_url: 'https://pay.example/inv-1', status: 'unpaid' } });
+      if (req.url === '/v2/client_invoices/inv-1/send') return send(204);
+      if (req.url === '/v2/client_invoices/inv-1') return send(200, { client_invoice: { id: 'inv-1', number: 'F-2026-001', status, invoice_url: 'https://pay.example/inv-1' } });
+      send(404, { errors: [{ code: 'not_found' }] });
+    });
+  });
+  await new Promise((r) => fake.listen(0, r));
+  Object.assign(process.env, { QONTO_BASE_URL: `http://127.0.0.1:${fake.address().port}`, QONTO_LOGIN: 'carchon-1', QONTO_SECRET_KEY: 'secret' });
+  try {
+    setSetting('portal_test_mode', '0');
+    // Un devis réel, adresse vérifiée, montant 10 000 € HT.
+    const t = 'jeton-qonto-test';
+    const id = Number(q.run(`INSERT INTO quotes (number, version, pdf, pdf_sha256, signer_name, signer_email, project_name, valid_until, token_hash, status, test, amount_ht, email_verified_at)
+      VALUES ('D-QONTO-1', 1, 'x.pdf', ?, 'Jeanne Martin', 'jeanne@example.com', 'Bibliothèque chêne', '2099-01-01', ?, 'sent', 0, 10000, datetime('now'))`, '', sha256(t)).lastInsertRowid);
+    const fs = require('node:fs'); const { filePath } = require('../src/uploads');
+    fs.writeFileSync(filePath('qonto-test.pdf'), 'pdf'); q.run('UPDATE quotes SET pdf = ?, pdf_sha256 = ? WHERE id = ?', 'qonto-test.pdf', sha256(Buffer.from('pdf')), id);
+    // La page du devis montre le montant et l'acompte.
+    const page = await (await fetch(`${base}/p/devis/${t}`)).text();
+    assert.match(page, /Acompte 40/); assert.match(page, /TTC à la commande/);
+    // Session client vérifiée : on passe par le code.
+    const cRes = await fetch(`${base}/p/devis/${t}`); const ck = cRes.headers.getSetCookie().map((c) => c.split(';')[0]).join('; ');
+    q.run("UPDATE quotes SET otp_hash = ?, otp_expires = datetime('now', '+10 minutes'), code_sent_at = datetime('now', '-5 minutes') WHERE id = ?", require('../src/auth').hash('123456'), id);
+    const v = await fetch(`${base}/p/devis/${t}/verifier`, { method: 'POST', redirect: 'manual', headers: { cookie: ck, 'content-type': 'application/x-www-form-urlencoded' }, body: 'code=123456' });
+    const ck2 = [ck, ...v.headers.getSetCookie().map((c) => c.split(';')[0])].join('; ');
+    // Sans adresse : refusé.
+    const noAddr = await fetch(`${base}/p/devis/${t}/accepter`, { method: 'POST', redirect: 'manual', headers: { cookie: ck2, 'content-type': 'application/x-www-form-urlencoded' }, body: 'name=Jeanne+Martin&consent=1' });
+    assert.strictEqual(noAddr.status, 302);
+    assert.strictEqual(q.get('SELECT status FROM quotes WHERE id = ?', id).status, 'sent');
+    const ok = await fetch(`${base}/p/devis/${t}/accepter`, { method: 'POST', redirect: 'manual', headers: { cookie: ck2, 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ name: 'Jeanne Martin', consent: '1', b_street: '3 rue des Forges', b_zip: '21160', b_city: 'Couternon' }).toString() });
+    assert.strictEqual(ok.status, 302);
+    const pid = q.get('SELECT project_id FROM quotes WHERE id = ?', id).project_id;
+    for (let i = 0; i < 50 && q.get('SELECT deposit_invoice_status s FROM projects WHERE id = ?', pid).s !== 'sent'; i++) await new Promise((r) => setTimeout(r, 20));
+    const p = q.get('SELECT * FROM projects WHERE id = ?', pid);
+    assert.strictEqual(p.deposit_invoice_status, 'sent');
+    assert.strictEqual(p.deposit_invoice_number, 'F-2026-001');
+    assert.strictEqual(p.deposit_invoice_ttc, 4800);
+    const inv = calls.find((c) => c.m === 'POST' && c.u === '/v2/client_invoices');
+    assert.strictEqual(inv.auth, 'carchon-1:secret');
+    assert.strictEqual(inv.body.client_id, 'c-1');
+    assert.strictEqual(inv.body.quote_id, 'q-1');
+    assert.strictEqual(inv.body.payment_methods.iban, 'FR7616958000010000000000001');
+    assert.deepStrictEqual(inv.body.items[0].unit_price, { value: '4000.00', currency: 'EUR' });
+    assert.strictEqual(inv.body.items[0].vat_rate, '0.2');
+    const cli = calls.find((c) => c.m === 'POST' && c.u === '/v2/clients').body;
+    assert.deepStrictEqual([cli.kind, cli.first_name, cli.last_name, cli.billing_address.city], ['individual', 'Jeanne', 'Martin', 'Couternon']);
+    const sent = calls.find((c) => c.u === '/v2/client_invoices/inv-1/send').body;
+    assert.deepStrictEqual(sent.send_to, ['jeanne@example.com']);
+    assert.match(sent.email_body, /4\s800,00 €|4 800,00 €/);
+    // Pas de deuxième facture.
+    assert.ok((await require('../src/qonto').createDeposit(pid)).already);
+    // Espace client : facture visible.
+    assert.match(await (await fetch(`${base}/p/devis/${t}`)).text(), /Voir la facture et payer/);
+    // Payée dans Qonto -> acompte reçu.
+    assert.strictEqual(await require('../src/qonto').syncPaid(), 0);
+    status = 'paid';
+    assert.strictEqual(await require('../src/qonto').syncPaid(), 1);
+    assert.ok(q.get('SELECT deposit_at FROM projects WHERE id = ?', pid).deposit_at);
+  } finally {
+    for (const k of ['QONTO_BASE_URL', 'QONTO_LOGIN', 'QONTO_SECRET_KEY']) delete process.env[k];
+    require('../src/db').setSetting('portal_test_mode', '1');
+    fake.close();
+  }
+});
+
+test('Qonto : un devis de test ne crée jamais de facture', async () => {
+  process.env.QONTO_LOGIN = 'x'; process.env.QONTO_SECRET_KEY = 'y';
+  try {
+    const { q } = require('../src/db');
+    const pid = Number(q.run("INSERT INTO projects (name) VALUES ('Test facture')").lastInsertRowid);
+    q.run("INSERT INTO quotes (project_id, number, pdf, pdf_sha256, signer_name, signer_email, valid_until, token_hash, status, test, amount_ht) VALUES (?, 'T-1', 'x', 'x', 'A B', 'a@b.c', '2099-01-01', 'zz', 'accepted', 1, 1000)", pid);
+    await assert.rejects(require('../src/qonto').createDeposit(pid), /test/);
+  } finally { delete process.env.QONTO_LOGIN; delete process.env.QONTO_SECRET_KEY; }
+});
+
+const form = (o) => ({ method: 'POST', redirect: 'manual', headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams(o).toString() });
+
+test('la fiche projet est rangée en onglets avec le dossier de production et la sous-traitance', async () => {
+  const html = await (await fetch(base + '/projets/1', { headers: { cookie } })).text();
+  for (const id of ['id="vue"', 'id="dossier"', 'id="achats"', 'id="echanges"', 'id="sous-traitance"', 'id="carnet"', 'id="debit"', 'Laquage des façades', 'Retour en retard']) assert.ok(html.includes(id), id);
+});
+
+test('une commande de sous-traitance se crée, avance et recule', async () => {
+  const { q } = require('../src/db');
+  const res = await fetch(base + '/projets/2/sous-traitance', form({ what: 'Découpe numérique des joues', new_name: 'Atelier CNC', new_email: 'cnc@example.com', pieces: '2 joues', due_at: '2099-01-10', price: '120,50' }));
+  assert.strictEqual(res.status, 302);
+  const s = q.get("SELECT * FROM subcontracts WHERE what = 'Découpe numérique des joues'");
+  assert.strictEqual(s.price, 120.5);
+  assert.strictEqual(q.get('SELECT subcontractor FROM suppliers WHERE id = ?', s.supplier_id).subcontractor, 1);
+  await fetch(base + `/projets/2/sous-traitance/${s.id}/etape`, form({ to: 'commande' }));
+  await fetch(base + `/projets/2/sous-traitance/${s.id}/etape`, form({ to: 'envoye' }));
+  let t = q.get('SELECT * FROM subcontracts WHERE id = ?', s.id);
+  assert.strictEqual(t.status, 'envoye'); assert.ok(t.ordered_at && t.sent_at);
+  await fetch(base + `/projets/2/sous-traitance/${s.id}/etape`, form({ to: 'commande' }));
+  t = q.get('SELECT * FROM subcontracts WHERE id = ?', s.id);
+  assert.strictEqual(t.status, 'commande'); assert.strictEqual(t.sent_at, null);
+  const bon = await (await fetch(base + `/projets/2/sous-traitance/${s.id}/bon`, { headers: { cookie } })).text();
+  assert.match(bon, /Atelier CNC/);
+  assert.match(await (await fetch(base + '/commandes', { headers: { cookie } })).text(), /Découpe numérique des joues/);
+});
+
+test('un retour de sous-traitance en retard remonte dans À décider', () => {
+  const L = require('../src/logic');
+  assert.ok(L.toDecide().some((d) => d.tag === 'Sous-traitance'));
+});
+
+test('sans assistant, la génération du carnet explique quoi faire', async () => {
+  delete process.env.ANTHROPIC_API_KEY;
+  const res = await fetch(base + '/projets/1/dossier/generer', form({ plan_ids: '2', text: 'test' }));
+  assert.strictEqual(res.status, 302);
+});
+
+test('les plans sont envoyés à l’assistant en PDF ou image, les autres formats sont écartés', () => {
+  const ai = require('../src/ai');
+  const files = { 'a.pdf': Buffer.from('%PDF-1.4'), 'b.png': Buffer.from('png'), 'c.heic': Buffer.from('x') };
+  const out = ai.planBlocks([{ version: 'V1', file: 'a.pdf', status: 'validee' }, { version: 'V2', file: 'b.png' }, { version: 'V3', file: 'c.heic' }, { version: 'V4', file: null }], (f) => files[f]);
+  assert.deepStrictEqual(out.blocks.filter((b) => b.type !== 'text').map((b) => b.type), ['document', 'image']);
+  assert.strictEqual(out.skipped.length, 2);
+});
+
+test('Google Agenda : page de réglage, flux iCal privé et lecture d’un agenda', async () => {
+  const pg = await (await fetch(base + '/planning/agenda', { headers: { cookie } })).text();
+  const m = /\/agenda\/([\w-]+)\.ics/.exec(pg);
+  assert.ok(m, 'adresse du flux affichée');
+  const ics = await fetch(base + `/agenda/${m[1]}.ics`);
+  assert.strictEqual(ics.status, 200);
+  const txt = await ics.text();
+  assert.match(txt, /^BEGIN:VCALENDAR/);
+  assert.match(txt, /BEGIN:VEVENT/);
+  assert.strictEqual((await fetch(base + '/agenda/faux.ics')).status, 404);
+  const G = require('../src/gcal');
+  const sample = ['BEGIN:VCALENDAR', 'BEGIN:VEVENT', 'UID:a1', 'SUMMARY:Métré chez M. Dupont', 'LOCATION:Lyon', 'DTSTART:20261203T090000Z', 'DTEND:20261203T100000Z', 'END:VEVENT',
+    'BEGIN:VEVENT', 'UID:a2', 'SUMMARY:Salon', 'DTSTART;VALUE=DATE:20261210', 'DTEND;VALUE=DATE:20261213', 'END:VEVENT',
+    'BEGIN:VEVENT', 'UID:a3', 'SUMMARY:Point hebdo', 'DTSTART;TZID=Europe/Paris:20261130T080000', 'DTEND;TZID=Europe/Paris:20261130T083000', 'RRULE:FREQ=WEEKLY;COUNT=3', 'EXDATE;TZID=Europe/Paris:20261207T080000', 'END:VEVENT',
+    'END:VCALENDAR'].join('\r\n');
+  const ev = G.parseICS(sample, '2026-11-01', '2026-12-31');
+  assert.deepStrictEqual(ev.map((e) => [e.title, e.start_date, e.end_date]), [
+    ['Point hebdo', '2026-11-30', '2026-11-30'], ['Métré chez M. Dupont', '2026-12-03', '2026-12-03'], ['Salon', '2026-12-10', '2026-12-12'], ['Point hebdo', '2026-12-14', '2026-12-14']]);
+  assert.strictEqual(ev[1].time, '10:00');
+});
+
+test('Google Agenda : écriture directe (Google simulé) : création, mise à jour, suppression', async () => {
+  const crypto = require('node:crypto');
+  const { setSetting, q } = require('../src/db');
+  const G = require('../src/gcal');
+  const { privateKey, publicKey } = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
+  setSetting('gcal_sa', JSON.stringify({ type: 'service_account', client_email: 'carchon@test.iam.gserviceaccount.com', private_key: privateKey.export({ type: 'pkcs8', format: 'pem' }) }));
+  setSetting('gcal_push_cal', 'atelier@group.calendar.google.com');
+  const store = new Map(); const calls = [];
+  const real = global.fetch;
+  global.fetch = async (url, o = {}) => {
+    url = String(url);
+    if (url.startsWith('https://oauth2.googleapis.com/')) {
+      const [h, c, s] = new URLSearchParams(o.body).get('assertion').split('.');
+      assert.ok(crypto.verify('RSA-SHA256', Buffer.from(`${h}.${c}`), publicKey, Buffer.from(s, 'base64url')), 'jeton signé avec la clé');
+      return new Response(JSON.stringify({ access_token: 'tok', expires_in: 3600 }), { status: 200 });
+    }
+    if (url.startsWith('https://www.googleapis.com/calendar/v3/calendars/atelier%40group.calendar.google.com/events')) {
+      const id = url.split('/events/')[1]; calls.push(o.method);
+      if (o.method === 'PUT') { if (!store.has(id)) return new Response('{}', { status: 404 }); store.set(id, JSON.parse(o.body)); return new Response(o.body, { status: 200 }); }
+      if (o.method === 'POST') { const b = JSON.parse(o.body); store.set(b.id, b); return new Response(o.body, { status: 200 }); }
+      if (o.method === 'DELETE') { store.delete(id); return new Response(null, { status: 204 }); }
+    }
+    return real(url, o);
+  };
+  try {
+    const want = G.items('2000-01-01').filter((e) => e.end >= require('../src/html').addDays(require('../src/html').today(), -30));
+    let x = await G.push();
+    assert.ok(!x.error, x.error);
+    assert.strictEqual(store.size, want.length);
+    assert.ok(want.length > 0);
+    // Rien de changé : aucun appel.
+    calls.length = 0; await G.push(); assert.strictEqual(calls.length, 0);
+    // Une barre modifiée : une mise à jour ; une barre supprimée : une suppression.
+    const bars = q.all("SELECT id FROM bars WHERE end_date >= date('now') LIMIT 2");
+    q.run("UPDATE bars SET label = 'Nouveau titre' WHERE id = ?", bars[0].id);
+    q.run('DELETE FROM bars WHERE id = ?', bars[1].id);
+    calls.length = 0; x = await G.push();
+    assert.deepStrictEqual(calls.sort(), ['DELETE', 'PUT']);
+    assert.match(store.get(G.evId(`bar-${bars[0].id}`)).summary, /Nouveau titre/);
+    assert.ok(!store.has(G.evId(`bar-${bars[1].id}`)));
+  } finally { global.fetch = real; setSetting('gcal_push_cal', ''); }
+});
+
+test('chaîne de production : l’assistant (simulé) crée pièces, fiches et matière, le planning attend la matière', async () => {
+  const { q, setting } = require('../src/db');
+  const C = require('../src/chain');
+  const A = require('../src/automations');
+  const fs = require('node:fs');
+  const { filePath } = require('../src/uploads');
+  const pid = Number(q.run("INSERT INTO projects (name, kind, due_date) VALUES ('Bibliothèque test chaîne', 'Particulier', date('now', '+60 days'))").lastInsertRowid);
+  fs.writeFileSync(filePath('vue-test.csv'), 'Pièce;Long;Larg;Ep;Qté\nMontant;2400;300;27;4\n');
+  q.run("INSERT INTO documents (project_id, title, file, visible_client, kind) VALUES (?, 'debit.csv', 'vue-test.csv', 0, 'chiffrage')", pid);
+  const sup = Number(q.run("INSERT INTO suppliers (name, lead_days) VALUES ('Scierie Test', 8)").lastInsertRowid);
+  const lucas = q.get("SELECT * FROM people WHERE name = 'Lucas'");
+  let seen = null;
+  const fakeAI = { enabled: () => true, productionChain: async (args) => { seen = args; return {
+    pieces: [{ nom: 'Caisson', description: '240 × 300' }, { nom: 'Étagères', description: '6 tablettes' }],
+    matiere: [{ categorie: 'Bois massif', designation: 'Chêne', essence: 'Frêne rare', epaisseur: '27 mm', quantite: 0.4, unite: 'm³', fournisseur: 'Scierie Test', avant_fabrication: true },
+      { categorie: 'Finition', designation: 'Vernis mat', essence: '', epaisseur: '', quantite: 2, unite: 'L', fournisseur: '', avant_fabrication: false }],
+    fiches: [{ titre: 'Plans de détail', pieces: 'Tout', qui: 'Lucas', etape_frise: 'Conception', geste: 'Autre', heures: 3, mot_du_patron: '', reperes: [] },
+      { titre: 'Débit du chêne', pieces: 'Caisson', qui: 'Lucas', etape_frise: 'Débit', geste: 'Débit, corroyage', heures: 6, mot_du_patron: 'Garder les beaux fils', reperes: ['Débit à +5 mm'] },
+      { titre: 'Assemblage', pieces: 'Caisson', qui: 'Inconnu', etape_frise: 'Assemblage', geste: 'Assemblage', heures: 8, mot_du_patron: '', reperes: [] }],
+    analyse: 'Caisson assemblé en queues d’aronde.', debit: [{ ensemble: 'Caisson', piece: 'Montant', quantite: 2, materiau: 'Chêne', longueur_mm: 2400, largeur_mm: 300, epaisseur_mm: 22, brut_longueur_mm: 2450, brut_largeur_mm: 315, brut_epaisseur_mm: 27, sens_du_fil: 'en long', note: '' }],
+    remarques: 'Vérifier la hauteur sous plafond.' }; } };
+  await C.run(pid, { ai: fakeAI });
+  assert.ok(seen.files.some((b) => b.type === 'text' && /Montant;2400/.test(b.text)), 'la nomenclature CSV est transmise');
+  const p = q.get('SELECT * FROM projects WHERE id = ?', pid);
+  assert.strictEqual(p.prod_status, 'pret');
+  assert.strictEqual(q.get('SELECT COUNT(*) n FROM steps WHERE project_id = ? AND ai_generated = 1 AND sent = 0', pid).n, 2, 'pas de fiche de conception : elle est faite avant le chiffrage');
+  assert.strictEqual(q.get('SELECT COUNT(*) n FROM cut_list WHERE project_id = ?', pid).n, 1);
+  assert.match(q.get("SELECT note FROM steps WHERE project_id = ? AND title = 'Débit du chêne'", pid).note, /fiche de débit/);
+  assert.ok(q.get("SELECT who_id FROM steps WHERE project_id = ? AND title = 'Assemblage'", pid).who_id, 'quelqu’un est désigné même si le prénom est inconnu');
+  assert.strictEqual(q.get('SELECT COUNT(*) n FROM pieces WHERE project_id = ?', pid).n, 2);
+  const needs = q.all('SELECT * FROM needs WHERE project_id = ?', pid);
+  assert.strictEqual(needs.length, 2);
+  assert.strictEqual(needs.find((n) => n.for_chain).supplier_id, sup);
+  // Matière : délai fournisseur 8 jours ouvrés + 1 jour de réception.
+  const m = C.material(pid);
+  assert.strictEqual(m.date, C.addWorkdays(C.addWorkdays(require('../src/html').today(), 8), 1));
+  // Planning : la conception peut démarrer, le débit attend la matière.
+  const { days } = A.allocate(lucas, { ready: A.readyDates() });
+  const dayOf = (title) => Object.keys(days).sort().find((d) => days[d].some((x) => x.step.project_id === pid && x.step.title === title));
+  assert.ok(dayOf('Débit du chêne') >= m.date, `débit le ${dayOf('Débit du chêne')} après la matière ${m.date}`);
+  // Commande passée avec une date : le planning suit la date de livraison.
+  const o = Number(q.run("INSERT INTO orders (supplier_id, what, expected_at) VALUES (?, 'Chêne', date('now', '+20 days'))", sup).lastInsertRowid);
+  q.run("UPDATE needs SET order_id = ?, status = 'ordered' WHERE project_id = ? AND for_chain = 1", o, pid);
+  assert.ok(C.material(pid).date > q.get("SELECT date('now', '+20 days') d").d);
+  q.run("UPDATE needs SET status = 'arrived' WHERE project_id = ?", pid);
+  assert.strictEqual(C.material(pid).date, null);
+  // La page de l'OF montre la chaîne, À décider propose de vérifier le carnet.
+  const page = await (await fetch(`${base}/projets/${pid}`, { headers: { cookie } })).text();
+  assert.match(page, /Chaîne de production/);
+  assert.match(page, /Vérifier la hauteur sous plafond/);
+  assert.ok(require('../src/logic').toDecide().some((d) => d.tag === 'Chaîne' && d.href === `/carnets/${pid}`));
+  void setting;
+});
+
+test('facture d’acompte envoyée par Cockpit : publiée sur le portail', async () => {
+  const { q, setSetting } = require('../src/db');
+  setSetting('api_token', 'cle-test-cockpit');
+  const p = q.get('SELECT * FROM projects WHERE client_id IS NOT NULL LIMIT 1');
+  const form = new FormData();
+  form.append('type', 'acompte'); form.append('numero', 'FA-2026-007'); form.append('montant_ttc', '1 800,00 €');
+  form.append('pdf', new Blob([Buffer.from('%PDF-1.4 test')], { type: 'application/pdf' }), 'facture.pdf');
+  const res = await fetch(`${base}/api/v1/affaires/${p.ref}/factures`, { method: 'POST', headers: { authorization: 'Bearer cle-test-cockpit' }, body: form });
+  assert.strictEqual(res.status, 201);
+  const d = q.get("SELECT * FROM documents WHERE project_id = ? AND kind = 'facture_acompte'", p.id);
+  assert.ok(d && d.visible_client === 1 && d.number === 'FA-2026-007');
+  const j = await fetch(`${base}/api/v1/affaires/${p.ref}/factures`, { method: 'POST', headers: { authorization: 'Bearer cle-test-cockpit', 'content-type': 'application/json' }, body: JSON.stringify({ type: 'solde', pdf_base64: Buffer.from('%PDF-1.4 solde').toString('base64') }) });
+  assert.strictEqual(j.status, 201);
+  assert.strictEqual((await fetch(`${base}/api/v1/affaires/${p.ref}/factures`, { method: 'POST', headers: { authorization: 'Bearer mauvaise' } })).status, 401);
+});
+
+test('Cockpit est prévenu (signé) quand un devis est accepté', async () => {
+  const http = require('node:http');
+  const crypto = require('node:crypto');
+  const { setSetting, setting } = require('../src/db');
+  let got = null;
+  const srv = http.createServer((req, res) => { let b = ''; req.on('data', (c) => (b += c)); req.on('end', () => { got = { body: b, sig: req.headers['x-carchon-signature'], ev: req.headers['x-carchon-event'] }; res.end('ok'); }); });
+  await new Promise((r) => srv.listen(0, r));
+  setSetting('cockpit_webhook_url', `http://127.0.0.1:${srv.address().port}/hook`);
+  const out = await require('../src/cockpit').send('devis.accepte', { of: { ref: 'P-TEST' } });
+  srv.close();
+  assert.ok(out.ok);
+  assert.strictEqual(got.ev, 'devis.accepte');
+  assert.strictEqual(got.sig, 'sha256=' + crypto.createHmac('sha256', setting('api_token')).update(got.body).digest('hex'));
+  setSetting('cockpit_webhook_url', '');
+});
+
+test('modèle 3D STEP : pièces mesurées, regroupées et prêtes pour la visionneuse', async () => {
+  const fs = require('node:fs');
+  const { filePath } = require('../src/uploads');
+  const M = require('../src/model3d');
+  const src = require.resolve('occt-import-js/package.json').replace('package.json', 'test/testfiles/cax-if/as1-tu-203.stp');
+  if (!fs.existsSync(src)) return;
+  fs.copyFileSync(src, filePath('assemblage-test.stp'));
+  const a = await M.analyze(filePath('assemblage-test.stp'));
+  assert.strictEqual(a.parts, 18);
+  const plate = a.list.find((g) => g.name === 'plate');
+  assert.deepStrictEqual(plate.dims.map(Math.round), [180, 150, 20]);
+  assert.ok(a.list.find((g) => g.name === 'bolt').qty >= 2, 'pièces identiques regroupées');
+  assert.ok(fs.existsSync(filePath('assemblage-test.stp') + '.view.json'));
+  assert.match(M.asText('assemblage.stp', a), /plate · qté 1 · 180 × 150 × 20 mm/);
+  // Pièce tournée : la boîte orientée retrouve les vraies cotes.
+  const c = Math.cos(0.5), s = Math.sin(0.5), pts = [];
+  for (const x of [0, 2400]) for (const y of [0, 300]) for (const z of [0, 27]) pts.push(x * c - y * s, x * s + y * c, z);
+  assert.deepStrictEqual(M.obb(pts).size.map(Math.round).sort((x, y) => y - x), [2400, 300, 27]);
+});
+
+test('forfait Claude : dossier .zip à déposer dans claude.ai, réponse recollée → production créée', async () => {
+  const { q } = require('../src/db');
+  const C = require('../src/chain');
+  const pid = Number(q.run("INSERT INTO projects (name, kind) VALUES ('Console forfait', 'Particulier')").lastInsertRowid);
+  const res = await fetch(`${base}/projets/${pid}/claude`, { headers: { cookie } });
+  assert.strictEqual(res.status, 200);
+  assert.match(await res.text(), /Télécharger le dossier/);
+  const z = await fetch(`${base}/projets/${pid}/claude/dossier.zip`, { headers: { cookie } });
+  assert.strictEqual(z.headers.get('content-type'), 'application/zip');
+  const buf = Buffer.from(await z.arrayBuffer());
+  assert.strictEqual(buf.readUInt32LE(0), 0x04034b50);
+  assert.match(buf.toString('utf8'), /00_INSTRUCTIONS\.md[\s\S]*Format de ta réponse/);
+  const answer = { analyse: 'Console en chêne.', pieces: [{ nom: 'Plateau', description: '1200 × 400' }],
+    debit: [{ ensemble: 'Console', piece: 'Plateau', quantite: 1, materiau: 'Chêne', longueur_mm: 1200, largeur_mm: 400, epaisseur_mm: 30, brut_longueur_mm: 1250, brut_largeur_mm: 420, brut_epaisseur_mm: 34, sens_du_fil: 'en long', note: '' }],
+    matiere: [{ categorie: 'Bois massif', designation: 'Chêne 34 mm (chute 30 %)', essence: 'Chêne rare', epaisseur: '34 mm', quantite: 0.03, unite: 'm³', fournisseur: '', avant_fabrication: true }],
+    fiches: [{ titre: 'Débit du plateau', pieces: 'Plateau', qui: '', etape_frise: 'Débit', geste: 'Débit, corroyage', machine: 'Dégauchisseuse', heures: 3, mot_du_patron: '', reperes: [] }],
+    remarques: '' };
+  // Réponse telle que copiée depuis claude.ai : texte autour + bloc de code.
+  const pasted = 'Voici la production :\n```json\n' + JSON.stringify(answer, null, 2) + '\n```\nBonne fabrication.';
+  const r = await post(`/projets/${pid}/claude/import`, { answer: pasted });
+  assert.strictEqual(r.status, 302);
+  assert.strictEqual(q.get('SELECT prod_status FROM projects WHERE id = ?', pid).prod_status, 'pret');
+  assert.strictEqual(q.get('SELECT COUNT(*) n FROM cut_list WHERE project_id = ?', pid).n, 1);
+  assert.match(q.get('SELECT note FROM steps WHERE project_id = ?', pid).note, /Dégauchisseuse/);
+  assert.throws(() => C.importAnswer(pid, 'pas de json ici'), /JSON/);
+  assert.throws(() => C.importAnswer(pid, '{"analyse": "x"}'), /format attendu/);
+});
+
+test('messages aux clients : texte modifié, encadré masqué si vidé, texte d’origine remis', async () => {
+  const M = require('../src/messages');
+  const post = (body) => fetch(base + '/messages', { method: 'POST', redirect: 'manual', headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams(body).toString() });
+  assert.strictEqual(M.t('next_preparation_titre'), '');
+  assert.strictEqual(M.fill('Régler[ : {montant} TTC]', { montant: '' }), 'Régler');
+  assert.strictEqual(M.fill('Régler[ : {montant} TTC]', { montant: '10 €' }), 'Régler : 10 € TTC');
+  assert.strictEqual((await post({ m_portail_question: 'Appelez Paul.' })).status, 302);
+  assert.strictEqual(M.t('portail_question'), 'Appelez Paul.');
+  await post({ reset: 'portail_question' });
+  assert.match(M.t('portail_question'), /dernier e-mail/);
+  // SMS : même réglage que Portails › Réglages.
+  await post({ m_sms_acompte: 'Acompte reçu, merci ! {lien}' });
+  assert.strictEqual(require('../src/sms').template('acompte'), 'Acompte reçu, merci ! {lien}');
+  const E = require('../src/emails').quote({ name: 'Jeanne', number: 'D-1', project: '', url: 'https://x', until: '2026-12-24' });
+  assert.match(E.subject, /^Votre devis n° D-1 · /);
+  assert.doesNotMatch(E.body, /\{|\[/);
+});
+
+test('CNC : liste OpenCutList, travail, programme bloqué puis validé, fiche du carnet et iPad', async () => {
+  const { q } = require('../src/db');
+  const C = require('../src/routes/cnc');
+  const cut = C.parseCutList('Nom;Quantité;Longueur;Largeur;Épaisseur;Matière\nJoue;2;720 mm;560 mm;19 mm;Mélaminé\nFond;1;"1 200,5";780;8;MDF\n;;;\n');
+  assert.strictEqual(cut.items.length, 2);
+  assert.strictEqual(cut.items[1].l, 1200.5);
+  // Le travail de démo calcule, s'affiche et se télécharge.
+  const nc = await fetch(base + '/cnc/travaux/1/panneau/1.nc', { headers: { cookie } });
+  assert.strictEqual(nc.status, 200);
+  assert.match(await nc.text(), /M06/);
+  assert.strictEqual((await fetch(base + '/cnc/travaux/1/panneau/1.dxf', { headers: { cookie } })).status, 200);
+  // Une erreur bloque le téléchargement.
+  const fd = { material: 'Mélaminé', thickness: '19', sheet_l: '2800', sheet_w: '2070', n: '2', name_0: 'Énorme', l_0: '5000', w_0: '300', qty_0: '1', ops_0: '' };
+  const j = q.run("INSERT INTO cnc_jobs (project_id, name, parts) VALUES (2, 'Essai', '[]')").lastInsertRowid;
+  await fetch(base + `/cnc/travaux/${j}`, form(fd));
+  assert.strictEqual((await fetch(base + `/cnc/travaux/${j}/panneau/1.nc`, { headers: { cookie } })).status, 404);
+  assert.strictEqual(q.get('SELECT COUNT(*) n FROM cnc_programs WHERE job_id = ?', j).n, 0);
+  await fetch(base + `/cnc/travaux/${j}`, form({ ...fd, l_0: '700' }));
+  const v = await fetch(base + `/cnc/travaux/${j}/valider`, form({}));
+  assert.strictEqual(v.status, 302);
+  const prog = q.get('SELECT * FROM cnc_programs WHERE job_id = ? AND active = 1', j);
+  assert.ok(prog);
+  const step = q.get('SELECT * FROM steps WHERE id = (SELECT step_id FROM cnc_jobs WHERE id = ?)', j);
+  assert.strictEqual(step.geste, 'Usinage CNC');
+  assert.ok(step.est_hours >= 0.5);
+  await fetch(base + `/cnc/travaux/${j}/valider`, form({}));
+  assert.strictEqual(q.get('SELECT COUNT(*) n FROM cnc_programs WHERE job_id = ? AND active = 1', j).n, 1);
+  assert.strictEqual(q.get('SELECT MAX(version) v FROM cnc_programs WHERE job_id = ?', j).v, 2);
+  // Achats : panneaux ajoutés au projet.
+  await fetch(base + `/cnc/travaux/${j}/achats`, form({}));
+  assert.ok(q.get("SELECT id FROM needs WHERE project_id = 2 AND source = 'cnc'"));
 });

@@ -1,16 +1,19 @@
 'use strict';
 // Patron : Aujourd'hui, recherche, liste des projets et fiche projet.
 const express = require('express');
-const { q, tx, PHASES, logActivity } = require('../db');
+const { q, tx, PHASES, FAMILIES, SOURCES, logActivity } = require('../db');
 const { icon, h, raw, layout, pill, avatar, postBtn, options, hidden, ddmm, longDate, today, addDays, rel, hoursLabel, dayMonth, hhmm } = require('../html');
 const L = require('../logic');
 const { upload, fileUrl, isImage } = require('../uploads');
 const decideRow = (...a) => require('./decider').row(...a);
 const SMS = require('../sms');
+const Q = require('../qonto');
 
 const r = express.Router();
 const int = (v) => (v === undefined || v === '' || v === null ? null : Number(v));
 const str = (v) => String(v ?? '').trim();
+// « 8 400,50 € » -> 8400.5 ; vide -> null.
+const euros = (v) => { const x = Number(String(v ?? '').replace(/[\s\u00a0\u202f€]/g, '').replace(',', '.')); return String(v ?? '').trim() && Number.isFinite(x) ? x : null; };
 
 const friseBar = (fr) => h`<div class="bar" aria-hidden="true">${fr.map((f) => h`<i class="${f.state}" title="${f.phase} · ${f.label}"></i>`)}</div>`;
 
@@ -269,6 +272,149 @@ r.post('/projets/nouveau', (req, res) => {
   res.flashTo(`/projets/${id}`, 'Projet créé. Prépare son carnet de fabrication quand tu es prêt.');
 });
 
+// ---------- Chaîne de production (devis + 3D + chiffrage → carnet, matière, planning) ----------
+function chainCard(p) {
+  const C = require('../chain');
+  const { files } = C.filesFor(p.id);
+  const m = C.material(p.id);
+  const nSteps = q.get('SELECT COUNT(*) n, SUM(sent = 0) unsent FROM steps WHERE project_id = ?', p.id);
+  const ai = require('../ai').enabled();
+  const st = p.prod_status;
+  if (p.status !== 'en_cours' && !st) return '';
+  return h`<section class="card mt20" id="chaine"><div class="line"><h2>Chaîne de production</h2>
+${pill(st === 'pret' ? 'ok' : st === 'erreur' ? 'ko' : st === 'en_cours' ? 'wa' : 'no', st === 'pret' ? `Générée ${rel(p.prod_at)}` : st === 'erreur' ? 'Non générée' : st === 'en_cours' ? 'L’assistant prépare…' : 'Pas encore générée')}
+<span class="push line">${st === 'pret' && nSteps.unsent ? h`<a class="btn sm" href="/carnets/${p.id}">Vérifier et envoyer le carnet (${nSteps.unsent} fiches)</a>` : ''}
+${st !== 'en_cours' ? h`<form method="post" action="/projets/${p.id}/chaine/claude" class="inline" data-views><button class="btn sm">${st === 'pret' ? 'Refaire avec Claude (forfait)' : 'Préparer la production avec Claude'}</button></form>` : ''}
+${ai && st !== 'en_cours' ? h`<form method="post" action="/projets/${p.id}/chaine/generer" class="inline" data-views data-confirm="Générer par l’API Anthropic (facturé à l’usage, environ 1 à 3 € par projet) ?"><button class="btn ghost sm">Par l’API</button></form>` : ''}</span></div>
+${st === 'en_cours' ? h`<p class="mut mt8">L’assistant (Opus 5.5, réflexion maximale) étudie le devis, le modèle 3D et le chiffrage : compte 3 à 10 minutes. Recharge la page.</p>` : ''}
+${st === 'erreur' ? h`<p class="flash ko mt8">${p.prod_error}</p>` : ''}
+${p.prod_note ? h`<p class="mt8"><span class="mut">Remarques de l’assistant :</span> ${p.prod_note}</p>` : ''}
+
+${(() => { const m3 = q.get("SELECT * FROM documents WHERE project_id = ? AND kind = 'modele3d' ORDER BY id DESC LIMIT 1", p.id) || (() => { const f = files.find((x) => x.kind === 'modele3d'); return f ? { id: 'q' + q.get('SELECT id FROM quote_files WHERE file = ?', f.file).id, title: f.name } : null; })();
+    return m3 ? h`<script type="importmap">{"imports":{"three":"/static/vendor/three/build/three.module.js"}}</script>
+<div class="v3d mt12" data-model="/projets/${p.id}/3d/${m3.id}"><div class="v3d-msg mut">Chargement du modèle 3D…</div>
+<div class="v3d-bar"><button type="button" class="chip" data-view="iso">3D</button><button type="button" class="chip" data-view="face">Face</button><button type="button" class="chip" data-view="dessus">Dessus</button><button type="button" class="chip" data-view="cote">Côté</button><span class="v3d-info mut t12"></span></div></div>
+<p class="mut t12 mt4">${m3.title} · fais tourner à la souris, molette pour zoomer, clic sur une pièce pour ses cotes.</p>
+<script type="module" src="/static/viewer3d.js"></script>` : ''; })()}
+${p.prod_analysis ? h`<details class="mt12"><summary class="b" style="cursor:pointer">Analyse technique de l’assistant</summary><p class="mt8">${p.prod_analysis}</p></details>` : ''}
+${q.get('SELECT id FROM cut_list WHERE project_id = ?', p.id) ? h`<div class="line mt12"><a class="btn alt sm" href="/projets/${p.id}/debit">Fiche de débit (${q.get('SELECT COUNT(*) n FROM cut_list WHERE project_id = ?', p.id).n} lignes)</a><a class="btn ghost sm" href="/projets/${p.id}/debit?imprimer=1" target="_blank">Imprimer</a></div>` : ''}
+<div class="h3 mt12">Fichiers lus par l’assistant</div>
+${files.length ? h`<div class="mt4">${files.map((f) => h`<div class="who"><span class="grow">${f.name || f.file}</span><span class="mut t12">${require('../chain').KINDS[f.kind] || ''}</span><a class="btn ghost sm" href="${fileUrl(f.file)}" target="_blank">Ouvrir</a></div>`)}</div>` : h`<p class="mut">Devis seul. Ajoute le modèle 3D (STEP ou .3dm), les vues (PDF, images) et la nomenclature ou le chiffrage (CSV, Excel, PDF) pour une chaîne précise.</p>`}
+<form method="post" action="/projets/${p.id}/fichiers-prod" enctype="multipart/form-data" class="line mt8"><select name="kind" aria-label="Type" style="width:auto">${options(Object.entries(require('../chain').KINDS))}</select><input type="file" name="files" multiple required aria-label="Fichiers"><button class="btn alt sm">Ajouter</button></form>
+<div class="h3 mt20">Matière avant fabrication</div>
+${(() => { const lots = q.all('SELECT * FROM wood_lots WHERE project_id = ?', p.id); return lots.length ? h`<p class="mt4">Bois réservé dans le stock : ${lots.map((l) => `lot ${l.code} · ${l.essence} ${l.thickness} · ${String(l.volume).replace('.', ',')} m³`).join(' ; ')}.</p>` : ''; })()}
+${m.items.length ? h`<p class="mt4">${m.date ? h`Fabrication possible à partir du <b>${ddmm(m.date)}</b>${m.estimated ? ' (estimation : délais habituels des fournisseurs, en attendant les dates de commande)' : ''}.` : h`<b>Toute la matière est là.</b>`} <a href="/achats">Voir les achats</a></p>
+<div class="tablebox mt8"><table class="tbl dense"><thead><tr><th>Article</th><th>Fournisseur</th><th>Où en est-on</th><th>Arrivée</th></tr></thead><tbody>
+${m.items.map((i) => h`<tr><td>${i.text}</td><td>${i.sname || '—'}</td><td>${pill(i.how === 'reçu' ? 'ok' : i.how === 'en retard' ? 'ko' : 'wa', i.how)}</td><td>${ddmm(i.when)}</td></tr>`)}</tbody></table></div>` : h`<p class="mut">Pas encore de matière liée. Elle apparaît ici quand la chaîne est générée.</p>`}
+</section>`;
+}
+// Vues du modèle 3D capturées dans la visionneuse : remplacent les précédentes.
+function saveViews(req) {
+  const views = { iso: 'Vue en perspective', face: 'Vue de face', dessus: 'Vue de dessus', cote: 'Vue de côté' };
+  const got = Object.keys(views).filter((k) => /^data:image\/jpeg;base64,/.test(String(req.body['vue_' + k] || '')));
+  if (got.length) {
+    for (const d of q.all("SELECT * FROM documents WHERE project_id = ? AND kind = 'vue_auto'", req.project.id)) { try { require('node:fs').unlinkSync(require('../uploads').filePath(d.file)); } catch {} }
+    q.run("DELETE FROM documents WHERE project_id = ? AND kind = 'vue_auto'", req.project.id);
+    for (const k of got) {
+      const buf = Buffer.from(String(req.body['vue_' + k]).split(',')[1], 'base64');
+      if (buf.length > 4 * 1024 * 1024) continue;
+      const name = require('node:crypto').randomBytes(12).toString('hex') + '.jpg';
+      require('node:fs').writeFileSync(require('../uploads').filePath(name), buf);
+      q.run("INSERT INTO documents (project_id, title, file, visible_client, kind) VALUES (?, ?, ?, 0, 'vue_auto')", req.project.id, views[k], name);
+    }
+  }
+  return got;
+}
+
+// Avec le forfait Claude : dossier à déposer dans claude.ai, réponse à recoller.
+r.post('/projets/:id/chaine/claude', loadProject, (req, res) => { saveViews(req); res.redirect(`/projets/${req.project.id}/claude`); });
+r.get('/projets/:id/claude/dossier.zip', loadProject, async (req, res, next) => {
+  try {
+    const pk = await require('../chain').claudePackage(req.project.id);
+    res.set('content-type', 'application/zip').set('content-disposition', `attachment; filename="${pk.name}.zip"`).send(pk.zip);
+  } catch (e) { next(e); }
+});
+r.get('/projets/:id/claude', loadProject, async (req, res, next) => {
+  try {
+    const p = req.project;
+    const pk = await require('../chain').claudePackage(p.id);
+    const body = h`<div class="eb"><a href="/projets/${p.id}#chaine">${p.name}</a></div><h1 class="mt8">Préparer la production avec Claude</h1>
+<p class="mut mt8 mw680">Avec ton forfait Claude, sans coût d’API. Carchon OS a préparé le dossier ; Claude l’étudie dans une conversation ; tu recolles sa réponse ici et tout se crée : fiche de débit, matière, carnet en brouillon, planning.</p>
+<section class="card mt20 mw680"><h2>1. Télécharge le dossier</h2>
+<p class="mt8">${pk.attach.length + 1} fichiers : les instructions (avec la nomenclature mesurée dans la 3D${pk.instructions.includes('Nomenclature et chiffrage') ? ' et ton chiffrage' : ''}) et ${pk.attach.length} document${pk.attach.length > 1 ? 's' : ''} (devis, vues du modèle, plans).</p>
+<div class="line mt12"><a class="btn" href="/projets/${p.id}/claude/dossier.zip">Télécharger le dossier (.zip)</a></div>
+<p class="mut t12 mt8">Double-clique le .zip pour l’ouvrir : un dossier apparaît avec tous les fichiers.</p></section>
+<section class="card mt20 mw680"><h2>2. Donne-le à Claude</h2>
+<ol class="steps mt8"><li>Ouvre <a href="https://claude.ai/new" target="_blank" rel="noopener"><b>claude.ai</b></a> (ou l’application Claude), nouvelle conversation.</li>
+<li>Choisis le modèle <b>Opus 5.5</b> et active la <b>réflexion étendue</b> (bouton sous la zone de texte).</li>
+<li>Glisse <b>tous les fichiers du dossier</b> dans la conversation, y compris <b>00_INSTRUCTIONS.md</b>.</li>
+<li>Écris simplement : « Suis les instructions du fichier 00_INSTRUCTIONS.md » et envoie.</li>
+<li>Quand Claude a fini, clique l’icône <b>Copier</b> sous sa réponse.</li></ol>
+<details class="mt12"><summary class="mut t13" style="cursor:pointer">Si Claude refuse le fichier .md : copier les instructions en texte</summary>
+<textarea id="instr" readonly rows="6" class="mt8">${pk.instructions}</textarea><button type="button" class="btn alt sm mt8" data-copy="#instr">Copier les instructions</button></details></section>
+<section class="card mt20 mw680" id="reponse"><h2>3. Recolle la réponse de Claude</h2>
+<form method="post" action="/projets/${p.id}/claude/import" class="form mt8" data-busy="Carchon OS crée la production…">
+<label class="sr" for="ans">Réponse de Claude</label><textarea id="ans" name="answer" rows="10" required placeholder="Colle ici toute la réponse de Claude (le bloc JSON)"></textarea>
+<button class="btn">Créer la production</button></form>
+<p class="mut t12 mt8">Si la réponse est coupée, écris « continue » à Claude et recolle le tout. Les fiches arrivent en brouillon : tu les vérifies avant de les envoyer à l’atelier.</p></section>`;
+    res.send(layout({ title: 'Production avec Claude', tab: 'projets', sub: '/projets', body, flash: req.flash }));
+  } catch (e) { next(e); }
+});
+r.post('/projets/:id/claude/import', loadProject, (req, res) => {
+  try {
+    const c = require('../chain').importAnswer(req.project.id, req.body.answer);
+    res.flashTo(`/projets/${req.project.id}#chaine`, `Production créée : ${c.fiches} fiches en brouillon, ${c.debit} lignes de débit, ${c.matiere} achats${c.reserve ? `, ${c.reserve} lot(s) de bois réservé(s)` : ''}. Vérifie le carnet puis envoie-le à l’atelier.`);
+  } catch (e) {
+    if (e instanceof require('../ai').AIError) return res.flashTo(`/projets/${req.project.id}/claude#reponse`, e.message, 'ko');
+    throw e;
+  }
+});
+
+r.post('/projets/:id/chaine/generer', loadProject, (req, res) => {
+  if (!require('../ai').enabled()) return res.flashTo(`/projets/${req.project.id}#chaine`, 'L’assistant n’est pas activé.', 'ko');
+  const got = saveViews(req);
+  require('../chain').start(req.project.id);
+  res.flashTo(`/projets/${req.project.id}#chaine`, `L’assistant prépare la production${got.length ? ` avec ${got.length} vues du modèle 3D` : ''} (3 à 10 minutes). Recharge la page dans un instant.`);
+});
+// Modèle 3D allégé pour la visionneuse (calculé une fois, puis gardé à côté du fichier).
+r.get('/projets/:id/3d/:did', loadProject, async (req, res) => {
+  const did = String(req.params.did);
+  const doc = did.startsWith('q') ? q.get('SELECT file, name title FROM quote_files WHERE id = ?', Number(did.slice(1))) : q.get("SELECT * FROM documents WHERE id = ? AND project_id = ? AND kind = 'modele3d'", Number(did), req.project.id);
+  if (!doc) return res.status(404).type('text').send('introuvable');
+  const fp = require('../uploads').filePath(doc.file);
+  try {
+    if (!require('node:fs').existsSync(fp + '.view.json')) await require('../model3d').analyze(fp);
+    res.type('json').sendFile(fp + '.view.json');
+  } catch (e) { res.status(422).type('text').send(e.message); }
+});
+// Fiche de débit (écran et impression atelier).
+r.get('/projets/:id/debit', loadProject, (req, res) => {
+  const p = req.project;
+  const rows = q.all('SELECT * FROM cut_list WHERE project_id = ? ORDER BY ord, id', p.id);
+  const n = (x) => (x ? String(Math.round(x * 10) / 10).replace('.', ',') : '—');
+  const vol = rows.reduce((a, r) => a + (r.bl && r.bw && r.bt ? r.bl * r.bw * r.bt * r.qty : 0), 0) / 1e9;
+  const table = h`<table class="tbl dense"><thead><tr><th>Ensemble</th><th>Pièce</th><th class="num">Qté</th><th>Matériau</th><th class="num">Fini L × l × ép.</th><th class="num">Débit brut</th><th>Fil</th><th>Note</th></tr></thead><tbody>
+${rows.map((r) => h`<tr><td>${r.ensemble}</td><td class="b">${r.piece}</td><td class="num">${n(r.qty)}</td><td>${r.material}</td><td class="num">${n(r.l)} × ${n(r.w)} × ${n(r.t)}</td><td class="num">${n(r.bl)} × ${n(r.bw)} × ${n(r.bt)}</td><td>${r.grain}</td><td class="t12">${r.note}</td></tr>`)}</tbody></table>
+<p class="mut mt8">${rows.length} lignes · volume brut débité ${vol.toFixed(3).replace('.', ',')} m³ (hors chute de débit)</p>`;
+  if (req.query.imprimer) return res.send(require('../html').printPage(`Fiche de débit · ${p.name}`, table, { ref: p.ref }));
+  res.send(layout({ title: 'Fiche de débit', tab: 'projets', sub: '/projets', body: h`<div class="eb"><a href="/projets/${p.id}#chaine">${p.name}</a></div><div class="head"><h1>Fiche de débit</h1><a class="btn alt push" href="/projets/${p.id}/debit?imprimer=1" target="_blank">Imprimer pour l’atelier</a></div>
+<p class="mut mt8">Préparée par l’assistant à partir du modèle 3D, des plans et du chiffrage. Vérifie les cotes avant de débiter.</p><div class="tablebox mt12">${table}</div>` }));
+});
+
+r.post('/projets/:id/fichiers-prod', loadProject, require('../uploads').uploadDocs.array('files', 12), (req, res) => {
+  const M = require('../model3d');
+  for (const f of req.files || []) {
+    const kind = M.is3D(f.originalname) ? 'modele3d' : ['plan3d', 'chiffrage'].includes(req.body.kind) ? req.body.kind : 'plan3d';
+    q.run('INSERT INTO documents (project_id, title, file, visible_client, kind) VALUES (?, ?, ?, 0, ?)', req.project.id, f.originalname, f.filename, kind);
+  }
+  res.flashTo(`/projets/${req.project.id}#chaine`, `${(req.files || []).length} fichier(s) ajouté(s). Clique « Générer » pour que l’assistant les lise.`);
+});
+r.post('/projets/:id/facture', loadProject, upload.single('pdf'), (req, res) => {
+  if (!req.file || !/\.pdf$/.test(req.file.filename)) return res.flashTo(`/projets/${req.project.id}#facture`, 'Il faut le PDF de la facture.', 'ko');
+  require('../cockpit').addInvoice(req.project.id, { file: req.file.filename, type: 'acompte', number: str(req.body.numero), source: 'Patron' });
+  res.flashTo(`/projets/${req.project.id}#facture`, 'Facture d’acompte publiée sur le portail du client.');
+});
+
 // ---------- Fiche projet ----------
 function loadProject(req, res, next) {
   const p = q.get('SELECT * FROM projects WHERE id = ?', req.params.id);
@@ -277,12 +423,12 @@ function loadProject(req, res, next) {
 }
 
 // Accès à la chaîne de production du projet (cotes → devis, plans, débit, commandes, planning).
-function chainCard(p) {
+function chaineCard(p) {
   const C = require('../chaine');
   const c = C.get(p.id);
   const x = c ? C.compute(p.id, c.params) : null;
   const eur = (v) => `${Math.round(v).toLocaleString('fr-FR')} €`;
-  return h`<section class="card" id="chaine"><div class="line"><h2>Chaîne de production</h2>${c ? pill(c.frozen_at ? 'ok' : 'wa', c.frozen_at ? `Indice ${c.indice} figé` : 'Chiffrage') : pill('no', 'À démarrer')}${c?.consumed_at ? pill('ok', 'Débit fait') : ''}</div>
+  return h`<section class="card" id="chiffrage"><div class="line"><h2>Chaîne de production · chiffrage</h2>${c ? pill(c.frozen_at ? 'ok' : 'wa', c.frozen_at ? `Indice ${c.indice} figé` : 'Chiffrage') : pill('no', 'À démarrer')}${c?.consumed_at ? pill('ok', 'Débit fait') : ''}</div>
 <p class="mut">Une seule saisie, les cotes et les choix du client : prix, plans, débit et calepinage, commandes, quincaillerie, planning et pose en découlent.</p>
 ${x ? h`<div class="ch-mini-kpis mt12"><div><b>${eur(x.ht)}</b><span>prix HT</span></div><div><b>${Math.round(x.marge * 100)} %</b><span>marge</span></div><div><b>${x.pieces}</b><span>pièces · ${x.panelsCount} panneaux</span></div><div><b>${Math.round(x.hours)} h</b><span>atelier et pose</span></div><div><b>${ddmm(x.plan.poseDate)}</b><span>pose au plus tôt</span></div></div>` : ''}
 <div class="line mt12"><a class="btn" href="/projets/${p.id}/chaine">${c ? 'Ouvrir la chaîne de production' : 'Démarrer la chaîne de production'}</a>${c ? h`<a class="btn alt sm" href="/projets/${p.id}/chaine#03">Débit</a><a class="btn alt sm" href="/projets/${p.id}/chaine#04">Commandes</a><a class="btn alt sm" href="/projets/${p.id}/chaine#05">Planning</a>` : ''}</div></section>`;
@@ -327,6 +473,7 @@ r.get('/projets/:id', loadProject, (req, res) => {
   const p = L.projectSummary(req.project);
   const pm = L.peopleMap();
   const plans = q.all('SELECT * FROM plans WHERE project_id = ? ORDER BY id DESC', p.id);
+  const pieces = q.all('SELECT * FROM pieces WHERE project_id = ? ORDER BY id', p.id);
   const photos = q.all('SELECT * FROM photos WHERE project_id = ? ORDER BY created_at DESC', p.id);
   const issues = q.all("SELECT * FROM issues WHERE project_id = ? AND status = 'open' ORDER BY created_at DESC", p.id);
   const docs = q.all('SELECT * FROM documents WHERE project_id = ? ORDER BY id DESC', p.id);
@@ -344,11 +491,25 @@ r.get('/projets/:id', loadProject, (req, res) => {
   const ustate = { a_faire: '', en_stock: 'done', expediee: 'done', livree: 'done' };
   const ulabel = { a_faire: 'À contrôler', en_stock: 'En stock', expediee: 'Expédiée', livree: 'Livrée' };
   const people = L.people();
+  const D = require('./dossier');
+  const sst = D.sstSummary(p.id);
+  const steps = q.all('SELECT status, sent FROM steps WHERE project_id = ?', p.id);
+  const stDone = steps.filter((s) => s.status === 'done').length, stDrafts = steps.filter((s) => !s.sent).length;
+  const valid = plans.find((x) => x.status === 'validee');
+  const dictee = req.query.dictee ? q.get('SELECT dictation FROM carnet_runs WHERE id = ? AND project_id = ?', req.query.dictee, p.id)?.dictation || '' : '';
+  const toBuy = pneeds.filter((n) => n.status !== 'ordered').length;
+  // Bandeau « À suivre » : l'essentiel du dossier en un coup d'œil, chaque case ouvre le bon onglet.
+  const tiles = [
+    { href: '#dossier', label: 'Carnet', val: steps.length ? `${stDone}/${steps.length} fiches` : 'Vide', sub: !steps.length ? (valid ? `Générer depuis ${valid.version}` : 'Ajouter un plan') : stDrafts ? `${stDrafts} à envoyer à l’atelier` : 'À jour sur l’iPad', warn: !steps.length || stDrafts },
+    { href: '#achats', label: 'Sous-traitance', val: sst.list.length ? `${sst.open.length} en cours` : 'Aucune', sub: sst.late.length ? `${sst.late.length} retour en retard` : sst.toOrder ? `${sst.toOrder} à commander` : sst.nextBack ? `Retour prévu ${ddmm(sst.nextBack)}` : sst.list.length ? 'Tout est revenu' : 'Laquage, verre, CNC…', ko: sst.late.length, warn: sst.toOrder },
+    { href: '#achats', label: 'Achats', val: pneeds.length ? `${pneeds.length} en attente` : 'Rien à acheter', sub: pneeds.length ? `${toBuy} à commander · ${pneeds.length - toBuy} commandé${pneeds.length - toBuy > 1 ? 's' : ''}` : lots.length ? `${lots.length} lot${lots.length > 1 ? 's' : ''} de bois réservé${lots.length > 1 ? 's' : ''}` : '', warn: toBuy },
+    { href: '#vue', label: 'Livraison', val: p.due_date ? ddmm(p.due_date) : 'À fixer', sub: p.slack.text, ko: p.slack.color === '#A20212' },
+  ];
   const body = h`
 <div class="mut"><a href="/projets">Projets</a> › ${p.name}</div>
 <div class="head mt4"><div><div class="ref">Dossier ${p.ref}</div><h1 class="m0">${p.name}</h1>${p.descr ? h`<div class="t16 mt4">${p.descr}</div>` : ''}
 <div class="line mt8">${pill('no', p.kind)}<span class="mut">${p.client ? p.client.name : 'hors commande client'}${p.due_date ? ` · Livraison ${ddmm(p.due_date)}` : ''}</span><b style="color:${p.slack.color}" class="t13">${p.slack.text}</b>${p.portal_state === 'open' ? pill('ok', 'Visible sur le portail client') : ''}${p.status === 'termine' ? pill('no', 'Terminé') : ''}</div></div>
-<div class="push line"><a class="btn alt" href="#photos">Ajouter une photo</a><a class="btn alt" href="/carnets/${p.id}/imprimer">Imprimer le carnet</a><a class="btn" href="/carnets/${p.id}">Ouvrir le carnet</a></div></div>
+<div class="push line"><a class="btn alt" href="#photos">Ajouter une photo</a><a class="btn alt" href="#dossier">Dossier de production</a><a class="btn" href="/carnets/${p.id}">Ouvrir le carnet</a></div></div>
 
 <section class="card mt20" aria-label="Avancement">
 <div class="frise-big">${p.frise.map((f) => h`<details class="fz ${f.state}"><summary><span class="fz-dot"></span><b>${f.phase}</b><span class="mut t12">${f.label}</span></summary>
@@ -364,42 +525,24 @@ ${issues.map((s) => {
 <form method="post" action="/projets/${p.id}/probleme/${s.id}" class="line mt12"><label class="sr" for="rep${s.id}">Réponse</label><input id="rep${s.id}" class="qin" name="reply" placeholder="Ta réponse, elle s’affiche sur l’iPad" value="${s.reply}"><button class="btn alt" name="act" value="reply">Répondre</button><button class="btn" name="act" value="close">Marquer traité</button></form></section>`;
   })}
 
-<section class="card mt20"><div class="line"><h2>Pièces et matière</h2>${pill('no', p.canal)}${model ? h`<a class="mut" href="/catalogue?m=${model.id}">modèle ${model.name}</a>` : ''}${p.for_whom ? h`<span class="mut">pour ${p.for_whom}</span>` : ''}
-<span class="push line">${units.some((u) => u.status === 'a_faire') || !units.length ? postBtn(`/projets/${p.id}/controle`, units.length > 1 ? 'Contrôler la pièce suivante' : 'Contrôle final', 'btn sm') : ''}<a class="btn alt sm" href="/carnets/${p.id}/imprimer">Imprimer le carnet</a></span></div>
-${units.length ? h`<div class="h3 mt12">Pièces · ${units.filter((u) => u.status !== 'a_faire').length} contrôlée(s) sur ${units.length}</div><div class="unitgrid">${units.map((u) => h`<a class="unit ${ustate[u.status]}" href="/unites/${u.id}"><b>${u.serial}</b>${ulabel[u.status]}</a>`)}</div>` : h`<p class="mut mt8">La pièce reçoit son numéro (${p.ref}) au contrôle final.</p>`}
-<div class="line" style="align-items:flex-start;gap:40px;margin-top:12px"><div style="flex:1 1 340px;min-width:0"><div class="h3">Panneaux réservés</div>${panelRes.map((l) => h`<div class="row"><span class="grow">${l.name}</span><span>${String(Math.round(l.m2 * 10) / 10).replace('.', ',')} m² · ${l.panels} panneau${l.panels > 1 ? 'x' : ''}</span></div>`)}${lots.map((l) => h`<div class="row"><b>${l.code}</b><span class="grow">${l.essence} ${l.thickness}</span><span>${String(l.volume).replace('.', ',')} m³</span></div>`)}${panelRes.length || lots.length ? '' : h`<p class="mut">Rien de réservé. Les panneaux se réservent quand la <a href="/projets/${p.id}/chaine">chaîne de production</a> est figée.</p>`}</div>
-<div style="flex:1 1 340px;min-width:0"><div class="h3">Achats liés</div>${pneeds.map((n) => h`<div class="row"><span class="grow">${n.text}</span>${pill(n.status === 'ordered' ? 'wa' : n.needs_deposit && !n.force ? 'ko' : 'no', n.status === 'ordered' ? 'Commandé' : n.needs_deposit && !n.force ? 'Attend l’acompte' : 'À commander')}</div>`)}${pneeds.length ? '' : h`<p class="mut">Rien à acheter.</p>`}</div></div>
-</section>
+<div class="suivi mt20" aria-label="À suivre">${tiles.map((t) => h`<a class="suivi-t${t.ko ? ' ko' : t.warn ? ' wa' : ''}" href="${t.href}" data-tab-link><span class="h3">${t.label}</span><b>${t.val}</b><span class="mut t12">${t.sub}</span></a>`)}</div>
 
-<div class="cols mt20">
+<nav class="ptabs mt20" aria-label="Sections du projet" data-ptabs>
+<a href="#vue">Vue d’ensemble</a><a href="#dossier">Dossier de production${stDrafts ? h` <span class="dot"></span>` : ''}</a><a href="#achats">Achats et sous-traitance${sst.late.length || sst.toOrder || toBuy ? h` <span class="dot"></span>` : ''}</a><a href="#echanges">Client et documents</a></nav>
+
+<div class="ptab" id="vue"><div class="cols">
 <div class="main-col">
-${chainCard(p)}
+${chaineCard(p)}
 
 ${tripsCard(p)}
 
-<section class="card"><div class="line"><h2>Plans</h2></div>
-${plans.map((x, i) => h`<div class="row${i ? '' : ' f'}"><div class="grow"><b>${x.version}${x.descr ? ` · ${x.descr}` : ''}</b><span class="mut">${x.status === 'validee' ? `Validée${x.validated_at ? ` le ${ddmm(x.validated_at)}` : ''} · fait foi pour l'atelier` : x.status === 'archivee' ? `${ddmm(x.created_at)} · remplacée` : `${ddmm(x.created_at)} · à valider`}</span></div>
-${pill(x.status === 'validee' ? 'ok' : 'no', x.status === 'validee' ? 'Validée' : x.status === 'archivee' ? 'Archivée' : 'Brouillon')}
-${x.file ? h`<a class="btn alt sm" href="${fileUrl(x.file)}" target="_blank">Ouvrir</a>` : ''}
-${x.status === 'brouillon' ? postBtn(`/projets/${p.id}/plans/${x.id}/valider`, 'Valider', 'btn sm') : ''}</div>`)}
-<details class="mt12"><summary class="btn alt sm">+ Nouvelle version</summary>
-<form method="post" action="/projets/${p.id}/plans" enctype="multipart/form-data" class="form grid2 mt8"><label>Version <input name="version" value="V${plans.length + 1}" required></label><label>Ce qui change <input name="descr"></label><label>Fichier (PDF ou image) <input type="file" name="file" accept="application/pdf,image/*"></label><button class="btn sm">Ajouter</button></form></details>
-</section>
-
-<section class="card" id="photos"><h2>Journal de fabrication</h2><p class="mut">Tu choisis ce que le client voit sur son portail, et ce que tu peux publier.</p>
-<form method="post" action="/projets/${p.id}/photos" enctype="multipart/form-data" class="line mt12"><label class="sr" for="ph">Photo</label><input id="ph" type="file" name="photo" accept="image/*" required><input class="qin" name="title" placeholder="Légende"><button class="btn sm">Ajouter</button></form>
-<div class="photos mt12">${photos.map((x) => h`<figure class="ph">${isImage(x.file) ? h`<a href="${fileUrl(x.file)}" target="_blank"><img src="${fileUrl(x.file)}" alt="${x.title}" loading="lazy"></a>` : h`<a href="${fileUrl(x.file)}">Fichier</a>`}
-<figcaption><b>${x.title || 'Photo'}</b><span class="mut t12">${ddmm(x.created_at)} · ${pm[x.person_id]?.name || ''}</span>
-<form method="post" action="/projets/${p.id}/photos/${x.id}" class="ckrow"><label><input type="checkbox" name="shared_client" value="1" ${x.shared_client ? 'checked' : ''} data-auto> Partagée au client</label><label><input type="checkbox" name="publishable" value="1" ${x.publishable ? 'checked' : ''} data-auto> Publiable</label></form></figcaption></figure>`)}
-${photos.length ? '' : h`<p class="mut">Pas encore de photo. L’atelier en ajoute depuis l’iPad.</p>`}</div>
-</section>
+<section class="card"><h2>Prochaine action</h2><p class="t15 mt8"><b>${p.next}</b></p>
+<p class="mut t12">Tirée de la frise si le champ « Prochaine action » est vide.</p></section>
+<section class="card" id="historique"><h2>Historique</h2><p class="mut">Tout ce qui s’est passé sur ce dossier, daté.</p>
+<ol class="timeline mt8">${history.map((a) => h`<li><time datetime="${a.created_at}">${ddmm(a.created_at)} · ${hhmm(a.created_at)}</time><span>${a.text}${a.who ? h` <span class="mut">· ${a.who}</span>` : ''}</span></li>`)}</ol>
+${history.length ? '' : h`<p class="mut">Rien encore.</p>`}</section>
 </div>
-
 <aside class="side-col">
-<section class="card"><h2>Temps passé</h2><p class="mut">Déclaré en un tap quand une fiche est finie.</p>
-${time.map((t, i) => h`<div class="who${i ? '' : ' f'}"><span class="grow">${t.g}</span><b>${t.h ? hoursLabel(t.h) : 'en cours'}</b></div>`)}
-<div class="who"><b class="grow">Total à ce jour</b><b>${hoursLabel(total)}</b></div></section>
-
 <section class="card" id="acompte"><h2>Projet</h2>
 <form method="post" action="/projets/${p.id}/infos" class="form">
 ${p.client_id ? h`<p class="mut">Titre : nom du client.</p>` : h`<label>Nom <input name="name" value="${p.name}"></label>`}
@@ -409,16 +552,81 @@ ${p.client_id ? h`<p class="mut">Titre : nom du client.</p>` : h`<label>Nom <inp
 <label>Prochaine action (vide = automatique) <input name="next_action" value="${p.next_action}"></label>
 ${p.client_id ? h`<label class="ck"><input type="checkbox" name="deposit_needed" value="1" ${p.deposit_needed ? 'checked' : ''}> Acompte demandé</label>
 <label>Acompte reçu le <input type="date" name="deposit_at" value="${p.deposit_at ? p.deposit_at.slice(0, 10) : ''}"></label>` : ''}
+<div class="grid2"><label>Montant vendu HT (€) <input name="amount_ht" inputmode="decimal" value="${p.amount_ht ?? ''}" placeholder="ex. 8400"></label><label>Matière et sous-traitance HT (€) <input name="material_ht" inputmode="decimal" value="${p.material_ht ?? ''}" placeholder="ex. 1900"></label></div>
+<div class="grid2"><label>Famille <select name="family"><option value="">—</option>${options(FAMILIES, p.family)}</select></label><label>Origine du client <select name="source"><option value="">—</option>${options(SOURCES, p.source)}</select></label></div>
+<p class="mut t12">Servent à l'Analyse : taux horaire réel, familles et canaux qui rapportent.</p>
 <label>Bois <textarea name="wood" rows="2">${p.wood}</textarea></label>
 <label>Notes <textarea name="notes" rows="4">${p.notes}</textarea></label>
 <button class="btn sm">Enregistrer</button></form>
 <div class="line mt12">${p.status === 'en_cours' ? postBtn(`/projets/${p.id}/statut`, 'Marquer terminé', 'btn alt sm', { status: 'termine' }, 'Marquer ce projet comme terminé ?') : postBtn(`/projets/${p.id}/statut`, 'Reprendre', 'btn alt sm', { status: 'en_cours' })}</div>
 </section>
+<section class="card"><h2>Temps passé</h2><p class="mut">Déclaré en un tap quand une fiche est finie.</p>
+${time.map((t, i) => h`<div class="who${i ? '' : ' f'}"><span class="grow">${t.g}</span><b>${t.h ? hoursLabel(t.h) : 'en cours'}</b></div>`)}
+<div class="who"><b class="grow">Total à ce jour</b><b>${hoursLabel(total)}</b></div></section>
+</aside></div></div>
 
+<div class="ptab" id="dossier"><div class="cols">
+<div class="main-col">
+${chainCard(p)}
+${D.dossierSection(p, { dictee })}
+${require('./cnc').cncSection(p)}
+<section class="card" id="plans"><div class="line"><h2>Plans</h2></div>
+${plans.map((x, i) => h`<div class="row${i ? '' : ' f'}"><div class="grow"><b>${x.version}${x.descr ? ` · ${x.descr}` : ''}</b><span class="mut">${x.status === 'validee' ? `Validée${x.validated_at ? ` le ${ddmm(x.validated_at)}` : ''} · fait foi pour l'atelier` : x.status === 'archivee' ? `${ddmm(x.created_at)} · remplacée` : `${ddmm(x.created_at)} · à valider`}</span></div>
+${pill(x.status === 'validee' ? 'ok' : 'no', x.status === 'validee' ? 'Validée' : x.status === 'archivee' ? 'Archivée' : 'Brouillon')}
+${x.file ? h`<a class="btn alt sm" href="${fileUrl(x.file)}" target="_blank">Ouvrir</a>` : ''}
+${x.status === 'brouillon' ? postBtn(`/projets/${p.id}/plans/${x.id}/valider`, 'Valider', 'btn sm') : ''}</div>`)}
+<details class="mt12"${plans.length ? '' : ' open'}><summary class="btn alt sm">+ Nouvelle version</summary>
+<form method="post" action="/projets/${p.id}/plans" enctype="multipart/form-data" class="form grid2 mt8"><label>Version <input name="version" value="V${plans.length + 1}" required></label><label>Ce qui change <input name="descr"></label><label>Fichier (PDF ou image) <input type="file" name="file" accept="application/pdf,image/*"></label><button class="btn sm">Ajouter</button></form></details>
+</section>
+</div>
+<aside class="side-col">
+<section class="card"><div class="line"><h2>Éléments du projet</h2></div>
+${pieces.map((x, i) => h`<details class="row${i ? '' : ' f'}"><summary class="line grow"><div class="grow"><b>${x.name}</b><span class="mut">${x.descr}</span></div>${x.status ? pill('no', x.status) : ''}${avatar(pm[x.who_id], 28)}</summary>
+<form method="post" action="/projets/${p.id}/pieces/${x.id}" class="form mt8"><label>Nom <input name="name" value="${x.name}"></label><label>Description <input name="descr" value="${x.descr}"></label>
+<label>État <input name="status" value="${x.status}" placeholder="ex. Finition 2/3"></label><label>Qui <select name="who_id"><option value="">—</option>${options(people.map((pp) => [pp.id, pp.name]), x.who_id)}</select></label>
+<div class="line"><button class="btn sm">Enregistrer</button><button class="btn alt sm" name="del" value="1">Retirer</button></div></form></details>`)}
+${pieces.length ? '' : h`<p class="mut">Caisson, plateau, façades… remplis à la génération du carnet ou à la main.</p>`}
+<details class="mt12"><summary class="btn alt sm">+ Élément</summary><form method="post" action="/projets/${p.id}/pieces" class="form mt8"><label>Nom <input name="name" required></label><label>Description <input name="descr"></label><button class="btn sm">Ajouter</button></form></details>
+</section>
+<section class="card"><div class="line"><h2>Contrôle et numéros</h2>${pill('no', p.canal)}</div>
+${model ? h`<p class="mut"><a href="/catalogue?m=${model.id}">Modèle ${model.name}</a>${p.for_whom ? ` · pour ${p.for_whom}` : ''}</p>` : p.for_whom ? h`<p class="mut">Pour ${p.for_whom}</p>` : ''}
+${units.length ? h`<div class="h3 mt12">Pièces · ${units.filter((u) => u.status !== 'a_faire').length} contrôlée(s) sur ${units.length}</div><div class="unitgrid">${units.map((u) => h`<a class="unit ${ustate[u.status]}" href="/unites/${u.id}"><b>${u.serial}</b>${ulabel[u.status]}</a>`)}</div>` : h`<p class="mut mt8">La pièce reçoit son numéro (${p.ref}) au contrôle final.</p>`}
+${units.some((u) => u.status === 'a_faire') || !units.length ? h`<div class="mt12">${postBtn(`/projets/${p.id}/controle`, units.length > 1 ? 'Contrôler la pièce suivante' : 'Contrôle final', 'btn sm')}</div>` : ''}
+</section>
+<section class="card"><h2>Imprimer</h2><p class="mut">Pour l’établi ou le classeur du dossier.</p>
+<div class="stack mt12"><a class="btn alt sm" href="/projets/${p.id}/dossier/imprimer">Dossier de production complet</a><a class="btn alt sm" href="/carnets/${p.id}/imprimer">Carnet seul</a></div></section>
+</aside></div></div>
+
+<div class="ptab" id="achats"><div class="cols">
+<div class="main-col">${D.sstSection(p)}</div>
+<aside class="side-col">
+<section class="card"><div class="line"><h2>Achats liés</h2><a class="mut t13 push" href="/achats">Tous les achats</a></div>
+${pneeds.map((n, i) => h`<div class="row${i ? '' : ' f'}"><span class="grow">${n.text}</span>${pill(n.status === 'ordered' ? 'wa' : n.needs_deposit && !n.force ? 'ko' : 'no', n.status === 'ordered' ? 'Commandé' : n.needs_deposit && !n.force ? 'Attend l’acompte' : 'À commander')}</div>`)}${pneeds.length ? '' : h`<p class="mut">Rien à acheter.</p>`}</section>
+<section class="card"><h2>Panneaux et bois réservés</h2>${panelRes.map((l, i) => h`<div class="row${i ? '' : ' f'}"><span class="grow">${l.name}</span><span>${String(Math.round(l.m2 * 10) / 10).replace('.', ',')} m² · ${l.panels} panneau${l.panels > 1 ? 'x' : ''}</span></div>`)}${lots.map((l, i) => h`<div class="row${i || panelRes.length ? '' : ' f'}"><b>${l.code}</b><span class="grow">${l.essence} ${l.thickness}</span><span>${String(l.volume).replace('.', ',')} m³</span></div>`)}${panelRes.length || lots.length ? '' : h`<p class="mut">Rien de réservé. Les panneaux se réservent quand la <a href="/projets/${p.id}/chaine">chaîne de production</a> est figée ; <a href="/bois">réserver un lot de bois</a>.</p>`}</section>
+</aside></div></div>
+
+<div class="ptab" id="echanges"><div class="cols">
+<div class="main-col">
+<section class="card" id="photos"><h2>Journal de fabrication</h2><p class="mut">Tu choisis ce que le client voit sur son portail, et ce que tu peux publier.</p>
+<form method="post" action="/projets/${p.id}/photos" enctype="multipart/form-data" class="line mt12"><label class="sr" for="ph">Photo</label><input id="ph" type="file" name="photo" accept="image/*" required><input class="qin" name="title" placeholder="Légende"><button class="btn sm">Ajouter</button></form>
+<div class="photos mt12">${photos.map((x) => h`<figure class="ph">${isImage(x.file) ? h`<a href="${fileUrl(x.file)}" target="_blank"><img src="${fileUrl(x.file)}" alt="${x.title}" loading="lazy"></a>` : h`<a href="${fileUrl(x.file)}">Fichier</a>`}
+<figcaption><b>${x.title || 'Photo'}</b><span class="mut t12">${ddmm(x.created_at)} · ${pm[x.person_id]?.name || ''}</span>
+<form method="post" action="/projets/${p.id}/photos/${x.id}" class="ckrow"><label><input type="checkbox" name="shared_client" value="1" ${x.shared_client ? 'checked' : ''} data-auto> Partagée au client</label><label><input type="checkbox" name="publishable" value="1" ${x.publishable ? 'checked' : ''} data-auto> Publiable</label></form></figcaption></figure>`)}
+${photos.length ? '' : h`<p class="mut">Pas encore de photo. L’atelier en ajoute depuis l’iPad.</p>`}</div>
+</section>
+</div>
+<aside class="side-col">
 ${p.client_id ? h`<section class="card"><div class="line"><h2>Portail client</h2>${pill(p.portal_state === 'open' ? 'ok' : 'no', p.portal_state === 'open' ? 'Ouvert' : p.portal_state === 'cut' ? 'Accès coupé' : 'Pas ouvert')}</div>
 <p class="mut">Ce que ${p.client.name} voit dans son espace. Tout part tout seul, dates de livraison comprises.</p>
 <div class="who f"><span class="grow">Devis</span><b>${quote ? `Accepté le ${ddmm(quote.accepted_at)}` : '—'}</b></div>
 <div class="who"><span class="grow">Acompte</span><b>${p.deposit_at ? `Reçu le ${ddmm(p.deposit_at)}` : 'Attendu'}</b></div>
+${p.deposit_invoice_id || Q.on() ? h`<div class="who" id="facture"><span class="grow">Facture d’acompte${p.deposit_invoice_number ? h` <span class="mut">${p.deposit_invoice_number}</span>` : ''}${p.deposit_invoice_error ? h`<span class="mut t12 red">${p.deposit_invoice_error}</span>` : ''}</span>
+<b>${p.deposit_invoice_status === 'paid' || (p.deposit_invoice_id && p.deposit_at) ? 'Payée' : p.deposit_invoice_status === 'sent' ? `Envoyée le ${ddmm(p.deposit_invoice_sent_at)}` : p.deposit_invoice_status === 'created' ? 'Créée, pas envoyée' : p.deposit_invoice_status === 'creating' ? 'En cours…' : p.deposit_invoice_status === 'error' ? 'Échec' : '—'}</b></div>
+${p.deposit_invoice_url ? h`<a class="btn alt sm mt8" href="${p.deposit_invoice_url}" target="_blank" rel="noopener">Voir la facture</a>` : ''}
+${quote && !p.deposit_at && Q.configured() && p.deposit_invoice_status !== 'sent' && p.deposit_invoice_status !== 'creating' ? postBtn(`/projets/${p.id}/facture-acompte`, p.deposit_invoice_id ? 'Renvoyer la facture' : 'Créer et envoyer la facture d’acompte', 'btn alt sm mt8', {}, p.deposit_invoice_id ? '' : 'Créer la facture d’acompte dans Qonto et l’envoyer au client ?') : ''}` : h`${(() => { const inv = q.get("SELECT * FROM documents WHERE project_id = ? AND kind = 'facture_acompte' ORDER BY id DESC LIMIT 1", p.id);
+    return inv ? h`<div class="who" id="facture"><span class="grow">Facture d’acompte</span><a class="b" href="${fileUrl(inv.file)}" target="_blank">${inv.number ? `n° ${inv.number}` : 'publiée'}</a></div>`
+      : p.deposit_needed && !p.deposit_at ? h`<form method="post" action="/projets/${p.id}/facture" enctype="multipart/form-data" class="who" id="facture"><span class="grow">Facture d’acompte<span class="mut t12" style="display:block">${require('../cockpit').configured() ? 'attendue de Cockpit · ou dépose-la ici' : 'dépose le PDF : il part sur le portail'}</span></span>
+<input type="file" name="pdf" accept="application/pdf" required aria-label="Facture d’acompte (PDF)" style="max-width:190px"><input name="numero" placeholder="N°" aria-label="Numéro de facture" style="max-width:90px"><button class="btn alt sm">Publier</button></form>` : ''; })()}`}
 <form method="post" action="/projets/${p.id}/infos" class="who"><label class="grow" for="rd">Prête à poser vers le</label><input id="rd" type="date" name="ready_date" value="${p.ready_date || ''}" data-auto><input type="hidden" name="only" value="ready_date"></form>
 <div class="who"><span class="grow">Photos partagées</span><b>${shared} sur ${photos.length}</b></div>
 <div class="line mt12"><a class="btn alt sm" href="/portails#p${p.id}">Gérer le portail</a><a class="btn alt sm" href="/projets/${p.id}/nouvelles">Donner des nouvelles</a></div>
@@ -428,18 +636,14 @@ ${p.portal_state !== 'open' ? postBtn(`/portails/espace/${p.id}/ouvrir`, 'Ouvrir
 <label>Client (base Cockpit) <input name="client_pick" list="clientbase" required placeholder="Tape le nom, l’e-mail ou la ville" autocomplete="off"></label>
 <datalist id="clientbase">${q.all('SELECT id, name, email, address FROM clients ORDER BY name').map((c) => h`<option value="${c.name}${c.email ? ` · ${c.email}` : ''} #${c.id}">${c.address || ''}</option>`)}</datalist>
 <button class="btn sm">Rattacher le client</button></form>
-<p class="mut t12 mt8">${q.get('SELECT COUNT(*) n FROM clients').n} clients dans la base.</p>${require('../cockpit').configured() ? require('./cockpit-sync').syncTools(`/projets/${p.id}#client`) : h`<p class="mut t12">Liaison Cockpit à régler dans <a href="/entreprise#cockpit">Équipe et réglages › Entreprise</a>.</p>`}</section>`}
-
-<section class="card" id="historique"><h2>Historique</h2><p class="mut">Tout ce qui s’est passé sur ce dossier, daté.</p>
-<ol class="timeline mt8">${history.map((a) => h`<li><time datetime="${a.created_at}">${ddmm(a.created_at)} · ${hhmm(a.created_at)}</time><span>${a.text}${a.who ? h` <span class="mut">· ${a.who}</span>` : ''}</span></li>`)}</ol>
-${history.length ? '' : h`<p class="mut">Rien encore.</p>`}</section>
+<p class="mut t12 mt8">${q.get('SELECT COUNT(*) n FROM clients').n} clients dans la base.</p>${require('../cockpit').syncConfigured() ? require('./cockpit-sync').syncTools(`/projets/${p.id}#client`) : h`<p class="mut t12">Liaison Cockpit à régler dans <a href="/entreprise#cockpit">Équipe et réglages › Entreprise</a>.</p>`}</section>`}
 
 <section class="card"><h2>Documents</h2><p class="mut">Devis accepté, PV, facture… Cochés « client », ils s’affichent dans son espace.</p>
 ${docs.map((d) => h`<div class="row"><a class="grow" href="${fileUrl(d.file)}" target="_blank">${d.title}</a>
 <form method="post" action="/projets/${p.id}/documents/${d.id}" class="ckrow"><label><input type="checkbox" name="visible_client" value="1" ${d.visible_client ? 'checked' : ''} data-auto> Client</label></form></div>`)}
 <form method="post" action="/projets/${p.id}/documents" enctype="multipart/form-data" class="form mt12"><label>Titre <input name="title" required placeholder="ex. Facture de solde"></label><input type="file" name="file" required accept="application/pdf,image/*"><label class="ck"><input type="checkbox" name="visible_client" value="1"> Visible par le client</label><button class="btn alt sm">Ajouter</button></form>
 </section>
-</aside></div>`;
+</aside></div></div>`;
   res.send(layout({ title: p.name, tab: 'projets', sub: '/projets', body, flash: req.flash }));
 });
 
@@ -472,13 +676,24 @@ r.post('/projets/:id/infos', loadProject, (req, res) => {
   }
   const depositAt = str(b.deposit_at) || null;
   tx(() => {
-    q.run('UPDATE projects SET name = ?, descr = ?, due_date = ?, lead_id = ?, next_action = ?, wood = ?, notes = ?, deposit_needed = ?, deposit_at = ? WHERE id = ?',
-      p.client_id ? p.name : str(b.name) || p.name, str(b.descr), str(b.due_date) || null, int(b.lead_id), str(b.next_action), str(b.wood), str(b.notes), p.client_id ? (b.deposit_needed ? 1 : 0) : 0, depositAt, p.id);
+    q.run('UPDATE projects SET name = ?, descr = ?, due_date = ?, lead_id = ?, next_action = ?, wood = ?, notes = ?, deposit_needed = ?, deposit_at = ?, amount_ht = ?, material_ht = ?, family = ?, source = ? WHERE id = ?',
+      p.client_id ? p.name : str(b.name) || p.name, str(b.descr), str(b.due_date) || null, int(b.lead_id), str(b.next_action), str(b.wood), str(b.notes), p.client_id ? (b.deposit_needed ? 1 : 0) : 0, depositAt,
+      euros(b.amount_ht), euros(b.material_ht), FAMILIES.includes(b.family) ? b.family : '', SOURCES.includes(b.source) ? b.source : '', p.id);
     // Acompte reçu : les achats qui l'attendaient se débloquent.
     if (depositAt && !p.deposit_at) { q.run('UPDATE needs SET needs_deposit = 0 WHERE project_id = ?', p.id); logActivity(p.id, null, `Acompte reçu le ${ddmm(depositAt)}`, 'Patron'); SMS.notify('acompte', { projectId: p.id }); }
     if (str(b.due_date) && str(b.due_date) !== (p.due_date || '')) logActivity(p.id, null, `Date de livraison : ${ddmm(str(b.due_date))}${p.due_date ? ` (au lieu du ${ddmm(p.due_date)})` : ''}`, 'Patron');
   });
   res.flashTo(`/projets/${p.id}`, depositAt && !p.deposit_at ? 'Acompte noté. Les achats bloqués sont débloqués.' : 'Enregistré.');
+});
+
+// Facture d'acompte Qonto : créer, ou renvoyer si elle existe déjà.
+r.post('/projets/:id/facture-acompte', loadProject, async (req, res) => {
+  const p = req.project;
+  const back = String(req.body.back || '').startsWith('/') ? String(req.body.back) : `/projets/${p.id}#facture`;
+  try {
+    const out = p.deposit_invoice_id ? await Q.resend(p.id) : await Q.createDeposit(p.id);
+    res.flashTo(back, out.busy ? 'La facture est déjà en cours de création.' : p.deposit_invoice_id ? 'Facture d’acompte renvoyée au client par Qonto.' : `Facture d’acompte ${out.number || ''} créée et envoyée au client par Qonto.`);
+  } catch (e) { res.flashTo(back, e.message, 'ko'); }
 });
 
 // Acompte reçu en un clic (depuis À décider).
@@ -578,7 +793,7 @@ r.get('/projets/:id/nouvelles', loadProject, async (req, res, next) => {
     nPhotos && p.portal_state === 'open' ? `${nPhotos} photo${nPhotos > 1 ? 's' : ''} de l'atelier dans votre espace en ligne` : null,
   ].filter(Boolean);
   let subject = `Des nouvelles de votre projet · ${p.name}`;
-  let text = `Bonjour,\n\nVoici où en est votre projet « ${p.name} » :\n${facts.map((f) => `- ${f}`).join('\n')}\n\nN'hésitez pas à nous écrire si vous avez une question.\n\nBien cordialement,\nL'équipe Carchon`;
+  let text = require('../messages').t('mail_nouvelles_texte', { projet: p.name, faits: facts.map((f) => `- ${f}`).join('\n') });
   let note = ai.enabled() ? '' : 'Modèle simple : active l’assistant IA (Pilotage › Automatisations) pour un message rédigé.';
   if (ai.enabled() && req.query.modele !== '1') {
     try { const m = await ai.clientUpdate({ project: p, clientName: p.client.name, facts }); subject = m.objet; text = m.message; note = 'Rédigé par l’assistant à partir de l’avancement réel. Relis avant d’envoyer.'; }

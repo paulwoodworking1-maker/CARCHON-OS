@@ -14,8 +14,12 @@ db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeou
 // Les 9 étapes de la frise d'un projet.
 const PHASES = ['Conception', 'Accord', 'Bois', 'Débit', 'Assemblage', 'Finition', 'Contrôle', 'Livraison', 'Réception'];
 // Les gestes suivis dans « Pilotage ».
-const GESTES = ['Débit, corroyage', "Queues d'aronde", 'Assemblage', 'Collage', 'Ponçage', 'Vernis', 'Huile-cire', 'Contrôle', 'Pose', 'Autre'];
+const GESTES = ['Débit, corroyage', "Queues d'aronde", 'Assemblage', 'Collage', 'Ponçage', 'Vernis', 'Huile-cire', 'Contrôle', 'Pose', 'Usinage CNC', 'Autre'];
 const STOCK_CATS = ['Quincaillerie', 'Droguerie', 'Matériaux', 'Consommables'];
+// Familles de la stratégie 2027 (les trois premières sont le « cœur ») et origines des affaires.
+const FAMILIES = ['Pièce signature', 'Agencement sur mesure', 'Projet pro', 'Petite pièce', 'Hors positionnement'];
+const CORE_FAMILIES = FAMILIES.slice(0, 3);
+const SOURCES = ['Prescripteur (architecte, décorateur)', 'Client livré, parrainage', 'Site web', 'Instagram, Pinterest', 'Fiche Google', 'Salon, porte ouverte', 'Revendeur', 'Autre'];
 
 db.exec(`
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);
@@ -174,6 +178,19 @@ addColumn('quotes', 'token_enc', 'TEXT');          // lien chiffré, pour le rem
 addColumn('quotes', 'signer_phone', "TEXT DEFAULT ''");
 addColumn('projects', 'portal_token_enc', 'TEXT');
 addColumn('clients', 'sms_off', 'INTEGER NOT NULL DEFAULT 0');
+// Chaîne de production générée depuis le devis, les vues 3D et le chiffrage.
+addColumn('projects', 'prod_status', "TEXT DEFAULT ''");   // '' | en_cours | pret | erreur
+addColumn('projects', 'prod_error', 'TEXT');
+addColumn('projects', 'prod_note', 'TEXT');
+addColumn('projects', 'prod_at', 'TEXT');
+addColumn('projects', 'prod_analysis', 'TEXT');
+addColumn('suppliers', 'lead_days', 'INTEGER');            // délai de livraison habituel (jours ouvrés)
+addColumn('needs', 'qty', 'REAL');
+addColumn('needs', 'unit', "TEXT DEFAULT ''");
+addColumn('needs', 'for_chain', 'INTEGER NOT NULL DEFAULT 0'); // matière nécessaire avant la fabrication
+addColumn('documents', 'kind', "TEXT DEFAULT ''");          // facture_acompte, facture, plan3d, chiffrage…
+addColumn('documents', 'number', "TEXT DEFAULT ''");
+addColumn('documents', 'amount', "TEXT DEFAULT ''");
 addColumn('projects', 'portal_opened_at', 'TEXT');
 addColumn('projects', 'portal_seen_at', 'TEXT');
 addColumn('projects', 'portal_views', 'INTEGER NOT NULL DEFAULT 0');
@@ -183,6 +200,18 @@ addColumn('clients', 'cockpit_id', 'TEXT');                  // fiche client de 
 addColumn('clients', 'synced_at', 'TEXT');
 addColumn('trips', 'kind', "TEXT DEFAULT 'Livraison et pose'");
 addColumn('trips', 'hours', 'REAL DEFAULT 0');
+// Analyse : montant vendu, matière, famille et origine de chaque affaire (pour le taux horaire réel et les sources).
+addColumn('projects', 'amount_ht', 'REAL');
+addColumn('projects', 'material_ht', 'REAL');
+addColumn('projects', 'family', "TEXT DEFAULT ''");
+addColumn('projects', 'source', "TEXT DEFAULT ''");
+addColumn('quotes', 'amount_ht', 'REAL');
+addColumn('quotes', 'source', "TEXT DEFAULT ''");
+addColumn('quotes', 'family', "TEXT DEFAULT ''");
+// Facture d'acompte émise dans Qonto à l'acceptation du devis.
+addColumn('quotes', 'billing_json', 'TEXT');
+for (const [c, d] of [['deposit_invoice_id', 'TEXT'], ['deposit_invoice_number', 'TEXT'], ['deposit_invoice_url', 'TEXT'], ['deposit_invoice_status', 'TEXT'], ['deposit_invoice_error', "TEXT DEFAULT ''"],
+  ['deposit_invoice_ttc', 'REAL'], ['deposit_invoice_due', 'TEXT'], ['deposit_invoice_sent_at', 'TEXT']]) addColumn('projects', c, d);
 
 db.exec(`
 CREATE TABLE IF NOT EXISTS models (
@@ -239,12 +268,68 @@ CREATE TABLE IF NOT EXISTS sms_queue (
   id INTEGER PRIMARY KEY, target TEXT NOT NULL, project_id INTEGER, quote_id INTEGER, phone TEXT NOT NULL, event TEXT NOT NULL, vars TEXT DEFAULT '{}',
   text TEXT, status TEXT NOT NULL DEFAULT 'attente', error TEXT, send_after TEXT NOT NULL, sent_at TEXT, created_at TEXT DEFAULT (datetime('now'))
 );
+-- Fiche de débit générée (cotes finies et brutes, pièce par pièce).
+CREATE TABLE IF NOT EXISTS cut_list (
+  id INTEGER PRIMARY KEY, project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, ord INTEGER DEFAULT 0,
+  ensemble TEXT DEFAULT '', piece TEXT NOT NULL, qty REAL DEFAULT 1, material TEXT DEFAULT '',
+  l REAL, w REAL, t REAL, bl REAL, bw REAL, bt REAL, grain TEXT DEFAULT '', note TEXT DEFAULT ''
+);
+-- Fichiers joints à un devis (vues 3D, nomenclature, chiffrage) : repris par l'OF à l'acceptation.
+CREATE TABLE IF NOT EXISTS quote_files (
+  id INTEGER PRIMARY KEY, number TEXT NOT NULL, kind TEXT NOT NULL, file TEXT NOT NULL, name TEXT DEFAULT '', created_at TEXT DEFAULT (datetime('now'))
+);
 CREATE TABLE IF NOT EXISTS snoozes (key TEXT PRIMARY KEY, until TEXT NOT NULL);
 -- Parcours client : rendez-vous, prises de cotes, échanges… visibles sur son portail.
 CREATE TABLE IF NOT EXISTS client_log (
   id INTEGER PRIMARY KEY, number TEXT DEFAULT '', project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE,
   date TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'rdv', title TEXT NOT NULL, note TEXT DEFAULT '', created_at TEXT DEFAULT (datetime('now'))
 );
+`);
+
+// Sous-traitance : une prestation confiée à un autre atelier (laquage, découpe numérique, verre, sellerie…).
+// Statuts : a_commander → commande → envoye (pièces parties chez lui) → recu → controle.
+db.exec(`
+CREATE TABLE IF NOT EXISTS subcontracts (
+  id INTEGER PRIMARY KEY, project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  supplier_id INTEGER REFERENCES suppliers(id) ON DELETE SET NULL, what TEXT NOT NULL, pieces TEXT DEFAULT '', qty TEXT DEFAULT '',
+  spec TEXT DEFAULT '', price REAL, quote_ref TEXT DEFAULT '', file TEXT, status TEXT NOT NULL DEFAULT 'a_commander',
+  ordered_at TEXT, sent_at TEXT, due_at TEXT, back_at TEXT, controlled_at TEXT, note TEXT DEFAULT '',
+  ai INTEGER NOT NULL DEFAULT 0, created_at TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS subcontracts_project ON subcontracts(project_id, status);
+-- Dossier de production : chaque génération du carnet (plans lus + dictée du patron), gardée pour s'y retrouver.
+CREATE TABLE IF NOT EXISTS carnet_runs (
+  id INTEGER PRIMARY KEY, project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  plans TEXT DEFAULT '', dictation TEXT DEFAULT '', remarks TEXT DEFAULT '', questions TEXT NOT NULL DEFAULT '[]',
+  debit TEXT NOT NULL DEFAULT '[]', n INTEGER NOT NULL DEFAULT 0, model TEXT DEFAULT '', created_at TEXT DEFAULT (datetime('now'))
+);
+`);
+addColumn('suppliers', 'subcontractor', 'INTEGER NOT NULL DEFAULT 0');
+
+// CNC : bibliothèque d'outils, avances par matière, travaux (pièces à usiner) et programmes enregistrés.
+db.exec(`
+CREATE TABLE IF NOT EXISTS cnc_tools (
+  id INTEGER PRIMARY KEY, num INTEGER NOT NULL, name TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'fraise', diameter REAL NOT NULL,
+  max_depth REAL NOT NULL DEFAULT 20, rpm INTEGER NOT NULL DEFAULT 18000, feed REAL NOT NULL DEFAULT 3000, plunge REAL NOT NULL DEFAULT 1000,
+  pass_depth REAL NOT NULL DEFAULT 6, note TEXT DEFAULT '', active INTEGER NOT NULL DEFAULT 1
+);
+CREATE TABLE IF NOT EXISTS cnc_feeds (
+  id INTEGER PRIMARY KEY, tool_id INTEGER NOT NULL REFERENCES cnc_tools(id) ON DELETE CASCADE, material TEXT NOT NULL,
+  rpm INTEGER NOT NULL, feed REAL NOT NULL, plunge REAL NOT NULL, pass_depth REAL NOT NULL, UNIQUE (tool_id, material)
+);
+CREATE TABLE IF NOT EXISTS cnc_jobs (
+  id INTEGER PRIMARY KEY, project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, name TEXT NOT NULL,
+  material TEXT NOT NULL DEFAULT 'Mélaminé', thickness REAL NOT NULL DEFAULT 19, sheet_l REAL NOT NULL DEFAULT 2800, sheet_w REAL NOT NULL DEFAULT 2070,
+  parts TEXT NOT NULL DEFAULT '[]', source TEXT DEFAULT '', step_id INTEGER REFERENCES steps(id) ON DELETE SET NULL,
+  validated_at TEXT, created_at TEXT DEFAULT (datetime('now')), updated_at TEXT DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS cnc_programs (
+  id INTEGER PRIMARY KEY, project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, job_id INTEGER REFERENCES cnc_jobs(id) ON DELETE SET NULL,
+  version INTEGER NOT NULL DEFAULT 1, sheet INTEGER, kind TEXT NOT NULL DEFAULT 'carchon', name TEXT NOT NULL, file TEXT NOT NULL,
+  minutes REAL, note TEXT DEFAULT '', active INTEGER NOT NULL DEFAULT 1, created_at TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS cnc_jobs_project ON cnc_jobs(project_id);
+CREATE INDEX IF NOT EXISTS cnc_programs_project ON cnc_programs(project_id, active);
 `);
 
 // Référence de dossier : P2026-001, P2026-002… attribuée à la création.
@@ -349,6 +434,13 @@ function bootstrap() {
     }
     setSetting('stock_atelier_v2', '1');
   }
+  // Bibliothèque CNC de départ : valeurs prudentes, à vérifier par le patron avant le premier usinage.
+  if (!q.get('SELECT id FROM cnc_tools LIMIT 1') && setting('cnc_seeded') !== '1') {
+    const T = [[1, 'Fraise compression 2 dents', 'fraise', 8, 32, 18000, 6000, 1500, 10], [2, 'Fraise droite 2 dents', 'fraise', 6, 22, 18000, 4000, 1200, 6],
+      [3, 'Foret à bois', 'foret', 5, 30, 6000, 3000, 1800, 15], [4, 'Foret à bois', 'foret', 8, 30, 6000, 3000, 1500, 15], [5, 'Mèche à façonner (charnière)', 'foret', 35, 14, 4500, 2000, 600, 14]];
+    for (const t of T) q.run('INSERT INTO cnc_tools (num, name, kind, diameter, max_depth, rpm, feed, plunge, pass_depth) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)', ...t);
+    setSetting('cnc_seeded', '1');
+  }
 }
 // Index : les listes restent rapides avec beaucoup de dossiers.
 db.exec(`
@@ -367,4 +459,4 @@ const COMPANY_FIELDS = [['company_name', 'Raison sociale', 'Carchon Les Ateliers
   ['company_phone', 'Téléphone', ''], ['company_email', 'E-mail', ''], ['company_site', 'Site web', 'www.carchon.com']];
 const company = () => Object.fromEntries(COMPANY_FIELDS.map(([k, , d]) => [k.replace('company_', ''), setting(k, d) || d]));
 
-module.exports = { db, q, tx, setting, setSetting, logActivity, company, COMPANY_FIELDS, PHASES, GESTES, STOCK_CATS, DATA_DIR, UPLOAD_DIR };
+module.exports = { db, q, tx, setting, setSetting, logActivity, company, COMPANY_FIELDS, PHASES, GESTES, STOCK_CATS, FAMILIES, CORE_FAMILIES, SOURCES, DATA_DIR, UPLOAD_DIR };
