@@ -360,6 +360,7 @@ ${time.map((t, i) => h`<div class="who${i ? '' : ' f'}"><span class="grow">${t.g
 <div class="ptab" id="dossier"><div class="cols">
 <div class="main-col">
 ${D.dossierSection(p, { dictee })}
+${require('./cnc').cncSection(p)}
 <section class="card" id="plans"><div class="line"><h2>Plans</h2></div>
 ${plans.map((x, i) => h`<div class="row${i ? '' : ' f'}"><div class="grow"><b>${x.version}${x.descr ? ` · ${x.descr}` : ''}</b><span class="mut">${x.status === 'validee' ? `Validée${x.validated_at ? ` le ${ddmm(x.validated_at)}` : ''} · fait foi pour l'atelier` : x.status === 'archivee' ? `${ddmm(x.created_at)} · remplacée` : `${ddmm(x.created_at)} · à valider`}</span></div>
 ${pill(x.status === 'validee' ? 'ok' : 'no', x.status === 'validee' ? 'Validée' : x.status === 'archivee' ? 'Archivée' : 'Brouillon')}

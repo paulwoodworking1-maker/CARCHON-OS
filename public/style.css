@@ -737,3 +737,46 @@ h2{margin-bottom:14px}
 .sst-track li.c{background:var(--ink);color:#fff}.sst-track li.c span{color:#D9D4CC}
 @media (max-width:700px){.sst-track{grid-template-columns:1fr 1fr}}
 .ptab .card,.ptab [id]{scroll-margin-top:64px}
+
+/* ============ CNC ============ */
+.grid4{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+@media (max-width:900px){.grid4{grid-template-columns:1fr 1fr}}
+.cnc-new{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px}
+.cnc-src{display:flex;flex-direction:column;gap:8px;padding:16px;background:var(--grey2,#F2EFEA);min-width:0}
+.cnc-src button{align-self:flex-start}
+.cnc-up input[type=file]{max-width:260px}
+.cnc-view{background:#fff;border:1px solid var(--line);padding:8px;overflow:auto}
+.cnc-svg{width:100%;height:auto;display:block;max-height:70vh}
+.cnc-sheet{fill:#F6F3EE;stroke:#1A1714;stroke-width:3}
+.cnc-part{fill:#EFE6D4;stroke:#8B847A;stroke-width:1.5}
+.cnc-lbl{fill:#4A443E;text-anchor:middle;dominant-baseline:middle;font-family:inherit;font-weight:600}
+.cnc-cut{stroke-width:3;stroke-linejoin:round}
+.cnc-rapid{stroke:#8B847A;stroke-width:1.5;stroke-dasharray:10 8;fill:none}
+.cnc-origin{fill:#A20212}
+.cnc-op.off{display:none}
+.cnc-play{display:flex;align-items:center;gap:12px;font-size:13px}
+.cnc-play input{flex:1}
+.cnc-legend{display:flex;gap:14px;flex-wrap:wrap;font-size:12px}
+.cnc-legend i{display:inline-block;width:14px;height:4px;margin-right:5px;vertical-align:middle}
+.cnc-legend i.dash{background:repeating-linear-gradient(90deg,#8B847A 0 4px,transparent 4px 7px)}
+.cnc-ops{columns:2;font-size:12px;margin:8px 0 0;padding-left:20px}
+@media (max-width:700px){.cnc-ops{columns:1}}
+.cnc-parts td{vertical-align:top}
+.cnc-parts input{min-height:36px}
+.cnc-parts textarea{font:12px/1.5 ui-monospace,monospace;min-width:280px}
+.cnc-parts input.nr{width:84px;text-align:right}
+.cnc-parts tr.new td{background:var(--grey2,#F2EFEA)}
+.cnc-toolrow{display:grid;grid-template-columns:56px minmax(140px,2fr) 120px repeat(6,minmax(64px,1fr)) auto;gap:6px;align-items:center}
+.cnc-toolrow input,.cnc-toolrow select{min-height:36px}
+.cnc-toolrow .nr{text-align:right}
+@media (max-width:1000px){.cnc-toolrow{grid-template-columns:repeat(3,1fr)}}
+.labels{display:grid;grid-template-columns:repeat(3,1fr);gap:0}
+.label{border:1px dashed #8B847A;padding:10px 12px;display:flex;flex-direction:column;gap:2px;font-size:12px;break-inside:avoid;min-height:28mm}
+.label b{font-size:15px}
+.nowrap{white-space:nowrap}
+.cnc-parts td:first-child input{min-width:140px}
+.cnc-parts textarea{width:100%;min-width:240px}
+.cnc-parts td.center{text-align:center}
+.cnc-toolhead{padding:10px 8px;border-bottom:1px solid var(--line);font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase}
+.cnc-toolhead .nr{text-align:right}
+@media (max-width:1000px){.cnc-toolhead{display:none}}
