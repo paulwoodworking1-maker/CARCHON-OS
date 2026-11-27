@@ -8,6 +8,8 @@ const str = (v) => String(v ?? '').trim();
 const url = () => str(setting('cockpit_url')).replace(/\/+$/, '');
 const key = () => str(setting('cockpit_key'));
 const configured = () => !!url();
+// Cockpit qui tourne sur l'ordinateur du patron (localhost) : seul son navigateur peut le joindre.
+const local = () => /^https?:\/\/(localhost|127\.|0\.0\.0\.0|192\.168\.|10\.)/i.test(url());
 
 // Ajoute ou met à jour un client venu de Cockpit (par identifiant Cockpit, sinon par e-mail).
 function upsert(c) {
@@ -35,6 +37,7 @@ function upsertMany(list) {
 
 async function pull() {
   if (!configured()) throw new Error('Adresse de Cockpit non renseignée');
+  if (local()) throw new Error('Cockpit tourne sur ton ordinateur : la synchronisation se fait depuis ton navigateur (bouton « Synchroniser depuis cet ordinateur »)');
   const r = await fetch(`${url()}/api/v1/clients`, { headers: { accept: 'application/json', ...(key() ? { authorization: `Bearer ${key()}` } : {}) }, signal: AbortSignal.timeout(15000) });
   if (!r.ok) throw new Error(`Cockpit a répondu ${r.status}`);
   const d = await r.json();
@@ -44,7 +47,7 @@ async function pull() {
   setSetting('cockpit_error', '');
   return n;
 }
-async function pullQuiet() { if (!configured()) return; try { await pull(); } catch (e) { setSetting('cockpit_error', e.message); } }
+async function pullQuiet() { if (!configured() || local()) return; try { await pull(); } catch (e) { setSetting('cockpit_error', e.message); } }
 function start() { setTimeout(pullQuiet, 20 * 1000).unref?.(); setInterval(pullQuiet, 60 * 60 * 1000).unref?.(); }
 
-module.exports = { upsert, upsertMany, pull, pullQuiet, start, configured, url };
+module.exports = { local, upsert, upsertMany, pull, pullQuiet, start, configured, url };

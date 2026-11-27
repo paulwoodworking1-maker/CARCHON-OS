@@ -159,3 +159,18 @@ document.addEventListener('change', function (e) {
 
 // Étude en cours (IA) : la page se recharge toute seule.
 (function () { var el = document.querySelector('[data-reload]'); if (el) setTimeout(function () { location.reload(); }, (Number(el.getAttribute('data-reload')) || 12) * 1000); })();
+
+// Cockpit sur l'ordinateur du patron : le navigateur lit la liste des clients et la transmet à Carchon OS.
+document.addEventListener('click', function (e) {
+  var b = e.target.closest && e.target.closest('[data-cockpit-sync]');
+  if (!b) return;
+  var msg = document.querySelector('[data-cockpit-msg]');
+  var say = function (t) { if (msg) msg.textContent = t; };
+  b.disabled = true; say('Lecture de Cockpit…');
+  fetch(b.getAttribute('data-cockpit-sync'), { headers: { accept: 'application/json' } })
+    .then(function (r) { if (!r.ok) throw new Error('Cockpit a répondu ' + r.status); return r.json(); })
+    .then(function (d) { return fetch('/clients/import', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(d), credentials: 'same-origin' }); })
+    .then(function (r) { return r.json(); })
+    .then(function (d) { say(d.n + ' client(s) repris de Cockpit.'); setTimeout(function () { location.href = b.getAttribute('data-back') || location.href; location.reload(); }, 900); })
+    .catch(function (err) { b.disabled = false; say('Cockpit injoignable depuis ce navigateur (' + err.message + '). Vérifie que Cockpit est ouvert sur cet ordinateur, ou importe un export JSON/CSV.'); });
+});

@@ -428,7 +428,7 @@ ${p.portal_state !== 'open' ? postBtn(`/portails/espace/${p.id}/ouvrir`, 'Ouvrir
 <label>Client (base Cockpit) <input name="client_pick" list="clientbase" required placeholder="Tape le nom, l’e-mail ou la ville" autocomplete="off"></label>
 <datalist id="clientbase">${q.all('SELECT id, name, email, address FROM clients ORDER BY name').map((c) => h`<option value="${c.name}${c.email ? ` · ${c.email}` : ''} #${c.id}">${c.address || ''}</option>`)}</datalist>
 <button class="btn sm">Rattacher le client</button></form>
-<p class="mut t12 mt8">${require('../cockpit').configured() ? h`${q.get('SELECT COUNT(*) n FROM clients').n} clients dans la base. ${postBtn('/clients/synchroniser', 'Mettre à jour depuis Cockpit', 'linkbtn', { back: `/projets/${p.id}#client` })}` : h`Liaison Cockpit à régler dans <a href="/entreprise#cockpit">Équipe et réglages › Entreprise</a>.`}</p></section>`}
+<p class="mut t12 mt8">${q.get('SELECT COUNT(*) n FROM clients').n} clients dans la base.</p>${require('../cockpit').configured() ? require('./cockpit-sync').syncTools(`/projets/${p.id}#client`) : h`<p class="mut t12">Liaison Cockpit à régler dans <a href="/entreprise#cockpit">Équipe et réglages › Entreprise</a>.</p>`}</section>`}
 
 <section class="card" id="historique"><h2>Historique</h2><p class="mut">Tout ce qui s’est passé sur ce dossier, daté.</p>
 <ol class="timeline mt8">${history.map((a) => h`<li><time datetime="${a.created_at}">${ddmm(a.created_at)} · ${hhmm(a.created_at)}</time><span>${a.text}${a.who ? h` <span class="mut">· ${a.who}</span>` : ''}</span></li>`)}</ol>
