@@ -763,7 +763,7 @@ ${p.portal_state !== 'open' ? postBtn(`/portails/espace/${p.id}/ouvrir`, 'Ouvrir
 <label>Client (base Cockpit) <input name="client_pick" list="clientbase" required placeholder="Tape le nom, l’e-mail ou la ville" autocomplete="off"></label>
 <datalist id="clientbase">${q.all('SELECT id, name, email, address FROM clients ORDER BY name').map((c) => h`<option value="${c.name}${c.email ? ` · ${c.email}` : ''} #${c.id}">${c.address || ''}</option>`)}</datalist>
 <button class="btn sm">Rattacher le client</button></form>
-<p class="mut t12 mt8">${require('../cockpit').syncConfigured() ? h`${q.get('SELECT COUNT(*) n FROM clients').n} clients dans la base. ${postBtn('/clients/synchroniser', 'Mettre à jour depuis Cockpit', 'linkbtn', { back: `/projets/${p.id}#client` })}` : h`Liaison Cockpit à régler dans <a href="/entreprise#cockpit">Équipe et réglages › Entreprise</a>.`}</p></section>`}
+<p class="mut t12 mt8">${q.get('SELECT COUNT(*) n FROM clients').n} clients dans la base.</p>${require('../cockpit').syncConfigured() ? require('./cockpit-sync').syncTools(`/projets/${p.id}#client`) : h`<p class="mut t12">Liaison Cockpit à régler dans <a href="/entreprise#cockpit">Équipe et réglages › Entreprise</a>.</p>`}</section>`}
 
 <section class="card"><h2>Documents</h2><p class="mut">Devis accepté, PV, facture… Cochés « client », ils s’affichent dans son espace.</p>
 ${docs.map((d) => h`<div class="row"><a class="grow" href="${fileUrl(d.file)}" target="_blank">${d.title}</a>

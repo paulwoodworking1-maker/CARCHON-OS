@@ -444,4 +444,25 @@ Précisions du patron :
   return { ...out, skipped };
 }
 
-module.exports = { enabled, carnetFromText, carnetFromPlans, cncFromPlans, planBlocks, readQuotePdf, clientUpdate, productionChain, chainPrompt, ChainSchema, chainStudy, AIError, MODEL };
+// --- 6. Lire une facture de panneaux ou de bois ---
+const InvoiceSchema = z.object({
+  fournisseur: z.object({ nom: z.string(), email: z.string(), telephone: z.string() }),
+  numero: z.string(),
+  date: z.string(),
+  lignes: z.array(z.object({
+    designation: z.string(), type: z.enum(['Panneau', 'Bois massif', 'Chant', 'Autre']),
+    epaisseur_mm: z.number(), longueur_mm: z.number(), largeur_mm: z.number(),
+    quantite: z.number(), unite: z.enum(['panneau', 'm²', 'm³', 'ml', 'pièce', 'autre']), prix_unitaire_ht: z.number(),
+  })),
+});
+async function readInvoicePdf(pdfBuffer) {
+  const system = `Tu lis une facture ou un bon de livraison d'un négoce de bois et panneaux pour un atelier d'ébénisterie. Extrais le fournisseur et chaque ligne d'article, telle qu'écrite.
+- "designation" : nom court et clair de la référence SANS l'épaisseur ni le format (ex. "MDF plaqué chêne A/B", "Mélaminé blanc", "Contreplaqué bouleau", "Chêne massif avivé").
+- Épaisseur et format en mm (0 si absent ; pour du massif, longueur et largeur moyennes si indiquées).
+- "unite" et "prix_unitaire_ht" : tels qu'écrits sur la ligne (prix HT après remise).
+- Ignore frais de port, éco-participation, totaux, TVA. N'invente rien : 0 ou "" si absent.`;
+  return structured({ system, schema: InvoiceSchema, effort: 'low', timeout: 5 * 60 * 1000,
+    content: [{ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: pdfBuffer.toString('base64') } }, { type: 'text', text: 'Extrais les lignes de cette facture.' }] });
+}
+
+module.exports = { readInvoicePdf, enabled, carnetFromText, carnetFromPlans, cncFromPlans, planBlocks, readQuotePdf, clientUpdate, productionChain, chainPrompt, ChainSchema, chainStudy, AIError, MODEL };

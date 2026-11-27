@@ -12,6 +12,8 @@ const str = (v) => String(v ?? '').trim();
 const baseUrl = () => str(setting('cockpit_url') || process.env.COCKPIT_URL).replace(/\/+$/, '');
 const key = () => str(setting('cockpit_key'));
 const syncConfigured = () => !!baseUrl();
+// Cockpit qui tourne sur l'ordinateur du patron (localhost) : seul son navigateur peut le joindre.
+const local = () => /^https?:\/\/(localhost|127\.|0\.0\.0\.0|192\.168\.|10\.)/i.test(baseUrl());
 
 // Ajoute ou met à jour un client venu de Cockpit (par identifiant Cockpit, sinon par e-mail).
 function upsert(c) {
@@ -39,6 +41,7 @@ function upsertMany(list) {
 
 async function pull() {
   if (!syncConfigured()) throw new Error('Adresse de Cockpit non renseignée');
+  if (local()) throw new Error('Cockpit tourne sur ton ordinateur : la synchronisation se fait depuis ton navigateur (bouton « Synchroniser depuis cet ordinateur »)');
   const r = await fetch(`${baseUrl()}/api/v1/clients`, { headers: { accept: 'application/json', ...(key() ? { authorization: `Bearer ${key()}` } : {}) }, signal: AbortSignal.timeout(15000) });
   if (!r.ok) throw new Error(`Cockpit a répondu ${r.status}`);
   const d = await r.json();
@@ -48,7 +51,7 @@ async function pull() {
   setSetting('cockpit_error', '');
   return n;
 }
-async function pullQuiet() { if (!syncConfigured()) return; try { await pull(); } catch (e) { setSetting('cockpit_error', e.message); } }
+async function pullQuiet() { if (!syncConfigured() || local()) return; try { await pull(); } catch (e) { setSetting('cockpit_error', e.message); } }
 function start() { setTimeout(pullQuiet, 20 * 1000).unref?.(); setInterval(pullQuiet, 60 * 60 * 1000).unref?.(); }
 
 // --- Liaison sortante (webhook) ---
@@ -101,4 +104,4 @@ function addInvoice(projectId, { file, type = 'acompte', number = '', amount = '
   return id;
 }
 
-module.exports = { upsert, upsertMany, pull, pullQuiet, start, syncConfigured, baseUrl, configured, notify, send, quotePayload, addInvoice, url };
+module.exports = { local, upsert, upsertMany, pull, pullQuiet, start, syncConfigured, baseUrl, configured, notify, send, quotePayload, addInvoice, url };

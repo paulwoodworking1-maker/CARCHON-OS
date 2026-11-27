@@ -45,6 +45,7 @@ r.get('/bois', (req, res) => {
 
 <section class="card" style="border-top:0">
 <div class="line"><h2>Références panneaux</h2><p class="mut grow">Quantité en m², épaisseur en mm. Les projets réservent leurs panneaux quand leur chaîne de production est figée, et les sortent du stock au débit.</p>
+<form method="post" action="/bois/factures" enctype="multipart/form-data" class="line" data-busy="L’IA lit la facture…"><label class="btn alt" style="cursor:pointer">Importer une facture (PDF)<input type="file" name="pdf" accept="application/pdf" required hidden data-auto></label></form>
 <details class="menu"><summary class="btn">+ Référence</summary><form method="post" action="/bois/refs" class="menu-list right-al form pad wide">${refForm({}, sups)}<button class="btn sm">Ajouter</button></form></details></div>
 <div class="tablebox mt12"><table class="tbl" style="min-width:980px"><thead><tr><th>Référence</th><th class="num">Ép. (mm)</th><th>Format</th><th class="num">En stock</th><th class="num">Réservé</th><th class="num">Disponible</th><th>Utilisée par</th><th class="num">Prix / m²</th><th></th></tr></thead><tbody>
 ${rows.map((x) => h`<tr><td><b>${x.name}</b><div class="mut t12">${x.kind}${x.sname ? ` · ${x.sname}` : ''}</div></td><td class="num">${String(x.thickness).replace('.', ',')}</td><td class="mut">${x.length && x.width ? `${x.length} × ${x.width}` : '—'}${x.length && x.width ? h`<div class="t12">${m2(panelArea(x))} / panneau</div>` : ''}</td>
@@ -209,6 +210,75 @@ r.get('/bois/commandes/:id/bon', (req, res) => {
 ${lines.map((l) => h`<tr><td>${l.name}</td><td style="text-align:right">${l.panels}</td><td style="text-align:right">${String(l.m2).replace('.', ',')}</td><td style="text-align:right">${eur(l.price_m2)}</td><td style="text-align:right">${eur(l.m2 * (l.price_m2 || 0))}</td></tr>`)}
 <tr><td colspan="4"><b>Total HT</b></td><td style="text-align:right"><b>${eur(lines.reduce((a, l) => a + l.m2 * (l.price_m2 || 0), 0))}</b></td></tr></tbody></table>
 <p>Merci de rappeler la référence ${orderNo(o)} sur le bon de livraison.</p>`, { ref: orderNo(o), date: ddmmyyyy(o.created_at) }));
+});
+
+// --- Import d'une facture : l'IA lit le PDF, tu confirmes, les références et le stock sont mis à jour ---
+const { upload } = require('../uploads');
+r.post('/bois/factures', upload.single('pdf'), async (req, res, next) => {
+  const ai = require('../ai');
+  if (!req.file || !/\.pdf$/i.test(req.file.filename)) return res.flashTo('/bois', 'Choisis une facture en PDF.', 'ko');
+  if (!ai.enabled()) return res.flashTo('/bois', 'L’assistant IA n’est pas activé (clé ANTHROPIC_API_KEY).', 'ko');
+  let f;
+  try { f = await ai.readInvoicePdf(require('node:fs').readFileSync(req.file.path)); }
+  catch (e) { if (e instanceof ai.AIError) return res.flashTo('/bois', e.message, 'ko'); return next(e); }
+  const refs = q.all('SELECT * FROM panel_refs WHERE active = 1 ORDER BY kind, name, thickness');
+  const sups = q.all('SELECT id, name FROM suppliers ORDER BY name');
+  const supMatch = sups.find((x) => f.fournisseur.nom && x.name.toLowerCase().includes(f.fournisseur.nom.toLowerCase().split(' ')[0]));
+  const norm = (t) => String(t).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9 ]/g, ' ');
+  const lines = f.lignes.filter((l) => l.quantite > 0).map((l) => {
+    const m = refs.find((r0) => r0.kind === l.type && Math.abs(r0.thickness - l.epaisseur_mm) < 0.3 && norm(r0.name).split(' ').filter((w) => w.length > 2).every((w) => norm(l.designation).includes(w)));
+    const area = (l.longueur_mm * l.largeur_mm) / 1e6;
+    const m2add = l.unite === 'panneau' ? l.quantite * area : l.unite === 'm²' ? l.quantite : 0;
+    const pm2 = l.unite === 'panneau' && area ? l.prix_unitaire_ht / area : l.unite === 'm²' ? l.prix_unitaire_ht : 0;
+    return { ...l, match: m?.id || '', m2add: Math.round(m2add * 100) / 100, pm2: Math.round(pm2 * 100) / 100, pm3: l.unite === 'm³' ? l.prix_unitaire_ht : 0 };
+  });
+  const body = h`<div class="mut"><a href="/bois">‹ Panneaux et bois</a></div><h1>Facture ${f.numero}</h1>
+<p class="mut mt8">${f.fournisseur.nom}${f.date ? ` · ${f.date}` : ''} · lue par l’IA. Vérifie chaque ligne, puis valide : les références sont créées ou mises à jour (prix), et les m² livrés entrent en stock.</p>
+<form method="post" action="/bois/factures/valider" class="card form mt20">
+<input type="hidden" name="file" value="${req.file.filename}"><input type="hidden" name="numero" value="${f.numero}">
+<div class="grid2"><label>Fournisseur <select name="supplier_id"><option value="new">Nouveau : ${f.fournisseur.nom || '—'}</option>${options(sups.map((x) => [x.id, x.name]), supMatch?.id)}</select></label>
+<input type="hidden" name="sup_name" value="${f.fournisseur.nom}"><input type="hidden" name="sup_email" value="${f.fournisseur.email}"><input type="hidden" name="sup_phone" value="${f.fournisseur.telephone}"></div>
+<div class="tablebox"><table class="tbl" style="min-width:1100px"><thead><tr><th></th><th>Désignation</th><th>Type</th><th class="num">Ép. (mm)</th><th>Format (mm)</th><th>Sur la facture</th><th>Référence de l’atelier</th><th class="num">Prix / m²</th><th class="num">Prix / m³</th><th class="num">m² en stock +</th></tr></thead><tbody>
+${lines.map((l, i) => h`<tr><td><input type="checkbox" name="on_${i}" value="1" checked aria-label="Prendre cette ligne"></td>
+<td><input name="name_${i}" value="${l.designation}"></td><td><select name="kind_${i}">${options(['Panneau', 'Bois massif', 'Chant', 'Autre'], l.type)}</select></td>
+<td><input name="th_${i}" value="${l.epaisseur_mm}" inputmode="decimal" style="width:70px"></td>
+<td class="line" style="flex-wrap:nowrap"><input name="len_${i}" value="${l.longueur_mm}" style="width:80px"> × <input name="wid_${i}" value="${l.largeur_mm}" style="width:80px"></td>
+<td class="mut t13">${l.quantite} ${l.unite} × ${eur(l.prix_unitaire_ht)}</td>
+<td><select name="ref_${i}"><option value="">Nouvelle référence</option>${options(refs.map((r0) => [r0.id, `${r0.name} ${r0.thickness} mm`]), l.match)}</select></td>
+<td><input name="pm2_${i}" value="${l.pm2}" inputmode="decimal" style="width:90px"></td><td><input name="pm3_${i}" value="${l.pm3}" inputmode="decimal" style="width:90px"></td>
+<td><input name="add_${i}" value="${l.m2add}" inputmode="decimal" style="width:90px"></td></tr>`)}
+${lines.length ? '' : h`<tr><td colspan="10" class="mut">Aucune ligne de bois ou de panneau trouvée.</td></tr>`}</tbody></table></div>
+<input type="hidden" name="n" value="${lines.length}"><button class="btn">Valider la facture</button></form>`;
+  res.send(layout({ title: 'Facture', heading: 'Matière et stock', tab: 'stock', sub: '/bois', body }));
+});
+r.post('/bois/factures/valider', (req, res) => {
+  const b = req.body;
+  let created = 0, updated = 0, added = 0;
+  tx(() => {
+    let sid = b.supplier_id && b.supplier_id !== 'new' ? Number(b.supplier_id) : null;
+    if (!sid && str(b.sup_name)) sid = (q.get('SELECT id FROM suppliers WHERE lower(name) = lower(?)', str(b.sup_name)) || {}).id
+      || Number(q.run('INSERT INTO suppliers (name, email, phone, habit) VALUES (?, ?, ?, ?)', str(b.sup_name), str(b.sup_email), str(b.sup_phone), 'Bois et panneaux').lastInsertRowid);
+    for (let i = 0; i < Math.min(200, Number(b.n) || 0); i++) {
+      if (!b[`on_${i}`]) continue;
+      const kind = ['Panneau', 'Bois massif', 'Chant', 'Autre'].includes(b[`kind_${i}`]) ? b[`kind_${i}`] : 'Panneau';
+      const pm2 = num(b[`pm2_${i}`]), pm3 = num(b[`pm3_${i}`]), add = Math.max(0, num(b[`add_${i}`]));
+      let id = b[`ref_${i}`] ? Number(b[`ref_${i}`]) : null;
+      if (id) {
+        q.run('UPDATE panel_refs SET price_m2 = CASE WHEN ? > 0 THEN ? ELSE price_m2 END, price_m3 = CASE WHEN ? > 0 THEN ? ELSE price_m3 END, supplier_id = COALESCE(?, supplier_id) WHERE id = ?', pm2, pm2, pm3, pm3, sid, id);
+        updated++;
+      } else {
+        id = Number(q.run('INSERT INTO panel_refs (name, kind, thickness, length, width, price_m2, price_m3, supplier_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+          str(b[`name_${i}`]) || 'Référence', kind, num(b[`th_${i}`]), Math.round(num(b[`len_${i}`])), Math.round(num(b[`wid_${i}`])), pm2, pm3, sid).lastInsertRowid);
+        created++;
+      }
+      if (add > 0) {
+        q.run('UPDATE panel_refs SET stock_m2 = stock_m2 + ? WHERE id = ?', add, id);
+        q.run("INSERT INTO panel_moves (ref_id, m2, kind, note) VALUES (?, ?, 'reception', ?)", id, add, `Facture ${str(b.numero)}`);
+        added += add;
+      }
+    }
+  });
+  res.flashTo('/bois', `Facture importée : ${created} référence(s) créée(s), ${updated} mise(s) à jour, ${Math.round(added * 10) / 10} m² entrés en stock.`);
 });
 
 module.exports = r;
