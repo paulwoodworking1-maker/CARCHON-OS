@@ -128,7 +128,7 @@ const SIDE = [
 const TABHOME = { aujourdhui: '/', projets: '/projets', planning: '/planning', stock: '/stock', achats: '/achats', pilotage: '/pilotage' };
 const SUBNAV = {
   projets: [['/projets', 'En cours'], ['/carnets', 'Carnets de fabrication'], ['/projets?vue=termines', 'Terminés']],
-  achats: [['/achats/semaine', 'Commandes de la semaine'], ['/achats', 'À commander'], ['/commandes', 'Commandes en cours'], ['/fournisseurs', 'Fournisseurs']],
+  achats: [['/achats/semaine', 'Commandes de la semaine'], ['/achats', 'À commander'], ['/achats/catalogues', 'Catalogues et tarifs'], ['/commandes', 'Commandes en cours'], ['/fournisseurs', 'Fournisseurs']],
   stock: [['/stock', 'Consommables'], ['/bois', 'Panneaux et bois'], ['/pieces', 'Pièces finies']],
   pilotage: [['/pilotage', 'Heures et chiffrage'], ['/pilotage/couts', 'Coût par OF']],
   reglages: [['/messages', 'Messages aux clients'], ['/portails/reglages', 'Portail et e-mails'], ['/planning/agenda', 'Google Agenda'], ['/equipe', 'Équipe'], ['/entreprise', 'Entreprise']],

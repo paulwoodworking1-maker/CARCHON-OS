@@ -465,4 +465,29 @@ async function readInvoicePdf(pdfBuffer) {
     content: [{ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: pdfBuffer.toString('base64') } }, { type: 'text', text: 'Extrais les lignes de cette facture.' }] });
 }
 
-module.exports = { readInvoicePdf, enabled, carnetFromText, carnetFromPlans, cncFromPlans, planBlocks, readQuotePdf, clientUpdate, productionChain, chainPrompt, ChainSchema, chainStudy, AIError, MODEL };
+// --- Catalogue ou tarif fournisseur en PDF : articles et prix HT, par tranches de pages ---
+const CatalogSchema = z.object({
+  pages_total: z.number(),
+  articles: z.array(z.object({ reference: z.string(), designation: z.string(), unite: z.string(), conditionnement: z.string(), prix_ht: z.number(), categorie: z.string() })),
+});
+async function readCatalogPdf(pdfBuffer, { from = 1, to = 10 } = {}) {
+  const system = `Tu lis le catalogue ou le tarif d'un fournisseur d'atelier de menuiserie-ébénisterie (bois, panneaux, quincaillerie, droguerie, consommables).
+Tu en extrais les articles avec un prix, tels qu'ils sont écrits. N'invente rien : un article sans prix lisible est ignoré.
+- "reference" : la référence ou le code article du fournisseur ("" si absente).
+- "designation" : le nom de l'article, avec ses dimensions, matière, finition, contenance (ex. "Charnière invisible 35 mm, angle 110°, inox").
+- "unite" : l'unité du prix (pièce, boîte, m, m², m³, L, kg…), "" si non précisée.
+- "conditionnement" : le conditionnement s'il est indiqué (ex. "boîte de 200"), sinon "".
+- "prix_ht" : prix unitaire HT en euros (nombre). Si seul un prix TTC est donné, divise par 1,2. Si plusieurs prix par quantité, prends le prix à l'unité.
+- "categorie" : Quincaillerie, Droguerie, Matériaux ou Consommables.
+- "pages_total" : le nombre total de pages du document.
+Ne traite QUE les pages ${from} à ${to} du document (les autres seront lues séparément).`;
+  return structured({
+    system, schema: CatalogSchema, effort: 'low', maxTokens: 32000, timeout: 10 * 60 * 1000,
+    content: [
+      { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: pdfBuffer.toString('base64') } },
+      { type: 'text', text: `Extrais les articles et leurs prix des pages ${from} à ${to}.` },
+    ],
+  });
+}
+
+module.exports = { readCatalogPdf, readInvoicePdf, enabled, carnetFromText, carnetFromPlans, cncFromPlans, planBlocks, readQuotePdf, clientUpdate, productionChain, chainPrompt, ChainSchema, chainStudy, AIError, MODEL };

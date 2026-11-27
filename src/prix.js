@@ -62,6 +62,43 @@ async function readRows(file, name) {
   throw new Error('Colonnes introuvables : il faut au moins une colonne « Désignation » et une colonne « Prix ».');
 }
 
+db.exec(`CREATE TABLE IF NOT EXISTS catalog_imports (
+  id INTEGER PRIMARY KEY, supplier_id INTEGER REFERENCES suppliers(id) ON DELETE CASCADE, file TEXT, name TEXT DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'en_cours', pages_done INTEGER DEFAULT 0, pages_total INTEGER DEFAULT 0, count INTEGER DEFAULT 0, error TEXT DEFAULT '',
+  created_at TEXT DEFAULT (datetime('now')), finished_at TEXT
+);`);
+function saveRows(supplierId, rows, replace) {
+  tx(() => {
+    if (replace) q.run('DELETE FROM supplier_catalog WHERE supplier_id = ?', supplierId);
+    for (const r of rows) q.run('INSERT INTO supplier_catalog (supplier_id, ref, designation, unit, price, pack, category, words) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      supplierId, r.ref, r.designation, r.unit, r.price, r.pack, categoryOf(r.designation, r.category), ' ' + words(`${r.designation} ${r.ref}`).join(' ') + ' ');
+  });
+}
+// Import d'un fichier : Excel ou CSV tout de suite ; PDF lu par l'assistant, 10 pages à la fois, en arrière-plan.
+function startImport(supplierId, file, name, { replace = true } = {}) {
+  const id = Number(q.run('INSERT INTO catalog_imports (supplier_id, file, name) VALUES (?, ?, ?)', supplierId, require('node:path').basename(file), name).lastInsertRowid);
+  const done = (count, err) => q.run("UPDATE catalog_imports SET status = ?, count = ?, error = ?, finished_at = datetime('now') WHERE id = ?", err ? 'erreur' : 'fait', count, err || '', id);
+  const run = async () => {
+    try {
+      if (!/\.pdf$/i.test(name)) { const rows = await readRows(file, name); saveRows(supplierId, rows, replace); return done(rows.length); }
+      const ai = require('./ai');
+      if (!ai.enabled()) return done(0, 'Pour lire un PDF, l’assistant doit être activé (clé ANTHROPIC_API_KEY). En attendant, importe le tarif en Excel ou CSV.');
+      const buf = require('node:fs').readFileSync(file); const all = []; let from = 1, total = 10;
+      while (from <= total && from <= 400) {
+        const out = await ai.readCatalogPdf(buf, { from, to: from + 9 });
+        total = Math.max(1, Math.round(out.pages_total || total));
+        for (const a of out.articles || []) if (a.designation && a.prix_ht > 0) all.push({ ref: a.reference || '', designation: a.designation, unit: a.unite || '', price: Math.round(a.prix_ht * 100) / 100, pack: a.conditionnement || '', category: a.categorie || '' });
+        from += 10;
+        q.run('UPDATE catalog_imports SET pages_done = ?, pages_total = ?, count = ? WHERE id = ?', Math.min(from - 1, total), total, all.length, id);
+      }
+      if (!all.length) return done(0, 'Aucun article avec un prix n’a été trouvé dans ce PDF.');
+      saveRows(supplierId, all, replace); return done(all.length);
+    } catch (e) { return done(0, e.message); }
+  };
+  const p = run();
+  return { id, promise: p };
+}
+
 async function importCatalog(supplierId, file, name, { replace = true } = {}) {
   const rows = await readRows(file, name);
   tx(() => {
@@ -127,4 +164,4 @@ const lineText = (l) => `- ${l.best?.ref ? `[${l.best.ref}] ` : ''}${l.best?.des
 
 const catalogs = () => q.all('SELECT s.id, s.name, COUNT(c.id) n, MAX(c.updated_at) at FROM suppliers s LEFT JOIN supplier_catalog c ON c.supplier_id = s.id GROUP BY s.id ORDER BY n DESC, s.name');
 
-module.exports = { weekly, lineText, importCatalog, readRows, offers, projectNeeds, categoryOf, catalogs, words };
+module.exports = { startImport, saveRows, weekly, lineText, importCatalog, readRows, offers, projectNeeds, categoryOf, catalogs, words };

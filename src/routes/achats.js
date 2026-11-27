@@ -59,6 +59,48 @@ r.post('/stock/:id/modifier', (req, res) => {
 });
 
 // ---------- À commander ----------
+// ---------- Catalogues et tarifs fournisseurs : import (Excel, CSV, PDF) et comparaison des prix ----------
+r.get('/achats/catalogues', (req, res) => {
+  const P = require('../prix');
+  const sups = q.all('SELECT * FROM suppliers ORDER BY name');
+  const cats = P.catalogs();
+  const imports = q.all('SELECT ci.*, s.name sname FROM catalog_imports ci LEFT JOIN suppliers s ON s.id = ci.supplier_id ORDER BY ci.id DESC LIMIT 20');
+  const running = imports.some((x) => x.status === 'en_cours');
+  const term = str(req.query.q);
+  const found = term ? P.offers(term) : [];
+  const body = h`${running ? raw('<meta http-equiv="refresh" content="6">') : ''}<div class="eb">Achats</div><h1>Catalogues et tarifs</h1>
+<p class="mut mt8 mw680">Dépose le tarif ou le catalogue de chaque fournisseur. Carchon OS s’en sert pour chiffrer les achats de chaque chantier et choisir, article par article, le fournisseur le moins cher (Commandes de la semaine).</p>
+<div class="cols"><div class="main-col">
+<section class="card" id="importer"><h2>Importer un tarif ou un catalogue</h2>
+<form method="post" action="/achats/catalogues" enctype="multipart/form-data" class="form mt12">
+<div class="grid2"><label>Fournisseur <select name="supplier_id"><option value="">— nouveau fournisseur —</option>${options(sups.map((x) => [x.id, x.name]), req.query.s)}</select></label>
+<label>Ou nouveau fournisseur <input name="new_name" placeholder="ex. Würth, Bricozor, négoce Dijon…"></label></div>
+<label>Fichier <input type="file" name="file" accept=".xlsx,.csv,.txt,.pdf" required></label>
+<label class="ck"><input type="checkbox" name="replace" value="1" checked> Remplacer l’ancien tarif de ce fournisseur (décoche pour ajouter des articles)</label>
+<button class="btn">Importer</button></form>
+<ul class="mut checklist mt12"><li><b>Excel ou CSV</b> : immédiat. Il faut une colonne « Désignation » et une colonne « Prix » ; « Référence », « Unité », « Conditionnement » et « Catégorie » sont repris s’ils existent. La ligne de titres est trouvée toute seule.</li>
+<li><b>PDF</b> (catalogue, tarif, devis fournisseur) : l’assistant le lit 10 pages à la fois, quelques minutes pour un gros catalogue. Tu peux quitter la page : l’import continue.</li></ul></section>
+${imports.length ? h`<section class="card"><h2>Derniers imports</h2>${imports.map((x, i) => h`<div class="row${i ? '' : ' f'}"><div class="grow"><b>${x.sname || '—'}</b><span class="mut t12">${x.name} · ${rel(x.created_at)}</span>${x.error ? h`<span class="mut t12 red">${x.error}</span>` : ''}</div>
+${x.status === 'en_cours' ? pill('wa', x.pages_total ? `Lecture… page ${x.pages_done}/${x.pages_total}` : 'Lecture…') : x.status === 'erreur' ? pill('ko', 'Échec') : pill('ok', `${x.count} articles`)}
+${x.file ? h`<a class="btn ghost sm" href="/fichiers/${x.file}" target="_blank">Fichier</a>` : ''}</div>`)}</section>` : ''}
+</div><aside class="side-col">
+<section class="card"><h2>Comparer un article</h2><form method="get" action="/achats/catalogues" class="line mt8"><input class="qin" name="q" value="${term}" placeholder="ex. charnière 35, vernis mat 5 L"><button class="btn alt sm">Chercher</button></form>
+${term ? (found.length ? found.map((o, i) => h`<div class="who${i ? '' : ' f'}"><div class="grow"><b>${o.sname}</b><span class="mut t12">${o.ref ? `${o.ref} · ` : ''}${o.designation}${o.pack ? ` · ${o.pack}` : ''}</span></div><b${i ? '' : raw(' style="color:var(--green)"')}>${o.price.toLocaleString('fr-FR', { minimumFractionDigits: 2 })} €${o.unit ? ` / ${o.unit}` : ''}</b></div>`) : h`<p class="mut mt8">Aucun article trouvé.</p>`) : h`<p class="mut mt8">Le moins cher en premier, un résultat par fournisseur.</p>`}</section>
+<section class="card"><h2>Tarifs chargés</h2>${cats.filter((c) => c.n).map((c, i) => h`<div class="who${i ? '' : ' f'}"><span class="grow">${c.name}<span class="mut t12">mis à jour ${c.at ? ddmm(c.at) : '—'}</span></span><b>${c.n} art.</b></div>`)}
+${cats.some((c) => c.n) ? '' : h`<p class="mut">Aucun tarif pour l’instant.</p>`}</section></aside></div>`;
+  res.send(layout({ title: 'Catalogues et tarifs', tab: 'achats', sub: '/achats/catalogues', body, flash: req.flash, counts: counts() }));
+});
+r.post('/achats/catalogues', require('../uploads').uploadDocs.single('file'), (req, res) => {
+  if (!req.file) return res.flashTo('/achats/catalogues', 'Choisis un fichier Excel, CSV ou PDF.', 'ko');
+  let sid = Number(req.body.supplier_id) || null;
+  if (!sid && str(req.body.new_name)) sid = q.get('SELECT id FROM suppliers WHERE lower(name) = lower(?)', str(req.body.new_name))?.id || Number(q.run('INSERT INTO suppliers (name) VALUES (?)', str(req.body.new_name).slice(0, 80)).lastInsertRowid);
+  if (!sid) return res.flashTo('/achats/catalogues', 'Choisis le fournisseur, ou indique le nom d’un nouveau fournisseur.', 'ko');
+  const job = require('../prix').startImport(sid, req.file.path, req.file.originalname, { replace: !!req.body.replace });
+  const pdf = /\.pdf$/i.test(req.file.originalname);
+  if (pdf) return res.flashTo('/achats/catalogues', 'Import lancé : l’assistant lit le PDF. La page se met à jour toute seule.');
+  job.promise.then(() => { const x = q.get('SELECT * FROM catalog_imports WHERE id = ?', job.id); res.flashTo('/achats/catalogues', x.error || `${x.count} articles importés.`, x.error ? 'ko' : 'ok'); });
+});
+
 // ---------- Commandes de la semaine : un bon par fournisseur, tous chantiers, au meilleur prix ----------
 const eur2 = (v) => (v == null ? '—' : `${(Math.round(v * 100) / 100).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €`);
 function workdaysAfter(n) { let d = today(), k = 0; const A = require('../html'); while (k < n) { d = A.addDays(d, 1); const w = A.parseDate(d).getDay(); if (w && w !== 6) k++; } return d; }
@@ -253,12 +295,7 @@ r.get('/fournisseurs', (req, res) => {
 <div class="line">${s.phone ? h`<a class="btn alt sm" href="tel:${s.phone}">Appeler</a>` : ''}${s.email ? h`<a class="btn alt sm" href="/mail/nouveau?to=${encodeURIComponent(s.email)}&back=%2Ffournisseurs">Écrire</a>` : ''}
 <details class="menu"><summary class="btn alt sm">Modifier</summary><form method="post" action="/fournisseurs/${s.id}" class="menu-list form pad wide">${form(s)}<div class="line"><button class="btn sm">Enregistrer</button><button class="btn alt sm" name="del" value="1" data-confirm-btn="Supprimer ce fournisseur ?">Supprimer</button></div></form></details></div></section>`)}
 ${rows.length ? '' : h`<section class="card"><p class="mut">Ajoute tes fournisseurs habituels : scierie, droguerie, quincaillerie, négoce de panneaux…</p></section>`}</div>
-<section class="card mt20" id="catalogues"><h2>Catalogues et prix</h2>
-<p class="mut mw680">Dépose le tarif de chaque fournisseur (Excel ou CSV, avec au moins une colonne « Désignation » et une colonne « Prix » ; « Référence », « Unité », « Conditionnement » si tu les as). Pour chaque achat d’un projet, Carchon OS cherche l’article dans tous les catalogues et propose le moins cher, avec sa référence exacte.</p>
-<div class="tablebox mt12"><table class="tbl"><thead><tr><th>Fournisseur</th><th class="num">Articles</th><th>Mis à jour</th><th>Nouveau tarif</th></tr></thead><tbody>
-${require('../prix').catalogs().map((c) => h`<tr><td class="b">${c.name}</td><td class="num">${c.n || '—'}</td><td>${c.at ? ddmm(c.at) : '—'}</td>
-<td><form method="post" action="/fournisseurs/${c.id}/catalogue" enctype="multipart/form-data" class="line"><input type="file" name="file" accept=".csv,.xlsx,.txt" required aria-label="Tarif de ${c.name}" style="max-width:240px"><button class="btn alt sm">Importer</button></form></td></tr>`)}
-</tbody></table></div></section>`;
+<section class="card mt20" id="catalogues"><h2>Catalogues et tarifs</h2><p class="mut">Les tarifs de tes fournisseurs (Excel, CSV ou PDF) se déposent dans <a href="/achats/catalogues">Achats › Catalogues et tarifs</a>.</p></section>`;
   res.send(layout({ title: 'Fournisseurs', tab: 'achats', sub: '/fournisseurs', body, flash: req.flash, counts: counts() }));
 });
 const supFields = (b) => [str(b.name), str(b.contact), str(b.phone), str(b.email), str(b.habit), str(b.note), Number(b.lead_days) > 0 ? Math.round(Number(b.lead_days)) : null];
@@ -270,9 +307,9 @@ r.post('/fournisseurs/:id', (req, res) => {
 });
 
 r.post('/fournisseurs/:id/catalogue', require('../uploads').uploadDocs.single('file'), async (req, res) => {
-  if (!req.file) return res.flashTo('/fournisseurs#catalogues', 'Choisis un fichier Excel ou CSV.', 'ko');
-  try { const n = await require('../prix').importCatalog(Number(req.params.id), req.file.path, req.file.originalname); res.flashTo('/fournisseurs#catalogues', `${n} articles importés : les prix sont comparés dans les achats de chaque projet.`); }
-  catch (e) { res.flashTo('/fournisseurs#catalogues', e.message, 'ko'); }
+  if (!req.file) return res.flashTo('/achats/catalogues', 'Choisis un fichier Excel ou CSV.', 'ko');
+  try { const n = await require('../prix').importCatalog(Number(req.params.id), req.file.path, req.file.originalname); res.flashTo('/achats/catalogues', `${n} articles importés : les prix sont comparés dans les achats de chaque projet.`); }
+  catch (e) { res.flashTo('/achats/catalogues', e.message, 'ko'); }
   finally { try { require('node:fs').rmSync(req.file.path, { force: true }); } catch { /* rien */ } }
 });
 

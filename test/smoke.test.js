@@ -800,3 +800,32 @@ test('commandes de la semaine : un bon par fournisseur, au moins cher, commande 
   assert.strictEqual(q.get("SELECT COUNT(*) n FROM needs WHERE supplier_id = ? AND status = 'ordered'", a).n, 2);
   assert.ok(q.get('SELECT expected_at FROM orders WHERE supplier_id = ? ORDER BY id DESC', a).expected_at);
 });
+
+test('catalogues et tarifs : import CSV avec nouveau fournisseur, PDF lu 10 pages à la fois, recherche du moins cher', async () => {
+  const { q } = require('../src/db'); const ai = require('../src/ai');
+  const fd = new FormData();
+  fd.append('new_name', 'Quincaillerie Test PDF');
+  fd.append('replace', '1');
+  fd.append('file', new Blob(['Référence;Désignation;Prix HT\nCH35;Charnière invisible 35 mm;3,10\n']), 'tarif.csv');
+  const r = await fetch(base + '/achats/catalogues', { method: 'POST', redirect: 'manual', headers: { cookie }, body: fd });
+  assert.strictEqual(r.status, 302);
+  const sid = q.get("SELECT id FROM suppliers WHERE name = 'Quincaillerie Test PDF'").id;
+  assert.strictEqual(q.get('SELECT COUNT(*) n FROM supplier_catalog WHERE supplier_id = ?', sid).n, 1);
+  // PDF : l'assistant (simulé) rend 23 pages, lues en 3 tranches.
+  const realEnabled = ai.enabled, realRead = ai.readCatalogPdf; const seen = [];
+  ai.enabled = () => true;
+  ai.readCatalogPdf = async (buf, { from, to }) => { seen.push([from, to]); return { pages_total: 23, articles: [{ reference: `R${from}`, designation: `Coulisse 450 mm lot ${from}`, unite: 'paire', conditionnement: '', prix_ht: 10 + from, categorie: 'Quincaillerie' }] }; };
+  try {
+    const fs = require('node:fs'); const os = require('node:os'); const path = require('node:path');
+    const f = path.join(os.tmpdir(), 'cat.pdf'); fs.writeFileSync(f, '%PDF-1.4 test');
+    const job = require('../src/prix').startImport(sid, f, 'cat.pdf', { replace: false });
+    await job.promise;
+    assert.deepStrictEqual(seen, [[1, 10], [11, 20], [21, 30]]);
+    const x = q.get('SELECT * FROM catalog_imports WHERE id = ?', job.id);
+    assert.strictEqual(x.status, 'fait'); assert.strictEqual(x.count, 3); assert.strictEqual(x.pages_total, 23);
+    assert.strictEqual(q.get('SELECT COUNT(*) n FROM supplier_catalog WHERE supplier_id = ?', sid).n, 4);
+  } finally { ai.enabled = realEnabled; ai.readCatalogPdf = realRead; }
+  const page = await (await fetch(base + '/achats/catalogues?q=charni%C3%A8re%2035', { headers: { cookie } })).text();
+  assert.match(page, /CH35/);
+  assert.match(page, /Quincaillerie Test PDF/);
+});
