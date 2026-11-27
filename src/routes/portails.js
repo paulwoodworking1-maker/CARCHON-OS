@@ -56,13 +56,18 @@ function smsLine(...targets) {
 }
 const warnMail = () => (!testMode() && !mail.configured() ? h`<div class="flash ko mt12">Les clients ne peuvent pas recevoir leur code de validation : l’envoi d’e-mails n’est pas encore branché. <a href="/portails/reglages#emails">Brancher Gmail (2 minutes)</a></div>` : '');
 
+// Lien existant, retrouvé depuis sa copie chiffrée (rien n'est recréé).
+const spaceLink = (req, p) => { const t = p?.portal_state === 'open' ? SMS.open(p.portal_token_enc) : null; return t ? `${base(req)}/p/espace/${t}` : ''; };
+const quoteLink = (req, x) => { const t = x && x.status !== 'revoked' ? SMS.open(x.token_enc) : null; return t ? `${base(req)}/p/devis/${t}` : ''; };
+const copyBtn = (id, url) => (url ? h`<input type="hidden" id="${id}" value="${url}"><button type="button" class="btn alt sm" data-copy="#${id}">Copier le lien</button>` : '');
+
 function shownCard(shown) {
   if (!shown) return '';
   // Le texte de l'e-mail est rédigé ici (trop long pour être gardé dans le cookie de session).
   const msg = shown.msg && E[shown.msg[0]] ? E[shown.msg[0]](shown.msg[1]) : null;
   return h`<section class="card ok-card mt20" role="status"><b>${shown.title}</b>
 <div class="line mt8"><input class="qin" readonly value="${shown.url}" id="shownlink" aria-label="Lien"><button type="button" class="btn alt" data-copy="#shownlink">Copier le lien</button></div>
-${msg ? h`<p class="mut mt12">Relis le message puis « Envoyer » : il part directement de ta boîte Gmail, avec le logo. Ce lien ne sera plus affiché ensuite (au besoin, « Relancer » en crée un nouveau).</p>
+${msg ? h`<p class="mut mt12">Relis le message puis « Envoyer » : il part directement de ta boîte Gmail, avec le logo. Tu retrouves ce lien à tout moment avec « Copier le lien ».</p>
 <div class="mt8">${require('./mail').composeForm({ to: shown.to, subject: msg.subject, body: msg.body, back: '/portails', id: 'shownmsg', rows: 14 })}</div>` : ''}</section>`;
 }
 
@@ -89,15 +94,17 @@ r.get('/portails', (req, res) => {
   const quoteRow = (x) => h`<tr id="q${x.id}"><td><b>${x.signer_name}</b><div class="mut t13">${x.project_name || x.projname || ''}${x.test ? ' · test' : ''}</div></td>
 <td class="t13">${x.number}${x.version > 1 ? ` · v${x.version}` : ''}<div class="mut t12">envoyé le ${ddmm(x.link_at || x.created_at)}${x.status === 'sent' ? ` · jusqu’au ${ddmm(x.valid_until)}` : ''}</div></td>
 <td>${trackCell(x)}${smsLine(`q${x.id}`, ...(x.project_id ? [`p${x.project_id}`] : []))}</td>
-<td><div class="line acts">${['sent', 'expired', 'revoked'].includes(x.status) ? postBtn(`/portails/devis/${x.id}/relancer`, 'Relancer', 'btn alt sm', {}, x.status === 'sent' ? 'Créer un nouveau lien et préparer une relance ? L’ancien lien ne marchera plus.' : '') : ''}
+<td><div class="line acts">${quoteLink(req, x) && x.status !== 'expired' ? h`${copyBtn(`lk-q${x.id}`, quoteLink(req, x))}${x.status === 'sent' ? h`<a class="btn ghost sm" href="/portails/devis/${x.id}/lien">Relancer</a>` : ''}` : ['sent', 'expired', 'revoked'].includes(x.status) ? postBtn(`/portails/devis/${x.id}/relancer`, x.status === 'sent' ? 'Relancer' : 'Rouvrir et relancer', 'btn alt sm', {}, x.status === 'sent' ? 'Ce lien date d’avant la sauvegarde des liens : en créer un nouveau et préparer une relance ?' : 'Rouvrir ce devis avec un nouveau lien et préparer une relance ?') : ''}
 ${x.status === 'modif' || x.status === 'refused' ? h`<a class="btn sm" href="/portails#q${x.id}r">Voir la demande</a>` : ''}
 ${x.status === 'accepted' ? h`<a class="btn alt sm" href="/portails/devis/${x.id}/preuve">Preuve</a>` : ''}${x.status === 'accepted' && x.project_id ? h`<a class="btn alt sm" href="/projets/${x.project_id}">OF</a>` : ''}
 <a class="btn ghost sm" href="/portails/parcours?n=${encodeURIComponent(x.number)}${x.project_id ? `&p=${x.project_id}` : ''}">Parcours</a><a class="btn ghost sm" href="/fichiers/${x.pdf}" target="_blank">PDF</a>
 ${['sent', 'modif'].includes(x.status) ? postBtn(`/portails/devis/${x.id}/fermer`, 'Fermer', 'btn ghost sm', {}, 'Fermer ce devis ? Le client ne pourra plus l’accepter (par exemple si tu ne fais plus le projet).') : ''}</div></td></tr>`;
   const spaceRow = (p) => h`<tr id="p${p.id}"><td><b>${p.cname}</b><div class="mut t13">${p.name}</div></td><td class="t13">ouvert${p.portal_link_at ? ` le ${ddmm(p.portal_link_at)}` : ''}</td>
 <td><b class="t13">${p.portal_views ? `Vu ${p.portal_views} fois` : 'Pas encore consulté'}</b>${p.portal_seen_at ? h`<div class="mut t12">dernière visite ${ago(p.portal_seen_at)}</div>` : ''}${smsLine(`p${p.id}`)}</td>
-<td><div class="line acts">${postBtn(`/portails/espace/${p.id}/ouvrir`, 'Nouveau lien', 'btn alt sm', {}, 'Créer un nouveau lien ? L’ancien ne marchera plus.')}<a class="btn ghost sm" href="/portails/parcours?p=${p.id}">Parcours</a><a class="btn ghost sm" href="/portails/espace/${p.id}/apercu">Voir comme le client</a>
-${postBtn(`/portails/espace/${p.id}/couper`, 'Couper l’accès', 'btn ghost sm', {}, 'Couper l’accès du client à son espace ?')}</div></td></tr>`;
+<td><div class="line acts">${spaceLink(req, p) ? h`${copyBtn(`lk-p${p.id}`, spaceLink(req, p))}<a class="btn ghost sm" href="/portails/espace/${p.id}/lien">Envoyer le lien</a>` : postBtn(`/portails/espace/${p.id}/ouvrir`, 'Créer le lien', 'btn alt sm', {}, 'Ce lien date d’avant la sauvegarde des liens : en créer un nouveau ? L’ancien ne marchera plus.')}
+<a class="btn ghost sm" href="/portails/parcours?p=${p.id}">Parcours</a><a class="btn ghost sm" href="/portails/espace/${p.id}/apercu">Voir comme le client</a>
+<details class="menu"><summary class="btn ghost sm">Plus</summary><div class="menu-list right-al">${postBtn(`/portails/espace/${p.id}/ouvrir`, 'Remplacer par un nouveau lien', 'linkish', {}, 'Créer un nouveau lien ? L’ancien ne marchera plus (à faire seulement si le lien a été transmis à quelqu’un d’autre).')}
+${postBtn(`/portails/espace/${p.id}/couper`, 'Couper l’accès', 'linkish', {}, 'Couper l’accès du client à son espace ?')}</div></details></div></td></tr>`;
   const rows = f === 'espaces' ? open : F[f][1];
   const body = h`
 <p class="mut mw680">Tous les devis et espaces publiés, et où en est chaque client. Survole les points pour voir les dates exactes.</p>
@@ -115,7 +122,7 @@ ${rows.map((x) => (f === 'espaces' ? spaceRow(x) : quoteRow(x)))}
 ${rows.length ? '' : h`<tr><td colspan="4" class="mut">Rien ici pour l’instant.</td></tr>`}</tbody></table></div>
 ${f === 'espaces' && noSpace.length ? h`<details class="card mt20"><summary class="b" style="cursor:pointer">Projets clients sans espace de suivi · ${noSpace.length}</summary>
 ${noSpace.map((p) => h`<div class="row"><div class="grow"><b>${p.cname}</b><span class="mut">${p.name}${p.portal_state === 'cut' ? ' · accès coupé' : ''}</span></div>${postBtn(`/portails/espace/${p.id}/ouvrir`, 'Ouvrir l’espace', 'btn alt sm')}</div>`)}</details>` : ''}
-<p class="mut t12 mt8">« Relancer » crée un nouveau lien et prépare l’e-mail de relance dans Gmail. « Fermer » rend le devis non valable : le client ne peut plus l’accepter. « Couper l’accès » ferme un espace de suivi tout de suite.</p>`;
+<p class="mut t12 mt8">« Copier le lien » redonne le lien que le client a déjà : rien n’est recréé. « Relancer » prépare l’e-mail de relance avec ce même lien. « Fermer » rend le devis non valable : le client ne peut plus l’accepter. « Couper l’accès » ferme un espace de suivi tout de suite.</p>`;
   res.send(layout({ title: 'Portails clients', heading: 'Portails clients', tab: SUB, sub: '/portails', body, flash: req.flash }));
 });
 
@@ -437,7 +444,23 @@ r.get('/portails/devis/:id/preuve', (req, res) => {
   res.send(layout({ title: 'Preuve', tab: 'portails', sub: '/portails', body }));
 });
 
-// Espace client du projet : un lien privé, montré une seule fois.
+// Lien existant : affiché avec l'e-mail prêt à partir, sans en créer un nouveau.
+r.get('/portails/espace/:pid/lien', (req, res) => {
+  const p = q.get('SELECT projects.*, clients.name cname, clients.email cemail FROM projects JOIN clients ON clients.id = projects.client_id WHERE projects.id = ?', req.params.pid);
+  const url = spaceLink(req, p);
+  if (!url) return res.flashTo('/portails?f=espaces', 'Ce lien date d’avant la sauvegarde des liens : utilise « Créer le lien ».', 'ko');
+  req.session.shownLink = { title: `Lien de l’espace de suivi de ${p.cname} (le même qu’avant)`, url, to: p.cemail, msg: ['space', { name: p.cname, project: p.name, url }] };
+  res.saveSession(); res.redirect('/portails?f=espaces');
+});
+r.get('/portails/devis/:id/lien', (req, res) => {
+  const x = q.get('SELECT * FROM quotes WHERE id = ?', req.params.id);
+  const url = quoteLink(req, x);
+  if (!url) return res.flashTo('/portails', 'Ce lien n’est pas récupérable : utilise « Relancer » pour en créer un nouveau.', 'ko');
+  req.session.shownLink = { title: `Relance pour ${x.signer_name} · même lien, valable jusqu’au ${ddmm(x.valid_until)}`, url, to: x.signer_email, msg: ['relance', { name: x.signer_name, number: x.number, project: x.project_name, url, until: x.valid_until }] };
+  res.saveSession(); res.redirect('/portails');
+});
+
+// Espace client du projet : un lien privé (gardé chiffré pour pouvoir le redonner).
 r.post('/portails/espace/:pid/ouvrir', (req, res) => {
   const p = q.get('SELECT projects.*, clients.name cname, clients.email cemail FROM projects JOIN clients ON clients.id = projects.client_id WHERE projects.id = ?', req.params.pid);
   if (!p) return res.redirect('/portails');

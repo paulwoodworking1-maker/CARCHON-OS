@@ -648,3 +648,16 @@ test('portail : nom sans accent ou en majuscules reconnu, feuille de style versi
   assert.doesNotMatch(html, /cl-meta/);
   assert.match(html, /\/static\/style\.css\?v=\w+/);
 });
+
+test('portails : « Copier le lien » redonne le lien existant sans en créer un nouveau', async () => {
+  const { q } = require('../src/db'); const { sha256 } = require('../src/auth'); const SMS = require('../src/sms');
+  const cid = Number(q.run("INSERT INTO clients (name, email) VALUES ('Lien Existant', 'l@example.com')").lastInsertRowid);
+  const pid = Number(q.run("INSERT INTO projects (name, client_id, portal_state, portal_token_hash, portal_token_enc) VALUES ('Projet lien', ?, 'open', ?, ?)", cid, sha256('jeton-garde'), SMS.seal('jeton-garde')).lastInsertRowid);
+  const list = await (await fetch(base + '/portails?f=espaces', { headers: { cookie } })).text();
+  assert.match(list, new RegExp(`id="lk-p${pid}" value="[^"]*/p/espace/jeton-garde"`));
+  const r = await fetch(base + `/portails/espace/${pid}/lien`, { redirect: 'manual', headers: { cookie } });
+  assert.strictEqual(r.status, 302);
+  assert.strictEqual(q.get('SELECT portal_token_hash h FROM projects WHERE id = ?', pid).h, sha256('jeton-garde'));
+  const page = await (await fetch(base + '/projets/' + pid, { headers: { cookie } })).text();
+  assert.match(page, /\/p\/espace\/jeton-garde/);
+});
