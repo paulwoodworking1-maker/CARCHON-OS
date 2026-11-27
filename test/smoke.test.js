@@ -27,7 +27,7 @@ test('sans connexion, on est renvoyé vers la connexion', async () => {
 });
 
 const pages = ['/', '/projets', '/projets?vue=termines', '/projets/1', '/projets/nouveau', '/carnets', '/carnets/1', '/stock', '/achats', '/commandes',
-  '/fournisseurs', '/planning', '/planning?semaines=4', '/poses', '/poses/1/pv', '/pilotage', '/pilotage/export.csv', '/equipe', '/portails', '/portails?nouveau=1', '/recherche?q=chêne', '/automatisations', '/automatisations/resume', '/projets/1/nouvelles', '/entreprise', '/carnets/1/imprimer', '/poses/1/pv/imprimer', '/commandes/1/bon', '/catalogue', '/catalogue?m=1&qty=12', '/machines', '/machines?m=2', '/charge', '/charge?p=2&w=1', '/bois', '/pieces', '/expeditions', '/expeditions/1/bon', '/sav', '/sav?nouveau=1', '/unites', '/unites/1', '/unites/6', '/pilotage/couts', '/projets/4', '/assistant', '/decider', '/decider?tag=Achat', '/projets?f=retard', '/projets?vue=frise', '/projets?resp=1&canal=Boutique', '/projets?f=acompte', '/portails/envoyer', '/portails/reglages', '/portails/parcours?p=1', '/portails?f=espaces', '/portails?f=signes', '/portails/envoyer?depuis=1', '/analyse', '/messages', '/analyse?periode=90', '/analyse?periode=0'];
+  '/fournisseurs', '/planning', '/planning?semaines=4', '/poses', '/poses/1/pv', '/pilotage', '/pilotage/export.csv', '/equipe', '/portails', '/portails?nouveau=1', '/recherche?q=chêne', '/automatisations', '/automatisations/resume', '/projets/1/nouvelles', '/entreprise', '/carnets/1/imprimer', '/poses/1/pv/imprimer', '/commandes/1/bon', '/catalogue', '/catalogue?m=1&qty=12', '/machines', '/machines?m=2', '/charge', '/charge?p=2&w=1', '/bois', '/pieces', '/expeditions', '/expeditions/1/bon', '/sav', '/sav?nouveau=1', '/unites', '/unites/1', '/unites/6', '/pilotage/couts', '/projets/4', '/assistant', '/decider', '/decider?tag=Achat', '/projets?f=retard', '/projets?vue=frise', '/projets?resp=1&canal=Boutique', '/projets?f=acompte', '/portails/envoyer', '/portails/reglages', '/portails/parcours?p=1', '/portails?f=espaces', '/portails?f=signes', '/portails/envoyer?depuis=1', '/projets/1/sous-traitance/1/bon', '/projets/1/dossier/imprimer', '/projets/2/dossier/imprimer', '/projets/1?dictee=1', '/cnc', '/cnc/travaux/1', '/cnc/travaux/1/etiquettes', '/projets/2', '/planning/agenda', '/analyse', '/messages', '/analyse?periode=90', '/analyse?periode=0'];
 for (const p of pages) {
   test(`GET ${p}`, async () => {
     const res = await fetch(base + p, { headers: { cookie } });
@@ -304,6 +304,115 @@ test('Qonto : un devis de test ne crée jamais de facture', async () => {
   } finally { delete process.env.QONTO_LOGIN; delete process.env.QONTO_SECRET_KEY; }
 });
 
+const form = (o) => ({ method: 'POST', redirect: 'manual', headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams(o).toString() });
+
+test('la fiche projet est rangée en onglets avec le dossier de production et la sous-traitance', async () => {
+  const html = await (await fetch(base + '/projets/1', { headers: { cookie } })).text();
+  for (const id of ['id="vue"', 'id="dossier"', 'id="achats"', 'id="echanges"', 'id="sous-traitance"', 'id="carnet"', 'id="debit"', 'Laquage des façades', 'Retour en retard']) assert.ok(html.includes(id), id);
+});
+
+test('une commande de sous-traitance se crée, avance et recule', async () => {
+  const { q } = require('../src/db');
+  const res = await fetch(base + '/projets/2/sous-traitance', form({ what: 'Découpe numérique des joues', new_name: 'Atelier CNC', new_email: 'cnc@example.com', pieces: '2 joues', due_at: '2099-01-10', price: '120,50' }));
+  assert.strictEqual(res.status, 302);
+  const s = q.get("SELECT * FROM subcontracts WHERE what = 'Découpe numérique des joues'");
+  assert.strictEqual(s.price, 120.5);
+  assert.strictEqual(q.get('SELECT subcontractor FROM suppliers WHERE id = ?', s.supplier_id).subcontractor, 1);
+  await fetch(base + `/projets/2/sous-traitance/${s.id}/etape`, form({ to: 'commande' }));
+  await fetch(base + `/projets/2/sous-traitance/${s.id}/etape`, form({ to: 'envoye' }));
+  let t = q.get('SELECT * FROM subcontracts WHERE id = ?', s.id);
+  assert.strictEqual(t.status, 'envoye'); assert.ok(t.ordered_at && t.sent_at);
+  await fetch(base + `/projets/2/sous-traitance/${s.id}/etape`, form({ to: 'commande' }));
+  t = q.get('SELECT * FROM subcontracts WHERE id = ?', s.id);
+  assert.strictEqual(t.status, 'commande'); assert.strictEqual(t.sent_at, null);
+  const bon = await (await fetch(base + `/projets/2/sous-traitance/${s.id}/bon`, { headers: { cookie } })).text();
+  assert.match(bon, /Atelier CNC/);
+  assert.match(await (await fetch(base + '/commandes', { headers: { cookie } })).text(), /Découpe numérique des joues/);
+});
+
+test('un retour de sous-traitance en retard remonte dans À décider', () => {
+  const L = require('../src/logic');
+  assert.ok(L.toDecide().some((d) => d.tag === 'Sous-traitance'));
+});
+
+test('sans assistant, la génération du carnet explique quoi faire', async () => {
+  delete process.env.ANTHROPIC_API_KEY;
+  const res = await fetch(base + '/projets/1/dossier/generer', form({ plan_ids: '2', text: 'test' }));
+  assert.strictEqual(res.status, 302);
+});
+
+test('les plans sont envoyés à l’assistant en PDF ou image, les autres formats sont écartés', () => {
+  const ai = require('../src/ai');
+  const files = { 'a.pdf': Buffer.from('%PDF-1.4'), 'b.png': Buffer.from('png'), 'c.heic': Buffer.from('x') };
+  const out = ai.planBlocks([{ version: 'V1', file: 'a.pdf', status: 'validee' }, { version: 'V2', file: 'b.png' }, { version: 'V3', file: 'c.heic' }, { version: 'V4', file: null }], (f) => files[f]);
+  assert.deepStrictEqual(out.blocks.filter((b) => b.type !== 'text').map((b) => b.type), ['document', 'image']);
+  assert.strictEqual(out.skipped.length, 2);
+});
+
+test('Google Agenda : page de réglage, flux iCal privé et lecture d’un agenda', async () => {
+  const pg = await (await fetch(base + '/planning/agenda', { headers: { cookie } })).text();
+  const m = /\/agenda\/([\w-]+)\.ics/.exec(pg);
+  assert.ok(m, 'adresse du flux affichée');
+  const ics = await fetch(base + `/agenda/${m[1]}.ics`);
+  assert.strictEqual(ics.status, 200);
+  const txt = await ics.text();
+  assert.match(txt, /^BEGIN:VCALENDAR/);
+  assert.match(txt, /BEGIN:VEVENT/);
+  assert.strictEqual((await fetch(base + '/agenda/faux.ics')).status, 404);
+  const G = require('../src/gcal');
+  const sample = ['BEGIN:VCALENDAR', 'BEGIN:VEVENT', 'UID:a1', 'SUMMARY:Métré chez M. Dupont', 'LOCATION:Lyon', 'DTSTART:20261203T090000Z', 'DTEND:20261203T100000Z', 'END:VEVENT',
+    'BEGIN:VEVENT', 'UID:a2', 'SUMMARY:Salon', 'DTSTART;VALUE=DATE:20261210', 'DTEND;VALUE=DATE:20261213', 'END:VEVENT',
+    'BEGIN:VEVENT', 'UID:a3', 'SUMMARY:Point hebdo', 'DTSTART;TZID=Europe/Paris:20261130T080000', 'DTEND;TZID=Europe/Paris:20261130T083000', 'RRULE:FREQ=WEEKLY;COUNT=3', 'EXDATE;TZID=Europe/Paris:20261207T080000', 'END:VEVENT',
+    'END:VCALENDAR'].join('\r\n');
+  const ev = G.parseICS(sample, '2026-11-01', '2026-12-31');
+  assert.deepStrictEqual(ev.map((e) => [e.title, e.start_date, e.end_date]), [
+    ['Point hebdo', '2026-11-30', '2026-11-30'], ['Métré chez M. Dupont', '2026-12-03', '2026-12-03'], ['Salon', '2026-12-10', '2026-12-12'], ['Point hebdo', '2026-12-14', '2026-12-14']]);
+  assert.strictEqual(ev[1].time, '10:00');
+});
+
+test('Google Agenda : écriture directe (Google simulé) : création, mise à jour, suppression', async () => {
+  const crypto = require('node:crypto');
+  const { setSetting, q } = require('../src/db');
+  const G = require('../src/gcal');
+  const { privateKey, publicKey } = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
+  setSetting('gcal_sa', JSON.stringify({ type: 'service_account', client_email: 'carchon@test.iam.gserviceaccount.com', private_key: privateKey.export({ type: 'pkcs8', format: 'pem' }) }));
+  setSetting('gcal_push_cal', 'atelier@group.calendar.google.com');
+  const store = new Map(); const calls = [];
+  const real = global.fetch;
+  global.fetch = async (url, o = {}) => {
+    url = String(url);
+    if (url.startsWith('https://oauth2.googleapis.com/')) {
+      const [h, c, s] = new URLSearchParams(o.body).get('assertion').split('.');
+      assert.ok(crypto.verify('RSA-SHA256', Buffer.from(`${h}.${c}`), publicKey, Buffer.from(s, 'base64url')), 'jeton signé avec la clé');
+      return new Response(JSON.stringify({ access_token: 'tok', expires_in: 3600 }), { status: 200 });
+    }
+    if (url.startsWith('https://www.googleapis.com/calendar/v3/calendars/atelier%40group.calendar.google.com/events')) {
+      const id = url.split('/events/')[1]; calls.push(o.method);
+      if (o.method === 'PUT') { if (!store.has(id)) return new Response('{}', { status: 404 }); store.set(id, JSON.parse(o.body)); return new Response(o.body, { status: 200 }); }
+      if (o.method === 'POST') { const b = JSON.parse(o.body); store.set(b.id, b); return new Response(o.body, { status: 200 }); }
+      if (o.method === 'DELETE') { store.delete(id); return new Response(null, { status: 204 }); }
+    }
+    return real(url, o);
+  };
+  try {
+    const want = G.items('2000-01-01').filter((e) => e.end >= require('../src/html').addDays(require('../src/html').today(), -30));
+    let x = await G.push();
+    assert.ok(!x.error, x.error);
+    assert.strictEqual(store.size, want.length);
+    assert.ok(want.length > 0);
+    // Rien de changé : aucun appel.
+    calls.length = 0; await G.push(); assert.strictEqual(calls.length, 0);
+    // Une barre modifiée : une mise à jour ; une barre supprimée : une suppression.
+    const bars = q.all("SELECT id FROM bars WHERE end_date >= date('now') LIMIT 2");
+    q.run("UPDATE bars SET label = 'Nouveau titre' WHERE id = ?", bars[0].id);
+    q.run('DELETE FROM bars WHERE id = ?', bars[1].id);
+    calls.length = 0; x = await G.push();
+    assert.deepStrictEqual(calls.sort(), ['DELETE', 'PUT']);
+    assert.match(store.get(G.evId(`bar-${bars[0].id}`)).summary, /Nouveau titre/);
+    assert.ok(!store.has(G.evId(`bar-${bars[1].id}`)));
+  } finally { global.fetch = real; setSetting('gcal_push_cal', ''); }
+});
+
 test('chaîne de production : l’assistant (simulé) crée pièces, fiches et matière, le planning attend la matière', async () => {
   const { q, setting } = require('../src/db');
   const C = require('../src/chain');
@@ -454,4 +563,37 @@ test('messages aux clients : texte modifié, encadré masqué si vidé, texte d�
   const E = require('../src/emails').quote({ name: 'Jeanne', number: 'D-1', project: '', url: 'https://x', until: '2026-12-24' });
   assert.match(E.subject, /^Votre devis n° D-1 · /);
   assert.doesNotMatch(E.body, /\{|\[/);
+});
+
+test('CNC : liste OpenCutList, travail, programme bloqué puis validé, fiche du carnet et iPad', async () => {
+  const { q } = require('../src/db');
+  const C = require('../src/routes/cnc');
+  const cut = C.parseCutList('Nom;Quantité;Longueur;Largeur;Épaisseur;Matière\nJoue;2;720 mm;560 mm;19 mm;Mélaminé\nFond;1;"1 200,5";780;8;MDF\n;;;\n');
+  assert.strictEqual(cut.items.length, 2);
+  assert.strictEqual(cut.items[1].l, 1200.5);
+  // Le travail de démo calcule, s'affiche et se télécharge.
+  const nc = await fetch(base + '/cnc/travaux/1/panneau/1.nc', { headers: { cookie } });
+  assert.strictEqual(nc.status, 200);
+  assert.match(await nc.text(), /M06/);
+  assert.strictEqual((await fetch(base + '/cnc/travaux/1/panneau/1.dxf', { headers: { cookie } })).status, 200);
+  // Une erreur bloque le téléchargement.
+  const fd = { material: 'Mélaminé', thickness: '19', sheet_l: '2800', sheet_w: '2070', n: '2', name_0: 'Énorme', l_0: '5000', w_0: '300', qty_0: '1', ops_0: '' };
+  const j = q.run("INSERT INTO cnc_jobs (project_id, name, parts) VALUES (2, 'Essai', '[]')").lastInsertRowid;
+  await fetch(base + `/cnc/travaux/${j}`, form(fd));
+  assert.strictEqual((await fetch(base + `/cnc/travaux/${j}/panneau/1.nc`, { headers: { cookie } })).status, 404);
+  assert.strictEqual(q.get('SELECT COUNT(*) n FROM cnc_programs WHERE job_id = ?', j).n, 0);
+  await fetch(base + `/cnc/travaux/${j}`, form({ ...fd, l_0: '700' }));
+  const v = await fetch(base + `/cnc/travaux/${j}/valider`, form({}));
+  assert.strictEqual(v.status, 302);
+  const prog = q.get('SELECT * FROM cnc_programs WHERE job_id = ? AND active = 1', j);
+  assert.ok(prog);
+  const step = q.get('SELECT * FROM steps WHERE id = (SELECT step_id FROM cnc_jobs WHERE id = ?)', j);
+  assert.strictEqual(step.geste, 'Usinage CNC');
+  assert.ok(step.est_hours >= 0.5);
+  await fetch(base + `/cnc/travaux/${j}/valider`, form({}));
+  assert.strictEqual(q.get('SELECT COUNT(*) n FROM cnc_programs WHERE job_id = ? AND active = 1', j).n, 1);
+  assert.strictEqual(q.get('SELECT MAX(version) v FROM cnc_programs WHERE job_id = ?', j).v, 2);
+  // Achats : panneaux ajoutés au projet.
+  await fetch(base + `/cnc/travaux/${j}/achats`, form({}));
+  assert.ok(q.get("SELECT id FROM needs WHERE project_id = 2 AND source = 'cnc'"));
 });

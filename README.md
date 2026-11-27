@@ -8,6 +8,8 @@ Le logiciel de fabrication et de logistique de Carchon Les Ateliers, pendant de 
 - **Approvisionner** : bois noble par lot, pièces finies comptées avec seuil boutique, consommables en trois états, achats et fournisseurs.
 - **Livrer et garantir** : contrôle qualité, registre des pièces (numéro, bois, fiches, contrôle, expédition, SAV), expéditions avec bon de livraison, demandes SAV.
 - **Piloter** : heures et chiffrage, coût réel par OF, machines (entretiens à la date ou à l'usage calculé depuis les fiches, pannes, pièces d'usure), automatisations, équipe.
+- **Google Agenda** : les rendez-vous Google s’affichent dans le planning (adresse secrète iCal, lue toutes les 10 min) et le planning de l’atelier est écrit en direct dans un agenda Google « Atelier » (clé de compte de service Google, ou à défaut abonnement par URL). Réglage : Planning › Google Agenda.
+- **Passer sur Cockpit** : bouton en bas de la colonne (adresse dans Équipe et réglages › Entreprise).
 - **Liaison Cockpit** : API `POST /api/v1/affaires`, `POST /api/v1/affaires/{réf}/acompte`, `GET /api/v1/ofs` (clé dans Équipe et réglages › Entreprise).
 
 Le logiciel de l'atelier, construit d'après les maquettes « Carchon OS · version retenue ».
@@ -17,6 +19,27 @@ Le logiciel de l'atelier, construit d'après les maquettes « Carchon OS · vers
 - **Client (téléphone)** : lien privé pour accepter un devis (vérification de l'e-mail par code à 6 chiffres, signature électronique simple, preuve conservée) puis espace de suivi (avancement, date « prête à poser vers le », photos partagées, documents, PV).
 
 Ce qui est encore **manuel** dans cette première version : le PDF du devis est déposé à la main (export Qonto), l'acompte se note dans la fiche projet, les commandes fournisseurs partent par un e-mail pré-rempli.
+
+## Fiche projet et dossier de production
+
+La fiche d’un projet est rangée en quatre onglets, sous la frise et un bandeau « À suivre » (carnet, sous-traitance, achats, livraison) :
+- **Vue d’ensemble** : prochaine action, infos du projet, acompte, temps passé, historique.
+- **Dossier de production** : le carnet de fabrication, sa génération depuis les plans, la liste de débit, les dictées, les plans, les éléments, le contrôle. « Imprimer le dossier » sort tout sur papier.
+- **Achats et sous-traitance** : les commandes aux sous-traitants (à commander → commandé → chez le sous-traitant → revenu → contrôlé), avec bon de commande imprimable, e-mail pré-rempli et devis joint ; les achats liés et le bois réservé. Un retour en retard remonte dans « À décider ».
+- **Client et documents** : journal photo, portail client, documents.
+
+**Générer le carnet** : coche les plans (PDF ou image JPG/PNG) et dicte le travail (bouton « Dicter » sur iPad/Chrome, ou la dictée du clavier). L’assistant (`AI_MODEL`, par défaut `claude-opus-5-5`) lit cotes, assemblages et matières et propose les fiches, la liste de débit et les éléments. La sous-traitance reste ta décision : il tient compte de celles que tu as saisies, sans en proposer. Rien ne part à l’atelier avant « Envoyer à l’atelier ». Nécessite `ANTHROPIC_API_KEY`.
+
+## Usinage CNC
+
+Dans l’onglet **Dossier de production**, le bloc « Usinage CNC » prépare les pièces plates à détourer :
+- **Sources** : la liste de débit du dossier, un CSV de SketchUp (extension OpenCutList › Fiche de débit › Exporter), la lecture des plans par l’assistant, ou une saisie à la main. Un travail est créé par matière et épaisseur.
+- **Usinages**, une ligne par opération, depuis le coin bas-gauche de la pièce : `trou x=37 y=32 d=5 p=13`, `rainure x1=0 y1=10 x2=720 y2=10 l=8 p=8`, `poche x=100 y=50 lo=200 la=80 p=5` (`p=T` = traversant).
+- **Calcul** (code déterministe, l’IA n’écrit jamais de G-code) : imbrication sur les panneaux en respectant le fil, puis perçages → rainures et poches → détourages (petites pièces d’abord, peau laissée et coupée en dernier), outils regroupés, trajets à vide raccourcis, rampes d’entrée, sens de coupe réglable.
+- **Contrôles** avant tout téléchargement : outil disponible, profondeur jamais au-delà du martyr autorisé, pièces et trajets dans la table et le panneau. Un seul point bloquant empêche de télécharger le programme.
+- **Sorties** : programme `.nc` par panneau (post-processeur Weihong NcStudio / NK105 avec changeur, modifiable), essai à vide (Z remontés), DXF par calques pour un logiciel de FAO, étiquettes des pièces, panneaux ajoutés aux achats.
+- **Valider** fige les programmes en version et crée la fiche « Usinage CNC » du carnet (temps machine prévu) ; l’atelier les télécharge depuis l’iPad. Les programmes faits dans un logiciel de FAO (pièces 3D) se déposent dans le même bloc.
+- **Machines › CNC** : bibliothèque d’outils (numéro dans le changeur, Ø, longueur utile, vitesses et avances par matière), réglages machine et post-processeur. **À vérifier avant le premier usinage**, puis faire chaque nouveau programme d’abord à vide.
 
 ## Démarrer
 
