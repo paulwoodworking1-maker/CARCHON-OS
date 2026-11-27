@@ -63,7 +63,7 @@ ${others.length ? '' : h`<p class="mut t12">Aucun autre carnet pour l’instant.
 
 <section class="card">
 ${steps.map((s, i) => h`<div class="fiche${sel && s.id === sel.id ? ' on' : ''}">
-<a class="grow fl" href="/carnets/${p.id}?fiche=${s.id}"><span class="num">${i + 1}</span><span class="grow"><b>${s.title}</b><span class="mut">${s.piece}${s.note ? ` · « ${s.note} »` : ''}</span><span class="mut t12">${[s.phase, s.est_hours ? hoursLabel(s.est_hours) : ''].filter(Boolean).join(' · ')}</span></span></a>
+<a class="grow fl" href="/carnets/${p.id}?fiche=${s.id}"><span class="num">${i + 1}</span><span class="grow"><b>${s.piece ? `${s.piece} · ` : ''}${s.title}</b><span class="mut t12">${[s.est_hours ? hoursLabel(s.est_hours) : '', (() => { try { const c = JSON.parse(s.checks || '[]'); return c.length ? `${c.length} étape${c.length > 1 ? 's' : ''}` : ''; } catch { return ''; } })(), s.note ? `« ${s.note} »` : ''].filter(Boolean).join(' · ')}</span></span></a>
 ${stLabel(s)}${avatar(pm[s.who_id], 30)}
 <span class="updown">${postBtn(`/carnets/${p.id}/fiches/${s.id}/monter`, '↑', 'iconbtn', { dir: -1 })}${postBtn(`/carnets/${p.id}/fiches/${s.id}/monter`, '↓', 'iconbtn', { dir: 1 })}</span></div>`)}
 ${steps.length ? h`<p class="mut t12 mt12">L'ordre est une proposition : l'atelier peut avancer sur une fiche plus loin si le bois ou la colle le demande.</p>` : h`<p class="mut">Carnet vide. Ajoute une première fiche, ou repars d'un ancien carnet.</p>`}
@@ -72,22 +72,21 @@ ${steps.length ? h`<p class="mut t12 mt12">L'ordre est une proposition : l'ateli
 ${sel ? h`<section class="card">
 <div class="line"><h2>Fiche ${steps.indexOf(sel) + 1}</h2>${postBtn(`/carnets/${p.id}/fiches/${sel.id}/supprimer`, 'Retirer', 'btn alt sm push', {}, 'Retirer cette fiche du carnet ?')}</div>
 <form method="post" action="/carnets/${p.id}/fiches/${sel.id}" enctype="multipart/form-data" class="form mt12">
-<label>Titre <input name="title" value="${sel.title}" required></label>
-<label>Pièce(s) <input name="piece" value="${sel.piece}" placeholder="ex. Caisson, étagères"></label>
-<fieldset class="whosel"><legend>Qui</legend>${people.map((pp) => h`<label class="chip${sel.who_id === pp.id ? ' on' : ''}"><input type="radio" name="who_id" value="${pp.id}" ${sel.who_id === pp.id ? 'checked' : ''}>${pp.role === 'patron' ? 'Toi' : pp.name}</label>`)}<label class="chip${sel.who_id ? '' : ' on'}"><input type="radio" name="who_id" value="" ${sel.who_id ? '' : 'checked'}>À prendre</label></fieldset>
-<label>Mot du patron <textarea name="note" rows="3">${sel.note}</textarea></label>
-<details ${checks.length || sel.phase || sel.est_hours ? 'open' : ''}><summary class="mut b">Plus de détails (facultatif)</summary>
-<div class="form mt8">
-<label>Repères, un par ligne <textarea name="checks" rows="3">${checks.map((c) => c.t).join('\n')}</textarea></label>
-<div class="grid2"><label>Étape de la frise <select name="phase"><option value="">—</option>${options(PHASES, sel.phase)}</select></label>
-<label>Geste (pour le chiffrage) <select name="geste"><option value="">—</option>${options(GESTES, sel.geste)}</select></label></div>
-<div class="grid2"><label>Temps prévu (heures)${avg[sel.geste] ? ` · habituellement ${hoursLabel(avg[sel.geste])}` : ''} <input name="est_hours" inputmode="decimal" value="${sel.est_hours || ''}" placeholder="${avg[sel.geste] ? String(Math.round(avg[sel.geste] * 2) / 2).replace('.', ',') : 'vide = moyenne du geste'}"></label>
-<label>Plan <select name="plan_id"><option value="">—</option>${options(plans.map((x) => [x.id, x.version]), sel.plan_id)}</select></label></div>
-<label>Message vocal (fichier audio) <input type="file" name="audio" accept="audio/*" capture></label>
-${sel.audio ? h`<audio controls src="${fileUrl(sel.audio)}"></audio>` : ''}
-</div></details>
+<label>Pièce <input name="piece" value="${sel.piece}" placeholder="ex. Plateau, caissons, façades"></label>
+<label>Ce qu’il faut faire <input name="title" value="${sel.title}" required placeholder="ex. Débit et corroyage du chêne"></label>
+<fieldset class="whosel"><legend>Qui</legend>${people.map((pp) => h`<label class="chip${sel.who_id === pp.id ? ' on' : ''}"><input type="radio" name="who_id" value="${pp.id}" ${sel.who_id === pp.id ? 'checked' : ''}>${pp.role === 'patron' ? 'Toi' : pp.name}</label>`)}</fieldset>
+<label>Étapes à cocher, une par ligne <span class="mut t12">(ce que l’équipe voit sur l’iPad, dans l’ordre, avec des mots simples)</span><textarea name="checks" rows="5" placeholder="Débit à +5 mm&#10;Numéroter chaque pièce&#10;Photo du plateau terminé">${checks.map((c) => c.t).join('\n')}</textarea></label>
+<label>Mot du patron <textarea name="note" rows="2" placeholder="ex. Garde les plus beaux fils pour la façade.">${sel.note}</textarea></label>
+<details class="auto-set"><summary class="mut t13">Réglé automatiquement : <b>${sel.geste || 'deviné à l’enregistrement'}</b>${sel.est_hours ? ` · ${hoursLabel(sel.est_hours)}` : ''}${sel.plan_id ? ` · plan ${(plans.find((x) => x.id === sel.plan_id) || {}).version || ''}` : ''} · <u>changer</u></summary>
+<div class="form mt8"><p class="mut t12">Le geste et l’étape se déduisent des mots de la fiche, le temps du temps habituel de l’atelier pour ce geste, le plan du plan validé. Ne change que si c’est faux.</p>
+<div class="grid2"><label>Geste <select name="geste"><option value="">Automatique</option>${options(GESTES, sel.geste)}</select></label>
+<label>Temps prévu (heures)${avg[sel.geste] ? ` · habituellement ${hoursLabel(avg[sel.geste])}` : ''} <input name="est_hours" inputmode="decimal" value="${sel.est_hours || ''}" placeholder="automatique"></label></div>
+<div class="grid2"><label>Plan <select name="plan_id"><option value="">Automatique (plan validé)</option>${options(plans.map((x) => [x.id, x.version]), sel.plan_id)}</select></label>
+<label>Message vocal <input type="file" name="audio" accept="audio/*" capture></label></div>
+<input type="hidden" name="phase" value="">
+${sel.audio ? h`<audio controls src="${fileUrl(sel.audio)}"></audio>` : ''}</div></details>
 <button class="btn">Enregistrer</button>
-<p class="mut t12">Rien d'autre à remplir. Un titre, qui, et un mot si besoin.</p>
+<p class="mut t12">La pièce, ce qu’il faut faire, qui, les étapes : le reste se règle tout seul.</p>
 </form>
 ${msgs.length || sel.sent ? h`<div class="h3 mt20">Échanges sur cette fiche</div>
 ${msgs.map((m) => h`<div class="msg${m.prole === 'patron' ? ' me' : ''}"><b>${m.prole === 'patron' ? 'Toi' : m.pname}</b> ${m.body}<span class="mut t12"> · ${rel(m.created_at)}</span></div>`)}
@@ -116,6 +115,22 @@ ${steps.map((s, i) => { const ck = JSON.parse(s.checks); return h`<tr><td>${i + 
 ${p.notes ? h`<h2>Notes</h2><p>${p.notes}</p>` : ''}`, { ref: p.ref }));
 });
 
+// Réglages techniques déduits tout seuls : geste (d'après les mots de la fiche), étape, temps habituel, plan validé.
+const GUESS = [["Queues d'aronde", /queue.{0,4}aronde/], ['Usinage CNC', /\b(cnc|usinage|fraisage numerique)\b/], ['Débit, corroyage', /\b(debit|deligna|corroy|rabot|degauch|tronconn)/], ['Collage', /\b(collage|coller|encoll)/],
+  ['Ponçage', /\b(poncage|poncer|egrenage|abrasif)/], ['Vernis', /\b(vernis|vernir|laque|laquage|peinture)/], ['Huile-cire', /\b(huile|cire|huiler|cirer)/], ['Contrôle', /\b(controle|verifier|verification|emballage|emballer)/],
+  ['Pose', /\b(pose|poser|livraison|livrer|installation|montage sur site)/], ['Assemblage', /\b(assembl|montage|monter|tourillon|tenon|mortaise|quincaillerie|charniere|coulisse|caisson)/]];
+const PHASE_OF = { 'Débit, corroyage': 'Débit', 'Usinage CNC': 'Débit', Assemblage: 'Assemblage', "Queues d'aronde": 'Assemblage', Collage: 'Assemblage', Ponçage: 'Finition', Vernis: 'Finition', 'Huile-cire': 'Finition', Contrôle: 'Contrôle', Pose: 'Livraison' };
+const plainTxt = (t) => String(t || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+function autoSettings(projectId, { title, piece, geste, phase, est, plan }) {
+  const txt = plainTxt(`${title} ${piece}`);
+  const g = geste || (GUESS.find(([, re]) => re.test(txt)) || [])[0] || 'Autre';
+  const ph = phase || PHASE_OF[g] || 'Assemblage';
+  const avg = auto.averages();
+  const e = est || Math.round((avg[g] || 0) * 2) / 2 || null;
+  const pl = plan || q.get("SELECT id FROM plans WHERE project_id = ? AND status = 'validee' ORDER BY id DESC LIMIT 1", projectId)?.id || null;
+  return { geste: g, phase: ph, est: e, plan: pl, fromAvg: !est && !!avg[g] };
+}
+
 r.post('/carnets/:id/fiches', loadProject, (req, res) => {
   const ord = (q.get('SELECT MAX(ord) m FROM steps WHERE project_id = ?', req.project.id).m || 0) + 1;
   const id = q.run("INSERT INTO steps (project_id, ord, title) VALUES (?, ?, 'Nouvelle fiche')", req.project.id, ord).lastInsertRowid;
@@ -128,10 +143,11 @@ r.post('/carnets/:id/fiches/:sid', loadProject, upload.single('audio'), (req, re
   if (!s) return res.redirect(`/carnets/${req.project.id}`);
   const old = Object.fromEntries(JSON.parse(s.checks).map((c) => [c.t, c.done]));
   const checks = str(b.checks).split('\n').map((t) => t.trim()).filter(Boolean).map((t) => ({ t, done: !!old[t] }));
+  const A = autoSettings(req.project.id, { title: str(b.title), piece: str(b.piece), geste: str(b.geste), phase: str(b.phase), est: num(b.est_hours), plan: b.plan_id ? Number(b.plan_id) : null });
   q.run(`UPDATE steps SET title = ?, piece = ?, who_id = ?, note = ?, checks = ?, phase = ?, geste = ?, est_hours = ?, plan_id = ?, audio = COALESCE(?, audio),
     changed = CASE WHEN sent = 1 THEN 1 ELSE 0 END, seen = CASE WHEN sent = 1 THEN 0 ELSE seen END WHERE id = ?`,
-  str(b.title) || 'Fiche', str(b.piece), b.who_id ? Number(b.who_id) : null, str(b.note), JSON.stringify(checks), str(b.phase), str(b.geste),
-  num(b.est_hours) || Math.round((auto.averages()[str(b.geste)] || 0) * 2) / 2, b.plan_id ? Number(b.plan_id) : null, req.file ? req.file.filename : null, s.id);
+  str(b.title) || 'Fiche', str(b.piece), b.who_id ? Number(b.who_id) : null, str(b.note), JSON.stringify(checks), A.phase, A.geste,
+  A.est || 0, A.plan, req.file ? req.file.filename : null, s.id);
   res.flashTo(`/carnets/${req.project.id}?fiche=${s.id}`, s.sent ? 'Enregistré. Envoie la modification pour qu’elle soit signalée sur l’iPad.' : 'Fiche enregistrée.');
 });
 

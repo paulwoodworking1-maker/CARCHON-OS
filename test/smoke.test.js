@@ -685,3 +685,18 @@ test('achats du projet : rangés par catégorie, prix le plus bas des catalogues
   await fetch(base + `/projets/${pid}/achats/meilleurs`, { method: 'POST', redirect: 'manual', headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' }, body: '' });
   assert.strictEqual(q.get("SELECT supplier_id s FROM needs WHERE project_id = ? AND text LIKE 'Charni%'", pid).s, b);
 });
+
+test('carnet : geste, étape, temps et plan réglés tout seuls d’après les mots de la fiche', async () => {
+  const { q } = require('../src/db');
+  const pid = Number(q.run("INSERT INTO projects (name) VALUES ('Carnet auto')").lastInsertRowid);
+  q.run("INSERT INTO plans (project_id, version, status) VALUES (?, 'V3', 'validee')", pid);
+  const sid = Number(q.run("INSERT INTO steps (project_id, ord, title) VALUES (?, 1, 'x')", pid).lastInsertRowid);
+  const r = await fetch(`${base}/carnets/${pid}/fiches/${sid}`, { method: 'POST', redirect: 'manual', headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ title: 'Ponçage des façades au grain 240', piece: 'Façades', checks: 'Grain 120\nGrain 240' }).toString() });
+  assert.strictEqual(r.status, 302);
+  const s = q.get('SELECT * FROM steps WHERE id = ?', sid);
+  assert.strictEqual(s.geste, 'Ponçage');
+  assert.strictEqual(s.phase, 'Finition');
+  assert.ok(s.plan_id);
+  assert.strictEqual(JSON.parse(s.checks).length, 2);
+});
