@@ -71,7 +71,7 @@ const pct = (x) => `${x > 0 ? '+' : x < 0 ? '−' : ''}${Math.abs(Math.round(x *
 function printPage(title, body, { ref = '', date = '' } = {}) {
   const c = require('./db').company();
   return page(title, h`<div class="doc">
-<div class="noprint doc-bar"><a href="javascript:history.back()" class="btn alt sm">‹ Retour</a><button type="button" class="btn sm" data-print>Imprimer / PDF</button></div>
+<div class="noprint doc-bar"><a href="/" data-back class="btn alt sm">‹ Retour</a><button type="button" class="btn sm" data-print>Imprimer / PDF</button></div>
 <header class="doc-head"><div><img src="/static/logo.png" alt="${c.name}" class="doc-logo"><div class="doc-co"><b>${c.name}</b>${c.address ? h`<br>${c.address}` : ''}${c.siret ? h`<br>SIRET ${c.siret}` : ''}<br>${[c.phone, c.email, c.site].filter(Boolean).join(' · ')}</div></div>
 <div class="doc-meta"><div class="doc-title">${title}</div>${ref ? h`<div>Réf. <b>${ref}</b></div>` : ''}<div>${date || ddmmyyyy(today())}</div></div></header>
 ${body}
@@ -202,6 +202,13 @@ ${subs ? h`<nav class="sub" aria-label="Sous-menu">${subs.map(([href, label]) =>
 </div></div>`);
 }
 
+// Scripts écrits dans la page : autorisés un par un par leur empreinte dans la Content-Security-Policy (server.js).
+const INLINE = {
+  theme: "try{var t=localStorage.getItem('theme');if(t==='dark'||(!t&&matchMedia('(prefers-color-scheme: dark)').matches&&localStorage.getItem('theme-auto')!=='0'))document.documentElement.setAttribute('data-theme','dark')}catch(e){}",
+  importmap3d: '{"imports":{"three":"/static/vendor/three/build/three.module.js"}}',
+};
+const inlineHashes = () => Object.values(INLINE).map((js) => `'sha256-${require('node:crypto').createHash('sha256').update(js).digest('base64')}'`);
+
 function page(title, body, { bodyClass = '', head = '' } = {}) {
   return h`<!doctype html>
 <html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
@@ -209,12 +216,12 @@ function page(title, body, { bodyClass = '', head = '' } = {}) {
 <link rel="icon" href="/static/logo.png">
 <link rel="preconnect" href="https://fonts.googleapis.com"><link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/static/style.css">${head}
-<script>try{var t=localStorage.getItem('theme');if(t==='dark'||(!t&&matchMedia('(prefers-color-scheme: dark)').matches&&localStorage.getItem('theme-auto')!=='0'))document.documentElement.setAttribute('data-theme','dark')}catch(e){}</script>
+<script>${raw(INLINE.theme)}</script>
 </head><body class="${bodyClass}">${body}<script src="/static/app.js" defer></script></body></html>`.toString();
 }
 
 module.exports = {
   icon, h, raw, esc, pill, avatar, hidden, postBtn, options, layout, page, flashBox,
-  hoursExact, pct, printPage,
+  hoursExact, pct, printPage, INLINE, inlineHashes,
   parseDate, iso, today, addDays, ddmm, ddmmyyyy, longDate, dayMonth, hhmm, rel, hoursLabel, JOURS_C, MOIS_C, MOIS,
 };

@@ -5,8 +5,8 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const { q, tx, setting, logActivity, company } = require('../db');
 const { h, page, ddmm, ddmmyyyy, dayMonth, today } = require('../html');
-const { sha256, verify, hash } = require('../auth');
-const { filePath, isImage } = require('../uploads');
+const { sha256, verify, hash, throttle, fail } = require('../auth');
+const { filePath, isImage, sendUpload } = require('../uploads');
 const mail = require('../mail');
 const L = require('../logic');
 const M = require('../messages');
@@ -152,6 +152,10 @@ r.post('/devis/:t/code', async (req, res, next) => {
     if (x.code_sent_at && q.get("SELECT datetime('now', '-60 seconds') < ? recent", x.code_sent_at).recent && !canShow) {
       return res.flashTo(back, `Un code vient de vous être envoyé à ${maskEmail(x.signer_email)}. Il peut mettre une minute à arriver : regardez aussi dans les indésirables (spam).`);
     }
+    // Au plus 8 codes par devis et 8 par adresse IP toutes les 10 minutes (pas d'inondation de la boîte du client).
+    const kq = `otp:${x.id}`, ki = `otp-ip:${req.ip}`;
+    if (throttle(kq) || throttle(ki)) return res.flashTo(back, 'Trop de codes demandés. Réessayez dans 10 minutes.', 'ko');
+    fail(kq); fail(ki);
     const code = String(crypto.randomInt(0, 1000000)).padStart(6, '0');
     q.run("UPDATE quotes SET otp_hash = ?, otp_expires = datetime('now', '+15 minutes'), otp_tries = 0, code_sent_at = datetime('now'), last_seen_at = datetime('now') WHERE id = ?", hash(code), x.id);
     try {
@@ -369,7 +373,7 @@ for (const kind of ['espace', 'devis']) {
     const n = req.params.name;
     const ok = c?.p && (q.get('SELECT id FROM photos WHERE project_id = ? AND file = ? AND shared_client = 1', c.p.id, n) || q.get('SELECT id FROM documents WHERE project_id = ? AND file = ? AND visible_client = 1', c.p.id, n));
     if (!ok || !fs.existsSync(filePath(n))) return res.status(404).send('Introuvable');
-    res.sendFile(filePath(n));
+    sendUpload(res, filePath(n));
   });
   // Une version du devis (même numéro que ceux du client).
   r.get(`/${kind}/:t/v/:id`, (req, res) => {

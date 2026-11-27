@@ -8,6 +8,7 @@
 const express = require('express');
 const crypto = require('node:crypto');
 const { q, tx, setting, logActivity } = require('../db');
+const { throttle, fail } = require('../auth');
 const P = require('../production');
 const L = require('../logic');
 
@@ -17,7 +18,9 @@ const str = (v) => String(v ?? '').trim();
 r.use((req, res, next) => {
   const key = setting('api_token');
   const got = String(req.get('authorization') || '').replace(/^Bearer\s+/i, '');
-  if (!key || got.length !== key.length || !crypto.timingSafeEqual(Buffer.from(got), Buffer.from(key))) return res.status(401).json({ error: 'Clé API absente ou invalide' });
+  const k = 'api:' + req.ip;
+  if (throttle(k)) return res.status(429).json({ error: 'Trop d’essais avec une clé invalide. Réessayer dans 10 minutes.' });
+  if (!key || got.length !== key.length || !crypto.timingSafeEqual(Buffer.from(got), Buffer.from(key))) { fail(k); return res.status(401).json({ error: 'Clé API absente ou invalide' }); }
   next();
 });
 r.use(express.json({ limit: '30mb' })); // après la clé : seules les requêtes autorisées sont lues

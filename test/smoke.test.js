@@ -105,6 +105,20 @@ test('assistant : chaque outil répond sur les données de démo', () => {
   }
 });
 
+test('les en-têtes de sécurité sont envoyés', async () => {
+  const res = await fetch(base + '/connexion');
+  assert.strictEqual(res.headers.get('x-content-type-options'), 'nosniff');
+  assert.match(res.headers.get('content-security-policy') || '', /script-src 'self'/);
+});
+
+test('une clé API fausse est refusée, puis bloquée après trop d’essais', async () => {
+  let last;
+  for (let i = 0; i < 9; i++) last = await fetch(base + '/api/v1/ofs', { headers: { authorization: 'Bearer faux' } });
+  assert.strictEqual(last.status, 429);
+  // Le blocage vise l'adresse : on la libère pour les tests suivants.
+  for (const ip of ['127.0.0.1', '::1', '::ffff:127.0.0.1']) require('../src/auth').forgive('api:' + ip);
+});
+
 const post = (p, body) => fetch(base + p, { method: 'POST', redirect: 'manual', headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams(body).toString() });
 
 test('actions groupées sur plusieurs OF : décaler, attribuer, envoyer', async () => {

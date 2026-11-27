@@ -5,7 +5,7 @@ const express = require('express');
 const { q, setting, setSetting } = require('./db');
 const { sessionMiddleware, requirePatron, hash, verify, throttle, fail } = require('./auth');
 const { page, h, flashBox } = require('./html');
-const { filePath } = require('./uploads');
+const { filePath, sendUpload } = require('./uploads');
 
 const app = express();
 app.disable('x-powered-by');
@@ -14,9 +14,18 @@ app.use(express.urlencoded({ extended: false, limit: '12mb' })); // vues 3D capt
 app.use('/static', express.static(path.join(__dirname, '..', 'public'), { maxAge: '1h' }));
 app.use('/static/vendor/three', express.static(path.join(__dirname, '..', 'node_modules', 'three'), { maxAge: '7d' })); // visionneuse 3D
 app.use(sessionMiddleware);
+const CSP_HASHES = require('./html').inlineHashes().join(' ');
 app.use((req, res, next) => {
   res.set('X-Frame-Options', 'SAMEORIGIN');
   res.set('Referrer-Policy', 'no-referrer');
+  res.set('X-Content-Type-Options', 'nosniff');
+  res.set('Permissions-Policy', 'camera=(self), microphone=(self), geolocation=()');
+  res.set('Content-Security-Policy', [
+    "default-src 'self'", `script-src 'self' ${CSP_HASHES}`, "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+    "font-src 'self' https://fonts.gstatic.com", "img-src 'self' data: blob:", "media-src 'self' blob:",
+    "connect-src 'self'", "object-src 'none'", "base-uri 'self'", "form-action 'self'", "frame-ancestors 'self'",
+  ].join('; '));
+  if (process.env.COOKIE_SECURE === '1') res.set('Strict-Transport-Security', 'max-age=31536000');
   next();
 });
 
@@ -145,7 +154,7 @@ app.get('/fichiers/:name', (req, res) => {
   if (req.session.role !== 'patron' && !req.session.atelier) return res.status(403).send('Accès refusé');
   const f = filePath(req.params.name);
   if (!fs.existsSync(f)) return res.status(404).send('Introuvable');
-  res.sendFile(f);
+  sendUpload(res, f);
 });
 
 // Après chaque modification faite dans le logiciel, le planning automatique se recalcule.
@@ -178,7 +187,9 @@ for (const m of ['decider', 'patron', 'carnets', 'achats', 'planning', 'reglages
 app.use((req, res) => res.status(404).send(page('Introuvable', h`<main class="login"><h1>Page introuvable</h1><p><a href="/">Revenir à l’accueil</a></p></main>`)));
 app.use((err, req, res, next) => {
   console.error(err);
-  res.status(500).send(page('Erreur', h`<main class="login"><h1>Un problème est survenu</h1><p class="mut">L'action n'a pas abouti. Reviens en arrière et réessaie ; si ça recommence, note l'heure et ce que tu faisais.</p><p class="mut t12">Détail : ${err.message}</p><p><a class="btn" href="javascript:history.back()">Revenir</a> <a class="btn alt" href="/">Tableau de bord</a></p></main>`));
+  // Le détail technique n'est montré qu'au patron connecté ; le public voit un message neutre.
+  const patron = req.session?.role === 'patron';
+  res.status(500).send(page('Erreur', h`<main class="login"><h1>Un problème est survenu</h1><p class="mut">${patron ? 'L’action n’a pas abouti. Reviens en arrière et réessaie ; si ça recommence, note l’heure et ce que tu faisais.' : 'L’atelier a été prévenu. Réessayez dans un instant.'}</p>${patron ? h`<p class="mut t12">Détail : ${err.message}</p>` : ''}<p><a class="btn" href="/" data-back>Revenir</a>${patron ? h` <a class="btn alt" href="/">Tableau de bord</a>` : ''}</p></main>`));
 });
 
 if (require.main === module) {

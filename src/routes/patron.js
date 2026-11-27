@@ -291,7 +291,7 @@ ${st === 'erreur' ? h`<p class="flash ko mt8">${p.prod_error}</p>` : ''}
 ${p.prod_note ? h`<p class="mt8"><span class="mut">Remarques de l’assistant :</span> ${p.prod_note}</p>` : ''}
 
 ${(() => { const m3 = q.get("SELECT * FROM documents WHERE project_id = ? AND kind = 'modele3d' ORDER BY id DESC LIMIT 1", p.id) || (() => { const f = files.find((x) => x.kind === 'modele3d'); return f ? { id: 'q' + q.get('SELECT id FROM quote_files WHERE file = ?', f.file).id, title: f.name } : null; })();
-    return m3 ? h`<script type="importmap">{"imports":{"three":"/static/vendor/three/build/three.module.js"}}</script>
+    return m3 ? h`<script type="importmap">${raw(require('../html').INLINE.importmap3d)}</script>
 <div class="v3d mt12" data-model="/projets/${p.id}/3d/${m3.id}"><div class="v3d-msg mut">Chargement du modèle 3D…</div>
 <div class="v3d-bar"><button type="button" class="chip" data-view="iso">3D</button><button type="button" class="chip" data-view="face">Face</button><button type="button" class="chip" data-view="dessus">Dessus</button><button type="button" class="chip" data-view="cote">Côté</button><span class="v3d-info mut t12"></span></div></div>
 <p class="mut t12 mt4">${m3.title} · fais tourner à la souris, molette pour zoomer, clic sur une pièce pour ses cotes.</p>
