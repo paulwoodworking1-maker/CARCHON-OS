@@ -6,7 +6,7 @@ const { q, tx, setting, setSetting, logActivity, FAMILIES, SOURCES } = require('
 const Q = require('../qonto');
 const { h, layout, pill, postBtn, options, ddmm, ddmmyyyy, addDays, today, rel } = require('../html');
 const { token, sha256 } = require('../auth');
-const { upload, filePath } = require('../uploads');
+const { upload, uploadDocs, filePath } = require('../uploads');
 const L = require('../logic');
 const ai = require('../ai');
 
@@ -316,6 +316,14 @@ ${draft?.pdf ? h`<p class="mut">PDF du devis déposé ✓ <a href="/portails/dev
 <label>Son portable (pour les SMS de suivi, facultatif) <input type="tel" name="signer_phone" placeholder="06 12 34 56 78" value="${draft?.signer_phone || ''}"></label>
 <label>Lignes du devis, une par ligne : « désignation ; quantité » <textarea name="lines" rows="5" placeholder="Table à manger chêne 220 × 95 cm ; 1&#10;Allonges 50 cm ; 2&#10;Livraison et installation ; 1">${linesText(draft?.lines)}</textarea></label>
 <p class="mut t12">Facultatif, mais conseillé : le client pourra ajuster chaque ligne (modifier, retirer, changer la quantité) au lieu d’écrire un long message.</p>
+<fieldset class="card warm m0"><legend class="b">Pour préparer la fabrication (facultatif)</legend>
+<p class="mut t13">À la signature, l’assistant lit le devis et ces fichiers, puis crée les pièces, le carnet de fabrication et la liste de matière à commander. Le planning démarre quand toute la matière est livrée.</p>
+<label>Modèle 3D : STEP (TopSolid, Rhino…) ou Rhino .3dm <input type="file" name="modele3d" multiple accept=".step,.stp,.3dm,.igs,.iges"></label>
+<label>Vues et plans : PDF ou images <input type="file" name="plan3d" multiple accept=".pdf,.png,.jpg,.jpeg,.webp"></label>
+<label>Nomenclature, liste de débit ou chiffrage : CSV, Excel ou PDF <input type="file" name="chiffrage" multiple accept=".csv,.xlsx,.txt,.pdf"></label>
+${draft?.extra?.length ? h`<p class="mut t12">Déjà joints : ${draft.extra.map((f) => f.name).join(', ')}</p>` : ''}
+${from ? (() => { const prevFiles = q.all('SELECT name FROM quote_files WHERE number = ?', from.number); return prevFiles.length ? h`<p class="mut t12">Fichiers de la version précédente repris : ${prevFiles.map((f) => f.name).join(', ')}</p>` : ''; })() : ''}
+<p class="mut t12">Le modèle 3D est mesuré pièce par pièce (longueur × largeur × épaisseur) et affiché dans l’OF. Garde un nom par pièce et un calque (ou sous-ensemble) par ensemble : la nomenclature en sera plus juste.</p></fieldset>
 <label>Rattacher à un projet existant (nouvelle version) <select name="project_id"><option value="">Non : l’acceptation crée la commande</option>${options(q.all("SELECT id, name FROM projects WHERE status = 'en_cours' ORDER BY name").map((p) => [p.id, p.name]), draft?.project_id)}</select></label>
 <fieldset class="chips m0"><legend>Valable</legend>${['15', '30'].map((d) => h`<label class="chip"><input type="radio" name="days" value="${d}" ${d === '30' ? 'checked' : ''}>${d} jours</label>`)}</fieldset>
 <ul class="mut checklist"><li>PDF du devis repris tel quel, empreinte calculée</li><li>CGV jointes ${setting('cgv_file') ? '' : '(aucune CGV déposée : à ajouter dans Réglages)'}</li><li>Le client accepte exactement ce document</li><li>Même numéro qu’un devis déjà envoyé : l’ancien lien se ferme tout seul</li></ul>
@@ -354,8 +362,11 @@ r.get('/portails/devis/annuler', (req, res) => {
   res.redirect('/portails/envoyer');
 });
 
-r.post('/portails/devis', upload.single('pdf'), (req, res) => {
+r.post('/portails/devis', uploadDocs.fields([{ name: 'pdf', maxCount: 1 }, { name: 'modele3d', maxCount: 4 }, { name: 'plan3d', maxCount: 10 }, { name: 'chiffrage', maxCount: 6 }]), (req, res) => {
   const b = req.body;
+  const extra = [...(req.files?.modele3d || []).map((f) => ({ kind: 'modele3d', file: f.filename, name: f.originalname })), ...(req.files?.plan3d || []).map((f) => ({ kind: 'plan3d', file: f.filename, name: f.originalname })), ...(req.files?.chiffrage || []).map((f) => ({ kind: 'chiffrage', file: f.filename, name: f.originalname }))];
+  req.file = req.files?.pdf?.[0];
+  if (req.file && !/\.pdf$/i.test(req.file.originalname)) req.file = null;
   const draft = req.session.draftQuote;
   if (!req.file && draft?.pdf) req.file = { filename: draft.pdf, path: filePath(draft.pdf) };
   delete req.session.draftQuote;
@@ -365,7 +376,7 @@ r.post('/portails/devis', upload.single('pdf'), (req, res) => {
   if (isTest && req.body.allow_test && email) setSetting('portal_test_emails', [...new Set([...testEmails(), email])].join(', '));
   if (isTest && !testEmails().includes(email)) {
     // On garde le PDF et ce qui a été saisi : il suffit d'autoriser l'adresse puis de renvoyer.
-    req.session.draftQuote = { ...(draft || {}), pdf: req.file.filename, amount_ht: str(b.amount_ht), family: str(b.family), source: str(b.source), number: str(b.number), project_name: str(b.project_name), signer_name: str(b.signer_name), signer_email: email, signer_phone: str(b.signer_phone), lines: parseLines(b.lines), project_id: b.project_id || null };
+    req.session.draftQuote = { ...(draft || {}), pdf: req.file.filename, amount_ht: str(b.amount_ht), family: str(b.family), source: str(b.source), number: str(b.number), project_name: str(b.project_name), signer_name: str(b.signer_name), signer_email: email, signer_phone: str(b.signer_phone), lines: parseLines(b.lines), project_id: b.project_id || null, extra: [...(draft?.extra || []), ...extra] };
     return res.flashTo('/portails/envoyer', `Mode test : ${email} n’est pas une adresse de test. Clique « Autoriser cette adresse et envoyer », ou passe le portail en mode réel dans Réglages.`, 'ko');
   }
   const number = str(b.number);
@@ -384,6 +395,8 @@ r.post('/portails/devis', upload.single('pdf'), (req, res) => {
   { const a = Number(str(b.amount_ht).replace(/[\s\u00a0\u202f€]/g, '').replace(',', '.'));
     q.run('UPDATE quotes SET amount_ht = ?, family = ?, source = ? WHERE id = ?', str(b.amount_ht) && Number.isFinite(a) ? a : prev?.amount_ht ?? null,
       FAMILIES.includes(b.family) ? b.family : prev?.family || '', SOURCES.includes(b.source) ? b.source : prev?.source || '', newId); }
+  // Vues 3D et nomenclature / chiffrage : gardés avec le devis, l'assistant s'en sert à l'acceptation.
+  for (const f of [...(draft?.extra || []), ...extra]) q.run('INSERT INTO quote_files (number, kind, file, name) VALUES (?, ?, ?, ?)', number, f.kind, f.file, f.name);
   SMS.notify('devis', { quoteId: newId });
   const url = `${base(req)}/p/devis/${t}`;
   req.session.shownLink = { title: `Lien d’acceptation créé pour ${str(b.signer_name)} · valable ${days} jours`, url, to: email,

@@ -178,6 +178,19 @@ addColumn('quotes', 'token_enc', 'TEXT');          // lien chiffré, pour le rem
 addColumn('quotes', 'signer_phone', "TEXT DEFAULT ''");
 addColumn('projects', 'portal_token_enc', 'TEXT');
 addColumn('clients', 'sms_off', 'INTEGER NOT NULL DEFAULT 0');
+// Chaîne de production générée depuis le devis, les vues 3D et le chiffrage.
+addColumn('projects', 'prod_status', "TEXT DEFAULT ''");   // '' | en_cours | pret | erreur
+addColumn('projects', 'prod_error', 'TEXT');
+addColumn('projects', 'prod_note', 'TEXT');
+addColumn('projects', 'prod_at', 'TEXT');
+addColumn('projects', 'prod_analysis', 'TEXT');
+addColumn('suppliers', 'lead_days', 'INTEGER');            // délai de livraison habituel (jours ouvrés)
+addColumn('needs', 'qty', 'REAL');
+addColumn('needs', 'unit', "TEXT DEFAULT ''");
+addColumn('needs', 'for_chain', 'INTEGER NOT NULL DEFAULT 0'); // matière nécessaire avant la fabrication
+addColumn('documents', 'kind', "TEXT DEFAULT ''");          // facture_acompte, facture, plan3d, chiffrage…
+addColumn('documents', 'number', "TEXT DEFAULT ''");
+addColumn('documents', 'amount', "TEXT DEFAULT ''");
 addColumn('projects', 'portal_opened_at', 'TEXT');
 addColumn('projects', 'portal_seen_at', 'TEXT');
 addColumn('projects', 'portal_views', 'INTEGER NOT NULL DEFAULT 0');
@@ -249,6 +262,16 @@ CREATE TABLE IF NOT EXISTS absences (
 CREATE TABLE IF NOT EXISTS sms_queue (
   id INTEGER PRIMARY KEY, target TEXT NOT NULL, project_id INTEGER, quote_id INTEGER, phone TEXT NOT NULL, event TEXT NOT NULL, vars TEXT DEFAULT '{}',
   text TEXT, status TEXT NOT NULL DEFAULT 'attente', error TEXT, send_after TEXT NOT NULL, sent_at TEXT, created_at TEXT DEFAULT (datetime('now'))
+);
+-- Fiche de débit générée (cotes finies et brutes, pièce par pièce).
+CREATE TABLE IF NOT EXISTS cut_list (
+  id INTEGER PRIMARY KEY, project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, ord INTEGER DEFAULT 0,
+  ensemble TEXT DEFAULT '', piece TEXT NOT NULL, qty REAL DEFAULT 1, material TEXT DEFAULT '',
+  l REAL, w REAL, t REAL, bl REAL, bw REAL, bt REAL, grain TEXT DEFAULT '', note TEXT DEFAULT ''
+);
+-- Fichiers joints à un devis (vues 3D, nomenclature, chiffrage) : repris par l'OF à l'acceptation.
+CREATE TABLE IF NOT EXISTS quote_files (
+  id INTEGER PRIMARY KEY, number TEXT NOT NULL, kind TEXT NOT NULL, file TEXT NOT NULL, name TEXT DEFAULT '', created_at TEXT DEFAULT (datetime('now'))
 );
 CREATE TABLE IF NOT EXISTS snoozes (key TEXT PRIMARY KEY, until TEXT NOT NULL);
 -- Parcours client : rendez-vous, prises de cotes, échanges… visibles sur son portail.

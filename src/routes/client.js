@@ -197,9 +197,21 @@ r.post('/devis/:t/accepter', (req, res) => {
     if (cid && bill.street) q.run("UPDATE clients SET address = ? WHERE id = ? AND COALESCE(address, '') = ''", [bill.company, bill.street, `${bill.zip} ${bill.city}`.trim()].filter(Boolean).join(', '), cid);
     logActivity(pid, null, `Devis ${x.number} v${x.version} accepté en ligne par ${str(req.body.name)} (réf. ${ref})`, 'Client');
   });
+  afterAccept(x.id);
   if (!x.test) require('../qonto').afterAccept(pid);
   res.flashTo(back, `Merci ! Votre devis est accepté (référence ${ref}). Voici l’accueil de votre projet : gardez ce lien pour suivre la suite.`);
 });
+// Après la signature : Cockpit est prévenu (facture d'acompte) et la chaîne de production se prépare.
+function afterAccept(quoteId) {
+  try {
+    const x = q.get('SELECT * FROM quotes WHERE id = ?', quoteId);
+    if (!x?.project_id) return;
+    require('../cockpit').notify('devis.accepte', require('../cockpit').quotePayload(x));
+    const p = q.get('SELECT * FROM projects WHERE id = ?', x.project_id);
+    if (setting('chain_auto', '0') === '1' && require('../ai').enabled() && !p.prod_status && !q.get('SELECT id FROM steps WHERE project_id = ?', p.id)) require('../chain').start(p.id);
+  } catch (e) { console.error('[après signature]', e); }
+}
+
 r.post('/devis/:t/repondre', (req, res) => {
   const x = findQuote(req);
   const t = req.params.t;
@@ -267,7 +279,11 @@ function renderSpace(p, { token = null, preview = false, tab = 'accueil', quote:
   else if (latest && latest.status === 'modif') next = { t: 'Nous préparons la nouvelle version de votre devis', d: `Suite à votre demande du ${dayMonth(latest.responded_at)}. Vous la recevrez par e-mail, en général sous 48 h ouvrées.` };
   else if (latest && latest.status === 'refused' && !accepted) next = { t: 'Vous avez décliné ce devis', d: 'Merci de votre réponse. Si votre projet évolue, nous serons heureux d’en reparler.' };
   else if (p && !depositOk && p.deposit_invoice_id) next = { t: `Régler l’acompte : ${require('../qonto').eur(p.deposit_invoice_ttc || 0)} TTC`, d: `Facture ${p.deposit_invoice_number || ''} envoyée par e-mail${p.deposit_invoice_due ? `, à régler avant le ${dayMonth(p.deposit_invoice_due)}` : ''}. Dès réception, nous réservons le bois et planifions la fabrication.`, you: true, ...(p.deposit_invoice_url ? { href: p.deposit_invoice_url, cta: 'Voir la facture et payer', ext: true } : {}) };
-  else if (p && !depositOk) next = { t: 'Régler l’acompte prévu au devis', d: p.deposit_invoice_status === 'creating' ? 'Votre facture d’acompte est en cours d’envoi par e-mail.' : 'Dès réception, nous réservons le bois et planifions la fabrication.', you: true };
+  else if (p && !depositOk) {
+    const inv = q.get("SELECT * FROM documents WHERE project_id = ? AND kind = 'facture_acompte' AND visible_client = 1 ORDER BY id DESC LIMIT 1", p.id);
+    next = inv ? { t: 'Régler l’acompte', d: `Votre facture d’acompte${inv.number ? ` n° ${inv.number}` : ''}${inv.amount ? ` (${inv.amount})` : ''} est disponible. Dès réception du règlement, nous commandons la matière et planifions la fabrication.`, href: f(inv.file), cta: 'Voir la facture d’acompte', you: true }
+      : { t: 'Régler l’acompte prévu au devis', d: p.deposit_invoice_status === 'creating' ? 'Votre facture d’acompte est en cours d’envoi par e-mail.' : 'Votre facture d’acompte arrive ici très bientôt. Dès réception du règlement, nous commandons la matière et planifions la fabrication.', you: true };
+  }
   else if (upcoming[0]) next = { t: upcoming[0].title, d: `Le ${dayMonth(upcoming[0].date)}${upcoming[0].note ? ` · ${upcoming[0].note}` : ''}.` };
   else if (p && fabDone) next = { t: 'Votre pièce est prête', d: trip ? `Pose prévue le ${dayMonth(trip.date)}.` : 'Nous vous contactons pour choisir la date de pose.' };
   else if (p && started) next = { t: 'Votre pièce est en fabrication', d: p.ready_date ? `Prête à poser vers le ${dayMonth(p.ready_date)}.` : 'Nous vous tenons informé(e) de l’avancement, photos à l’appui.' };

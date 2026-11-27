@@ -3,6 +3,7 @@
 //   POST /api/v1/affaires            une affaire signée devient un OF (sur-mesure, ou lot depuis un modèle du catalogue)
 //                                    champs utiles à l'Analyse : amount_ht (€ HT), family, source
 //   POST /api/v1/affaires/:ref/acompte   l'acompte est encaissé : les achats bloqués se débloquent
+//   POST /api/v1/affaires/:ref/factures  facture d'acompte / de solde (PDF) : publiée sur le portail client
 //   GET  /api/v1/ofs                 avancement, dates, heures et coût réel de chaque OF
 const express = require('express');
 const crypto = require('node:crypto');
@@ -11,7 +12,6 @@ const P = require('../production');
 const L = require('../logic');
 
 const r = express.Router();
-r.use(express.json({ limit: '200kb' }));
 const str = (v) => String(v ?? '').trim();
 
 r.use((req, res, next) => {
@@ -20,6 +20,7 @@ r.use((req, res, next) => {
   if (!key || got.length !== key.length || !crypto.timingSafeEqual(Buffer.from(got), Buffer.from(key))) return res.status(401).json({ error: 'Clé API absente ou invalide' });
   next();
 });
+r.use(express.json({ limit: '30mb' })); // après la clé : seules les requêtes autorisées sont lues
 
 const rate = () => Number(String(setting('hourly_rate', '0')).replace(',', '.')) || 0;
 
@@ -67,6 +68,27 @@ r.post('/affaires/:ref/acompte', (req, res) => {
   });
   if (!p.deposit_at) require('../sms').notify('acompte', { projectId: p.id });
   res.json({ ok: true });
+});
+
+// Facture éditée par Cockpit (acompte, solde…) : publiée sur le portail du client, qui reçoit un SMS.
+// :ref = référence de l'OF (P2026-012) ou numéro du devis. Envoi en multipart (champ « pdf ») ou en JSON (pdf_base64).
+const { uploadDocs, filePath } = require('../uploads');
+r.post('/affaires/:ref/factures', uploadDocs.single('pdf'), (req, res) => {
+  const b = req.body || {};
+  const ref = str(req.params.ref);
+  const p = q.get('SELECT * FROM projects WHERE ref = ?', ref) || q.get('SELECT projects.* FROM quotes JOIN projects ON projects.id = quotes.project_id WHERE quotes.number = ? ORDER BY quotes.version DESC LIMIT 1', ref);
+  if (!p) return res.status(404).json({ error: 'OF ou devis introuvable' });
+  let file = req.file && /\.pdf$/i.test(req.file.originalname || req.file.filename) ? req.file.filename : null;
+  if (!file && b.pdf_base64) {
+    const buf = Buffer.from(String(b.pdf_base64), 'base64');
+    if (buf.subarray(0, 4).toString() !== '%PDF') return res.status(400).json({ error: 'pdf_base64 n’est pas un PDF' });
+    file = crypto.randomBytes(12).toString('hex') + '.pdf';
+    require('node:fs').writeFileSync(filePath(file), buf);
+  }
+  if (!file) return res.status(400).json({ error: 'PDF requis (champ « pdf » ou « pdf_base64 »)' });
+  const type = ['acompte', 'solde', 'autre'].includes(str(b.type)) ? str(b.type) : 'acompte';
+  const id = require('../cockpit').addInvoice(p.id, { file, type, number: str(b.numero), amount: str(b.montant_ttc), due: str(b.echeance), source: 'Cockpit' });
+  res.status(201).json({ ok: true, document_id: id, of: p.ref });
 });
 
 r.get('/ofs', (req, res) => {

@@ -188,6 +188,7 @@ r.get('/fournisseurs', (req, res) => {
   const form = (s = {}) => h`<label>Nom <input name="name" value="${s.name || ''}" required></label><label>Contact <input name="contact" value="${s.contact || ''}"></label>
 <div class="grid2"><label>Téléphone <input name="phone" type="tel" value="${s.phone || ''}"></label><label>E-mail <input name="email" type="email" value="${s.email || ''}"></label></div>
 <label>Habitude (délai, mode de commande) <input name="habit" value="${s.habit || ''}" placeholder="ex. commande par mail · livré en 2 jours"></label>
+<label>Délai de livraison habituel (jours ouvrés, sert au planning) <input name="lead_days" inputmode="numeric" value="${s.lead_days ?? ''}" placeholder="ex. 5"></label>
 <label>Note pour l'équipe <textarea name="note" rows="2">${s.note || ''}</textarea></label>`;
   const body = h`<div class="head"><div><div class="eb">Achats</div><h1>Fournisseurs</h1><p class="mut mt8">Un contact et une note, écrits une fois. L'équipe sait qui appeler.</p></div>
 <details class="menu push"><summary class="btn">+ Fournisseur</summary><form method="post" action="/fournisseurs" class="menu-list right-al form pad wide">${form()}<button class="btn sm">Ajouter</button></form></details></div>
@@ -197,11 +198,11 @@ r.get('/fournisseurs', (req, res) => {
 ${rows.length ? '' : h`<section class="card"><p class="mut">Ajoute tes fournisseurs habituels : scierie, droguerie, quincaillerie, négoce de panneaux…</p></section>`}</div>`;
   res.send(layout({ title: 'Fournisseurs', tab: 'achats', sub: '/fournisseurs', body, flash: req.flash, counts: counts() }));
 });
-const supFields = (b) => [str(b.name), str(b.contact), str(b.phone), str(b.email), str(b.habit), str(b.note)];
-r.post('/fournisseurs', (req, res) => { q.run('INSERT INTO suppliers (name, contact, phone, email, habit, note) VALUES (?, ?, ?, ?, ?, ?)', ...supFields(req.body)); res.redirect('/fournisseurs'); });
+const supFields = (b) => [str(b.name), str(b.contact), str(b.phone), str(b.email), str(b.habit), str(b.note), Number(b.lead_days) > 0 ? Math.round(Number(b.lead_days)) : null];
+r.post('/fournisseurs', (req, res) => { q.run('INSERT INTO suppliers (name, contact, phone, email, habit, note, lead_days) VALUES (?, ?, ?, ?, ?, ?, ?)', ...supFields(req.body)); res.redirect('/fournisseurs'); });
 r.post('/fournisseurs/:id', (req, res) => {
   if (req.body.del) q.run('DELETE FROM suppliers WHERE id = ?', req.params.id);
-  else q.run('UPDATE suppliers SET name = ?, contact = ?, phone = ?, email = ?, habit = ?, note = ? WHERE id = ?', ...supFields(req.body), req.params.id);
+  else q.run('UPDATE suppliers SET name = ?, contact = ?, phone = ?, email = ?, habit = ?, note = ?, lead_days = ? WHERE id = ?', ...supFields(req.body), req.params.id);
   res.redirect('/fournisseurs');
 });
 
