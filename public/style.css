@@ -980,3 +980,7 @@ body.client .cl-foot p{margin:0;max-width:42ch}
 .cl-mail:hover,.cl-site:hover{text-decoration:underline}
 @media (max-width:420px){body.client .cl-head{padding:18px 20px}body.client .cl{padding:28px 20px 12px}body.client .cl-foot{padding:24px 20px 30px}body.client .cl h1{font-size:21px}}
 body.client .hlink{display:block;margin-top:6px;font-size:12.5px}
+/* Messages de confirmation : en bas de l'écran, la page ne bouge pas */
+.flash.toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:200;max-width:min(620px,calc(100vw - 32px));margin:0;box-shadow:0 8px 28px rgba(26,23,20,.18);cursor:pointer;transition:opacity .4s}
+.flash.toast.out{opacity:0}
+html.kept{scroll-behavior:auto}

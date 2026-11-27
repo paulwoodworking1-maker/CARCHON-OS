@@ -198,7 +198,7 @@ function layout({ title, tab, sub, body, flash, counts = {}, heading }) {
   </div>
 </header>
 ${subs ? h`<nav class="sub" aria-label="Sous-menu">${subs.map(([href, label]) => h`<a href="${href}"${href === here ? raw(' class="on"') : ''}>${label}${counts[href] ? ` · ${counts[href]}` : ''}</a>`)}</nav>` : ''}
-<main class="wrap">${flashBox(flash)}${body}</main>
+<main class="wrap">${flash ? h`<div class="flash toast ${flash.kind || 'ok'}" role="status" title="Cliquer pour fermer">${flash.html ? raw(flash.html) : flash.text}</div>` : ''}${body}</main>
 </div></div>`);
 }
 
