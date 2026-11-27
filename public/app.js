@@ -129,4 +129,68 @@
       document.getElementById('sigdata').value = c.toDataURL('image/png');
     });
   }
+
+  // Fiche projet : onglets (sans JavaScript, toutes les sections restent affichées les unes sous les autres).
+  var tabs = document.querySelector('[data-ptabs]');
+  if (tabs) {
+    var panels = Array.prototype.slice.call(document.querySelectorAll('.ptab'));
+    var key = 'ptab:' + location.pathname;
+    var show = function (id, scrollTo) {
+      var panel = panels.filter(function (x) { return x.id === id; })[0];
+      if (!panel) { var el = id && document.getElementById(id); panel = el && el.closest && el.closest('.ptab'); }
+      if (!panel) return false;
+      panels.forEach(function (x) { x.classList.toggle('on', x === panel); });
+      tabs.querySelectorAll('a').forEach(function (a) { a.classList.toggle('on', a.getAttribute('href') === '#' + panel.id); });
+      try { sessionStorage.setItem(key, panel.id); } catch (x) {}
+      var target = scrollTo && document.getElementById(scrollTo);
+      if (target && target !== panel) { if (target.tagName === 'DETAILS') target.open = true; target.scrollIntoView({ block: 'start' }); }
+      return true;
+    };
+    document.body.classList.add('js-tabs');
+    var h0 = location.hash.slice(1), saved = null;
+    try { saved = sessionStorage.getItem(key); } catch (x) {}
+    if (!(h0 && show(h0, h0)) && !(saved && show(saved))) show(panels[0].id);
+    window.addEventListener('hashchange', function () { var id = location.hash.slice(1); if (id) show(id, id); });
+    document.addEventListener('click', function (e) {
+      var a = e.target.closest && e.target.closest('a[href^="#"]');
+      if (!a) return;
+      var id = a.getAttribute('href').slice(1);
+      if (id && show(id, a.closest('[data-ptabs]') ? null : id)) {
+        e.preventDefault();
+        history.replaceState(null, '', '#' + id);
+        if (a.closest('[data-ptabs]') || a.hasAttribute('data-tab-link')) tabs.scrollIntoView({ block: 'start', behavior: 'smooth' });
+      }
+    });
+  }
+
+  // Dictée vocale (Safari iPad, Chrome) : le texte s'ajoute dans la zone de saisie.
+  var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  document.querySelectorAll('[data-dictee]').forEach(function (btn) {
+    if (!SR) return;
+    var ta = document.querySelector(btn.getAttribute('data-dictee'));
+    if (!ta) return;
+    btn.hidden = false;
+    var rec = null, base = '';
+    btn.addEventListener('click', function () {
+      if (rec) { rec.stop(); return; }
+      rec = new SR(); rec.lang = 'fr-FR'; rec.continuous = true; rec.interimResults = true;
+      base = ta.value ? ta.value.replace(/\s*$/, ' ') : '';
+      rec.onresult = function (ev) {
+        var fin = '', tmp = '';
+        for (var i = 0; i < ev.results.length; i++) { var t = ev.results[i][0].transcript; if (ev.results[i].isFinal) fin += t; else tmp += t; }
+        ta.value = base + fin + tmp;
+      };
+      rec.onend = function () { rec = null; btn.classList.remove('rec'); btn.textContent = '● Dicter'; };
+      rec.onerror = function () { if (rec) rec.stop(); };
+      rec.start(); btn.classList.add('rec'); btn.textContent = '■ Arrêter la dictée';
+    });
+  });
+
+  // CNC : curseur d'avancement du programme (les opérations s'affichent dans l'ordre d'usinage).
+  document.querySelectorAll('[data-cnc-slider]').forEach(function (inp) {
+    var svg = document.querySelector(inp.getAttribute('data-cnc-slider'));
+    if (!svg) return;
+    var ops = svg.querySelectorAll('.cnc-op');
+    inp.addEventListener('input', function () { var n = Number(inp.value); ops.forEach(function (g, i) { g.classList.toggle('off', i >= n); }); });
+  });
 })();

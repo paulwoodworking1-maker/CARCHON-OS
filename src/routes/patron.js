@@ -434,11 +434,25 @@ r.get('/projets/:id', loadProject, (req, res) => {
   const ustate = { a_faire: '', en_stock: 'done', expediee: 'done', livree: 'done' };
   const ulabel = { a_faire: 'À contrôler', en_stock: 'En stock', expediee: 'Expédiée', livree: 'Livrée' };
   const people = L.people();
+  const D = require('./dossier');
+  const sst = D.sstSummary(p.id);
+  const steps = q.all('SELECT status, sent FROM steps WHERE project_id = ?', p.id);
+  const stDone = steps.filter((s) => s.status === 'done').length, stDrafts = steps.filter((s) => !s.sent).length;
+  const valid = plans.find((x) => x.status === 'validee');
+  const dictee = req.query.dictee ? q.get('SELECT dictation FROM carnet_runs WHERE id = ? AND project_id = ?', req.query.dictee, p.id)?.dictation || '' : '';
+  const toBuy = pneeds.filter((n) => n.status !== 'ordered').length;
+  // Bandeau « À suivre » : l'essentiel du dossier en un coup d'œil, chaque case ouvre le bon onglet.
+  const tiles = [
+    { href: '#dossier', label: 'Carnet', val: steps.length ? `${stDone}/${steps.length} fiches` : 'Vide', sub: !steps.length ? (valid ? `Générer depuis ${valid.version}` : 'Ajouter un plan') : stDrafts ? `${stDrafts} à envoyer à l’atelier` : 'À jour sur l’iPad', warn: !steps.length || stDrafts },
+    { href: '#achats', label: 'Sous-traitance', val: sst.list.length ? `${sst.open.length} en cours` : 'Aucune', sub: sst.late.length ? `${sst.late.length} retour en retard` : sst.toOrder ? `${sst.toOrder} à commander` : sst.nextBack ? `Retour prévu ${ddmm(sst.nextBack)}` : sst.list.length ? 'Tout est revenu' : 'Laquage, verre, CNC…', ko: sst.late.length, warn: sst.toOrder },
+    { href: '#achats', label: 'Achats', val: pneeds.length ? `${pneeds.length} en attente` : 'Rien à acheter', sub: pneeds.length ? `${toBuy} à commander · ${pneeds.length - toBuy} commandé${pneeds.length - toBuy > 1 ? 's' : ''}` : lots.length ? `${lots.length} lot${lots.length > 1 ? 's' : ''} de bois réservé${lots.length > 1 ? 's' : ''}` : '', warn: toBuy },
+    { href: '#vue', label: 'Livraison', val: p.due_date ? ddmm(p.due_date) : 'À fixer', sub: p.slack.text, ko: p.slack.color === '#A20212' },
+  ];
   const body = h`
 <div class="mut"><a href="/projets">Projets</a> › ${p.name}</div>
 <div class="head mt4"><div><div class="ref">Dossier ${p.ref}</div><h1 class="m0">${p.name}</h1>
 <div class="line mt8">${pill('no', p.kind)}<span class="mut">${p.client ? p.client.name : 'hors commande client'}${p.due_date ? ` · Livraison ${ddmm(p.due_date)}` : ''}</span><b style="color:${p.slack.color}" class="t13">${p.slack.text}</b>${p.portal_state === 'open' ? pill('ok', 'Visible sur le portail client') : ''}${p.status === 'termine' ? pill('no', 'Terminé') : ''}</div></div>
-<div class="push line"><a class="btn alt" href="#photos">Ajouter une photo</a><a class="btn alt" href="/carnets/${p.id}/imprimer">Imprimer le carnet</a><a class="btn" href="/carnets/${p.id}">Ouvrir le carnet</a></div></div>
+<div class="push line"><a class="btn alt" href="#photos">Ajouter une photo</a><a class="btn alt" href="#dossier">Dossier de production</a><a class="btn" href="/carnets/${p.id}">Ouvrir le carnet</a></div></div>
 
 <section class="card mt20" aria-label="Avancement">
 <div class="frise-big">${p.frise.map((f) => h`<details class="fz ${f.state}"><summary><span class="fz-dot"></span><b>${f.phase}</b><span class="mut t12">${f.label}</span></summary>
@@ -454,48 +468,20 @@ ${issues.map((s) => {
 <form method="post" action="/projets/${p.id}/probleme/${s.id}" class="line mt12"><label class="sr" for="rep${s.id}">Réponse</label><input id="rep${s.id}" class="qin" name="reply" placeholder="Ta réponse, elle s’affiche sur l’iPad" value="${s.reply}"><button class="btn alt" name="act" value="reply">Répondre</button><button class="btn" name="act" value="close">Marquer traité</button></form></section>`;
   })}
 
-${chainCard(p)}
+<div class="suivi mt20" aria-label="À suivre">${tiles.map((t) => h`<a class="suivi-t${t.ko ? ' ko' : t.warn ? ' wa' : ''}" href="${t.href}" data-tab-link><span class="h3">${t.label}</span><b>${t.val}</b><span class="mut t12">${t.sub}</span></a>`)}</div>
 
-<section class="card mt20"><div class="line"><h2>Pièces et matière</h2>${pill('no', p.canal)}${model ? h`<a class="mut" href="/catalogue?m=${model.id}">modèle ${model.name}</a>` : ''}${p.for_whom ? h`<span class="mut">pour ${p.for_whom}</span>` : ''}
-<span class="push line">${units.some((u) => u.status === 'a_faire') || !units.length ? postBtn(`/projets/${p.id}/controle`, units.length > 1 ? 'Contrôler la pièce suivante' : 'Contrôle final', 'btn sm') : ''}<a class="btn alt sm" href="/carnets/${p.id}/imprimer">Imprimer le carnet</a></span></div>
-${units.length ? h`<div class="h3 mt12">Pièces · ${units.filter((u) => u.status !== 'a_faire').length} contrôlée(s) sur ${units.length}</div><div class="unitgrid">${units.map((u) => h`<a class="unit ${ustate[u.status]}" href="/unites/${u.id}"><b>${u.serial}</b>${ulabel[u.status]}</a>`)}</div>` : h`<p class="mut mt8">La pièce reçoit son numéro (${p.ref}) au contrôle final.</p>`}
-<div class="line" style="align-items:flex-start;gap:40px;margin-top:12px"><div style="flex:1 1 340px;min-width:0"><div class="h3">Bois réservé</div>${lots.map((l) => h`<div class="row"><b>${l.code}</b><span class="grow">${l.essence} ${l.thickness}</span><span>${String(l.volume).replace('.', ',')} m³</span></div>`)}${lots.length ? '' : h`<p class="mut">Aucun lot réservé. <a href="/bois">Réserver un lot</a></p>`}</div>
-<div style="flex:1 1 340px;min-width:0"><div class="h3">Achats liés</div>${pneeds.map((n) => h`<div class="row"><span class="grow">${n.text}</span>${pill(n.status === 'ordered' ? 'wa' : n.needs_deposit && !n.force ? 'ko' : 'no', n.status === 'ordered' ? 'Commandé' : n.needs_deposit && !n.force ? 'Attend l’acompte' : 'À commander')}</div>`)}${pneeds.length ? '' : h`<p class="mut">Rien à acheter.</p>`}</div></div>
-</section>
+<nav class="ptabs mt20" aria-label="Sections du projet" data-ptabs>
+<a href="#vue">Vue d’ensemble</a><a href="#dossier">Dossier de production${stDrafts ? h` <span class="dot"></span>` : ''}</a><a href="#achats">Achats et sous-traitance${sst.late.length || sst.toOrder || toBuy ? h` <span class="dot"></span>` : ''}</a><a href="#echanges">Client et documents</a></nav>
 
-<div class="cols mt20">
+<div class="ptab" id="vue"><div class="cols">
 <div class="main-col">
-<section class="card"><div class="line"><h2>Pièces du projet</h2></div>
-${pieces.map((x, i) => h`<details class="row${i ? '' : ' f'}"><summary class="line grow"><div class="grow"><b>${x.name}</b><span class="mut">${x.descr}</span></div>${x.status ? pill('no', x.status) : ''}${avatar(pm[x.who_id], 28)}</summary>
-<form method="post" action="/projets/${p.id}/pieces/${x.id}" class="form grid2 mt8"><label>Nom <input name="name" value="${x.name}"></label><label>Description <input name="descr" value="${x.descr}"></label>
-<label>État <input name="status" value="${x.status}" placeholder="ex. Finition 2/3"></label><label>Qui <select name="who_id"><option value="">—</option>${options(people.map((pp) => [pp.id, pp.name]), x.who_id)}</select></label>
-<div class="line"><button class="btn sm">Enregistrer</button><button class="btn alt sm" name="del" value="1">Retirer</button></div></form></details>`)}
-<details class="mt12"><summary class="btn alt sm">+ Pièce</summary><form method="post" action="/projets/${p.id}/pieces" class="form grid2 mt8"><label>Nom <input name="name" required></label><label>Description <input name="descr"></label><button class="btn sm">Ajouter</button></form></details>
-</section>
-
-<section class="card"><div class="line"><h2>Plans</h2></div>
-${plans.map((x, i) => h`<div class="row${i ? '' : ' f'}"><div class="grow"><b>${x.version}${x.descr ? ` · ${x.descr}` : ''}</b><span class="mut">${x.status === 'validee' ? `Validée${x.validated_at ? ` le ${ddmm(x.validated_at)}` : ''} · fait foi pour l'atelier` : x.status === 'archivee' ? `${ddmm(x.created_at)} · remplacée` : `${ddmm(x.created_at)} · à valider`}</span></div>
-${pill(x.status === 'validee' ? 'ok' : 'no', x.status === 'validee' ? 'Validée' : x.status === 'archivee' ? 'Archivée' : 'Brouillon')}
-${x.file ? h`<a class="btn alt sm" href="${fileUrl(x.file)}" target="_blank">Ouvrir</a>` : ''}
-${x.status === 'brouillon' ? postBtn(`/projets/${p.id}/plans/${x.id}/valider`, 'Valider', 'btn sm') : ''}</div>`)}
-<details class="mt12"><summary class="btn alt sm">+ Nouvelle version</summary>
-<form method="post" action="/projets/${p.id}/plans" enctype="multipart/form-data" class="form grid2 mt8"><label>Version <input name="version" value="V${plans.length + 1}" required></label><label>Ce qui change <input name="descr"></label><label>Fichier (PDF ou image) <input type="file" name="file" accept="application/pdf,image/*"></label><button class="btn sm">Ajouter</button></form></details>
-</section>
-
-<section class="card" id="photos"><h2>Journal de fabrication</h2><p class="mut">Tu choisis ce que le client voit sur son portail, et ce que tu peux publier.</p>
-<form method="post" action="/projets/${p.id}/photos" enctype="multipart/form-data" class="line mt12"><label class="sr" for="ph">Photo</label><input id="ph" type="file" name="photo" accept="image/*" required><input class="qin" name="title" placeholder="Légende"><button class="btn sm">Ajouter</button></form>
-<div class="photos mt12">${photos.map((x) => h`<figure class="ph">${isImage(x.file) ? h`<a href="${fileUrl(x.file)}" target="_blank"><img src="${fileUrl(x.file)}" alt="${x.title}" loading="lazy"></a>` : h`<a href="${fileUrl(x.file)}">Fichier</a>`}
-<figcaption><b>${x.title || 'Photo'}</b><span class="mut t12">${ddmm(x.created_at)} · ${pm[x.person_id]?.name || ''}</span>
-<form method="post" action="/projets/${p.id}/photos/${x.id}" class="ckrow"><label><input type="checkbox" name="shared_client" value="1" ${x.shared_client ? 'checked' : ''} data-auto> Partagée au client</label><label><input type="checkbox" name="publishable" value="1" ${x.publishable ? 'checked' : ''} data-auto> Publiable</label></form></figcaption></figure>`)}
-${photos.length ? '' : h`<p class="mut">Pas encore de photo. L’atelier en ajoute depuis l’iPad.</p>`}</div>
-</section>
+<section class="card"><h2>Prochaine action</h2><p class="t15 mt8"><b>${p.next}</b></p>
+<p class="mut t12">Tirée de la frise si le champ « Prochaine action » est vide.</p></section>
+<section class="card" id="historique"><h2>Historique</h2><p class="mut">Tout ce qui s’est passé sur ce dossier, daté.</p>
+<ol class="timeline mt8">${history.map((a) => h`<li><time datetime="${a.created_at}">${ddmm(a.created_at)} · ${hhmm(a.created_at)}</time><span>${a.text}${a.who ? h` <span class="mut">· ${a.who}</span>` : ''}</span></li>`)}</ol>
+${history.length ? '' : h`<p class="mut">Rien encore.</p>`}</section>
 </div>
-
 <aside class="side-col">
-<section class="card"><h2>Temps passé</h2><p class="mut">Déclaré en un tap quand une fiche est finie.</p>
-${time.map((t, i) => h`<div class="who${i ? '' : ' f'}"><span class="grow">${t.g}</span><b>${t.h ? hoursLabel(t.h) : 'en cours'}</b></div>`)}
-<div class="who"><b class="grow">Total à ce jour</b><b>${hoursLabel(total)}</b></div></section>
-
 <section class="card" id="acompte"><h2>Projet</h2>
 <form method="post" action="/projets/${p.id}/infos" class="form">
 <label>Nom <input name="name" value="${p.name}"></label>
@@ -509,7 +495,62 @@ ${p.client_id ? h`<label class="ck"><input type="checkbox" name="deposit_needed"
 <button class="btn sm">Enregistrer</button></form>
 <div class="line mt12">${p.status === 'en_cours' ? postBtn(`/projets/${p.id}/statut`, 'Marquer terminé', 'btn alt sm', { status: 'termine' }, 'Marquer ce projet comme terminé ?') : postBtn(`/projets/${p.id}/statut`, 'Reprendre', 'btn alt sm', { status: 'en_cours' })}</div>
 </section>
+<section class="card"><h2>Temps passé</h2><p class="mut">Déclaré en un tap quand une fiche est finie.</p>
+${time.map((t, i) => h`<div class="who${i ? '' : ' f'}"><span class="grow">${t.g}</span><b>${t.h ? hoursLabel(t.h) : 'en cours'}</b></div>`)}
+<div class="who"><b class="grow">Total à ce jour</b><b>${hoursLabel(total)}</b></div></section>
+</aside></div></div>
 
+<div class="ptab" id="dossier"><div class="cols">
+<div class="main-col">
+${chainCard(p)}
+${D.dossierSection(p, { dictee })}
+${require('./cnc').cncSection(p)}
+<section class="card" id="plans"><div class="line"><h2>Plans</h2></div>
+${plans.map((x, i) => h`<div class="row${i ? '' : ' f'}"><div class="grow"><b>${x.version}${x.descr ? ` · ${x.descr}` : ''}</b><span class="mut">${x.status === 'validee' ? `Validée${x.validated_at ? ` le ${ddmm(x.validated_at)}` : ''} · fait foi pour l'atelier` : x.status === 'archivee' ? `${ddmm(x.created_at)} · remplacée` : `${ddmm(x.created_at)} · à valider`}</span></div>
+${pill(x.status === 'validee' ? 'ok' : 'no', x.status === 'validee' ? 'Validée' : x.status === 'archivee' ? 'Archivée' : 'Brouillon')}
+${x.file ? h`<a class="btn alt sm" href="${fileUrl(x.file)}" target="_blank">Ouvrir</a>` : ''}
+${x.status === 'brouillon' ? postBtn(`/projets/${p.id}/plans/${x.id}/valider`, 'Valider', 'btn sm') : ''}</div>`)}
+<details class="mt12"${plans.length ? '' : ' open'}><summary class="btn alt sm">+ Nouvelle version</summary>
+<form method="post" action="/projets/${p.id}/plans" enctype="multipart/form-data" class="form grid2 mt8"><label>Version <input name="version" value="V${plans.length + 1}" required></label><label>Ce qui change <input name="descr"></label><label>Fichier (PDF ou image) <input type="file" name="file" accept="application/pdf,image/*"></label><button class="btn sm">Ajouter</button></form></details>
+</section>
+</div>
+<aside class="side-col">
+<section class="card"><div class="line"><h2>Éléments du projet</h2></div>
+${pieces.map((x, i) => h`<details class="row${i ? '' : ' f'}"><summary class="line grow"><div class="grow"><b>${x.name}</b><span class="mut">${x.descr}</span></div>${x.status ? pill('no', x.status) : ''}${avatar(pm[x.who_id], 28)}</summary>
+<form method="post" action="/projets/${p.id}/pieces/${x.id}" class="form mt8"><label>Nom <input name="name" value="${x.name}"></label><label>Description <input name="descr" value="${x.descr}"></label>
+<label>État <input name="status" value="${x.status}" placeholder="ex. Finition 2/3"></label><label>Qui <select name="who_id"><option value="">—</option>${options(people.map((pp) => [pp.id, pp.name]), x.who_id)}</select></label>
+<div class="line"><button class="btn sm">Enregistrer</button><button class="btn alt sm" name="del" value="1">Retirer</button></div></form></details>`)}
+${pieces.length ? '' : h`<p class="mut">Caisson, plateau, façades… remplis à la génération du carnet ou à la main.</p>`}
+<details class="mt12"><summary class="btn alt sm">+ Élément</summary><form method="post" action="/projets/${p.id}/pieces" class="form mt8"><label>Nom <input name="name" required></label><label>Description <input name="descr"></label><button class="btn sm">Ajouter</button></form></details>
+</section>
+<section class="card"><div class="line"><h2>Contrôle et numéros</h2>${pill('no', p.canal)}</div>
+${model ? h`<p class="mut"><a href="/catalogue?m=${model.id}">Modèle ${model.name}</a>${p.for_whom ? ` · pour ${p.for_whom}` : ''}</p>` : p.for_whom ? h`<p class="mut">Pour ${p.for_whom}</p>` : ''}
+${units.length ? h`<div class="h3 mt12">Pièces · ${units.filter((u) => u.status !== 'a_faire').length} contrôlée(s) sur ${units.length}</div><div class="unitgrid">${units.map((u) => h`<a class="unit ${ustate[u.status]}" href="/unites/${u.id}"><b>${u.serial}</b>${ulabel[u.status]}</a>`)}</div>` : h`<p class="mut mt8">La pièce reçoit son numéro (${p.ref}) au contrôle final.</p>`}
+${units.some((u) => u.status === 'a_faire') || !units.length ? h`<div class="mt12">${postBtn(`/projets/${p.id}/controle`, units.length > 1 ? 'Contrôler la pièce suivante' : 'Contrôle final', 'btn sm')}</div>` : ''}
+</section>
+<section class="card"><h2>Imprimer</h2><p class="mut">Pour l’établi ou le classeur du dossier.</p>
+<div class="stack mt12"><a class="btn alt sm" href="/projets/${p.id}/dossier/imprimer">Dossier de production complet</a><a class="btn alt sm" href="/carnets/${p.id}/imprimer">Carnet seul</a></div></section>
+</aside></div></div>
+
+<div class="ptab" id="achats"><div class="cols">
+<div class="main-col">${D.sstSection(p)}</div>
+<aside class="side-col">
+<section class="card"><div class="line"><h2>Achats liés</h2><a class="mut t13 push" href="/achats">Tous les achats</a></div>
+${pneeds.map((n, i) => h`<div class="row${i ? '' : ' f'}"><span class="grow">${n.text}</span>${pill(n.status === 'ordered' ? 'wa' : n.needs_deposit && !n.force ? 'ko' : 'no', n.status === 'ordered' ? 'Commandé' : n.needs_deposit && !n.force ? 'Attend l’acompte' : 'À commander')}</div>`)}${pneeds.length ? '' : h`<p class="mut">Rien à acheter.</p>`}</section>
+<section class="card"><h2>Bois réservé</h2>${lots.map((l, i) => h`<div class="row${i ? '' : ' f'}"><b>${l.code}</b><span class="grow">${l.essence} ${l.thickness}</span><span>${String(l.volume).replace('.', ',')} m³</span></div>`)}${lots.length ? '' : h`<p class="mut">Aucun lot réservé. <a href="/bois">Réserver un lot</a></p>`}</section>
+</aside></div></div>
+
+<div class="ptab" id="echanges"><div class="cols">
+<div class="main-col">
+<section class="card" id="photos"><h2>Journal de fabrication</h2><p class="mut">Tu choisis ce que le client voit sur son portail, et ce que tu peux publier.</p>
+<form method="post" action="/projets/${p.id}/photos" enctype="multipart/form-data" class="line mt12"><label class="sr" for="ph">Photo</label><input id="ph" type="file" name="photo" accept="image/*" required><input class="qin" name="title" placeholder="Légende"><button class="btn sm">Ajouter</button></form>
+<div class="photos mt12">${photos.map((x) => h`<figure class="ph">${isImage(x.file) ? h`<a href="${fileUrl(x.file)}" target="_blank"><img src="${fileUrl(x.file)}" alt="${x.title}" loading="lazy"></a>` : h`<a href="${fileUrl(x.file)}">Fichier</a>`}
+<figcaption><b>${x.title || 'Photo'}</b><span class="mut t12">${ddmm(x.created_at)} · ${pm[x.person_id]?.name || ''}</span>
+<form method="post" action="/projets/${p.id}/photos/${x.id}" class="ckrow"><label><input type="checkbox" name="shared_client" value="1" ${x.shared_client ? 'checked' : ''} data-auto> Partagée au client</label><label><input type="checkbox" name="publishable" value="1" ${x.publishable ? 'checked' : ''} data-auto> Publiable</label></form></figcaption></figure>`)}
+${photos.length ? '' : h`<p class="mut">Pas encore de photo. L’atelier en ajoute depuis l’iPad.</p>`}</div>
+</section>
+</div>
+<aside class="side-col">
 ${p.client_id ? h`<section class="card"><div class="line"><h2>Portail client</h2>${pill(p.portal_state === 'open' ? 'ok' : 'no', p.portal_state === 'open' ? 'Ouvert' : p.portal_state === 'cut' ? 'Accès coupé' : 'Pas ouvert')}</div>
 <p class="mut">Ce que ${p.client.name} voit dans son espace. Tout part tout seul, sauf la date de pose.</p>
 <div class="who f"><span class="grow">Devis</span><b>${quote ? `Accepté le ${ddmm(quote.accepted_at)}` : '—'}</b></div>
@@ -527,17 +568,12 @@ ${p.portal_state !== 'open' ? postBtn(`/portails/espace/${p.id}/ouvrir`, 'Ouvrir
 <label>Client existant <select name="client_id"><option value="">—</option>${options(q.all('SELECT id, name FROM clients ORDER BY name').map((c) => [c.id, c.name]))}</select></label>
 <label>Ou nouveau client : nom <input name="client_name"></label><label>Son e-mail <input type="email" name="client_email"></label><label>Téléphone <input name="client_phone"></label>
 <button class="btn sm">Rattacher le client</button></form></section>`}
-
-<section class="card" id="historique"><h2>Historique</h2><p class="mut">Tout ce qui s’est passé sur ce dossier, daté.</p>
-<ol class="timeline mt8">${history.map((a) => h`<li><time datetime="${a.created_at}">${ddmm(a.created_at)} · ${hhmm(a.created_at)}</time><span>${a.text}${a.who ? h` <span class="mut">· ${a.who}</span>` : ''}</span></li>`)}</ol>
-${history.length ? '' : h`<p class="mut">Rien encore.</p>`}</section>
-
 <section class="card"><h2>Documents</h2><p class="mut">Devis accepté, PV, facture… Cochés « client », ils s’affichent dans son espace.</p>
 ${docs.map((d) => h`<div class="row"><a class="grow" href="${fileUrl(d.file)}" target="_blank">${d.title}</a>
 <form method="post" action="/projets/${p.id}/documents/${d.id}" class="ckrow"><label><input type="checkbox" name="visible_client" value="1" ${d.visible_client ? 'checked' : ''} data-auto> Client</label></form></div>`)}
 <form method="post" action="/projets/${p.id}/documents" enctype="multipart/form-data" class="form mt12"><label>Titre <input name="title" required placeholder="ex. Facture de solde"></label><input type="file" name="file" required accept="application/pdf,image/*"><label class="ck"><input type="checkbox" name="visible_client" value="1"> Visible par le client</label><button class="btn alt sm">Ajouter</button></form>
 </section>
-</aside></div>`;
+</aside></div></div>`;
   res.send(layout({ title: p.name, tab: 'projets', sub: '/projets', body, flash: req.flash }));
 });
 
