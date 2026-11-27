@@ -22,7 +22,9 @@ function cap(word) {
 function tidy(s) {
   const t = String(s || '').trim().replace(/\s+/g, ' ');
   // On ne touche à la casse que si tout est en majuscules ou en minuscules.
-  return t === t.toUpperCase() || t === t.toLowerCase() ? t.split(' ').map((w, i) => (i && PARTICLES.has(w.toLowerCase()) ? w.toLowerCase() : cap(w))).join(' ') : t;
+  const c = t === t.toUpperCase() || t === t.toLowerCase() ? t.split(' ').map((w, i) => (i && PARTICLES.has(w.toLowerCase()) ? w.toLowerCase() : cap(w))).join(' ') : t;
+  // Prénom connu écrit sans accent (« Stephanie ») : on remet ses accents.
+  return c.split(' ').map((w) => (/[\u0300-\u036f]/.test(w.normalize('NFD')) ? w : ACCENTS[plain(w)] || w)).join(' ');
 }
 
 // Devine prénom / nom à partir d'un nom complet.
@@ -58,4 +60,6 @@ function emailHello(client, fallbackName = '') {
   return id.full ? `Bonjour ${[id.first, id.last].filter(Boolean).join(' ')},` : 'Bonjour,';
 }
 
-module.exports = { identity, salutation, emailHello, split, tidy, known };
+// Même personne, quelle que soit la casse ou les accents.
+const same = (a, b) => plain(tidy(a)).split(' ').sort().join(' ') === plain(tidy(b)).split(' ').sort().join(' ');
+module.exports = { same, identity, salutation, emailHello, split, tidy, known };

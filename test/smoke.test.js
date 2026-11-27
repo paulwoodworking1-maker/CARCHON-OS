@@ -635,3 +635,16 @@ test('portail : « Bonjour / Bonsoir Mme Nom Prénom », référence en tête, e
   assert.doesNotMatch(html, /class="cl-meta">STEPHANIE/);
   assert.match(html, /contact@carchon\.com/);
 });
+
+test('portail : nom sans accent ou en majuscules reconnu, feuille de style versionnée', async () => {
+  const C = require('../src/civilite');
+  assert.strictEqual(C.identity({ name: 'Stephanie Schifano' }).formal, 'Mme Schifano Stéphanie');
+  assert.ok(C.same('STEPHANIE SCHIFANO', 'Stephanie Schifano'));
+  const { q } = require('../src/db'); const { sha256 } = require('../src/auth');
+  const cid = Number(q.run("INSERT INTO clients (name) VALUES ('Stephanie Schifano')").lastInsertRowid);
+  q.run("INSERT INTO projects (name, client_id, portal_state, portal_token_hash) VALUES ('STEPHANIE SCHIFANO', ?, 'open', ?)", cid, sha256('espace-schifano-2'));
+  const html = await (await fetch(`${base}/p/espace/espace-schifano-2`)).text();
+  assert.match(html, /Mme Schifano Stéphanie<\/h1>/);
+  assert.doesNotMatch(html, /cl-meta/);
+  assert.match(html, /\/static\/style\.css\?v=\w+/);
+});

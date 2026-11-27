@@ -209,15 +209,18 @@ const INLINE = {
 };
 const inlineHashes = () => Object.values(INLINE).map((js) => `'sha256-${require('node:crypto').createHash('sha256').update(js).digest('base64')}'`);
 
+// Version des fichiers statiques : change à chaque mise en ligne, pour que les téléphones ne gardent pas l'ancienne mise en page.
+const ASSET_V = (() => { try { const fs = require('node:fs'), p = require('node:path'); const d = p.join(__dirname, '..', 'public');
+  return ['style.css', 'app.js'].map((f) => Math.round(fs.statSync(p.join(d, f)).mtimeMs).toString(36)).join(''); } catch { return Date.now().toString(36); } })();
 function page(title, body, { bodyClass = '', head = '' } = {}) {
   return h`<!doctype html>
 <html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${title} · Carchon OS</title>
 <link rel="icon" href="/static/logo.png">
 <link rel="preconnect" href="https://fonts.googleapis.com"><link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/static/style.css">${head}
+<link rel="stylesheet" href="/static/style.css?v=${ASSET_V}">${head}
 <script>${raw(INLINE.theme)}</script>
-</head><body class="${bodyClass}">${body}<script src="/static/app.js" defer></script></body></html>`.toString();
+</head><body class="${bodyClass}">${body}<script src="/static/app.js?v=${ASSET_V}" defer></script></body></html>`.toString();
 }
 
 module.exports = {

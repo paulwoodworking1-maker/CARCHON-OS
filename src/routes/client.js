@@ -31,7 +31,7 @@ ${inner}
 const C = require('../civilite');
 const greeting = (client, fallbackName) => { const id = C.identity(client, fallbackName); return M.t('portail_titre', { salutation: C.salutation(), civilite: id.civ, nom: id.last, prenom: id.first }); };
 // Le nom du projet n'est rappelé que s'il dit autre chose que le nom du client.
-const sameAsClient = (projName, client, fallbackName) => { const a = C.split(projName || ''); const b = C.identity(client, fallbackName); return !projName || (C.tidy(a.first) === b.first && C.tidy(a.last) === b.last) || C.tidy(projName) === C.tidy(client?.name || fallbackName || ''); };
+const sameAsClient = (projName, client, fallbackName) => !projName || C.same(projName, client?.name || fallbackName || '') || C.same(projName, C.identity(client, fallbackName).full);
 
 // ---------- Devis à accepter ----------
 function findQuote(req) {
