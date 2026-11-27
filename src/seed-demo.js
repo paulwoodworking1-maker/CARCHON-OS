@@ -56,6 +56,15 @@ tx(() => {
   const ff = q.run("INSERT INTO suppliers (name, contact, email, habit, note) VALUES ('Fournisseur finition', '[nom]', 'finition@example.com', 'commande habituelle par mail · livré en 2 jours', 'Grouper avec les abrasifs pour le franco de port.')").lastInsertRowid;
   const sc = q.run("INSERT INTO suppliers (name, contact, phone, habit, note) VALUES ('Scierie', '[nom]', '0600000000', 'devis bois sur demande · délai 1 à 2 semaines', 'Demander des plateaux du même lot pour les pièces visibles.')").lastInsertRowid;
   q.run("INSERT INTO suppliers (name, contact, phone, note) VALUES ('Quincaillerie', '[comptoir]', '0600000001', 'Au comptoir, c’est plus rapide quand c’est urgent.')");
+  const lq = q.run("INSERT INTO suppliers (name, contact, email, habit, subcontractor) VALUES ('Laquage', '[nom]', 'laquage@example.com', 'laquage et vernis industriel · délai 8 à 10 jours', 1)").lastInsertRowid;
+  q.run("INSERT INTO subcontracts (project_id, supplier_id, what, pieces, qty, spec, price, status, ordered_at, sent_at, due_at) VALUES (?, ?, 'Laquage des façades', '4 façades de tiroir', '4 pièces', 'Blanc mat, 2 faces, chants compris', 280, 'envoye', date('now', '-9 days'), date('now', '-6 days'), date('now', '-1 days'))", p1, lq);
+  q.run("INSERT INTO carnet_runs (project_id, plans, dictation, questions, debit, n) VALUES (?, 'V2', 'Plateau en noyer, Nina débite. Façades au laquage.', '[\"Épaisseur du plateau non cotée\"]', '[{\"piece\":\"Plateau\",\"quantite\":\"1\",\"longueur\":\"1800\",\"largeur\":\"950\",\"epaisseur\":\"\",\"matiere\":\"Noyer\",\"remarque\":\"\"}]', 6)", p1);
+  q.run("INSERT INTO cnc_jobs (project_id, name, material, thickness, parts, source) VALUES (?, 'Mélaminé 19 mm', 'Mélaminé', 19, ?, 'démo')", p2, JSON.stringify([
+    { name: 'Joue', l: 2100, w: 560, qty: 2, grain: false, ops_text: 'trou x=37 y=37 d=5 p=13\ntrou x=37 y=69 d=5 p=13\nrainure x1=0 y1=10 x2=2100 y2=10 l=8 p=8' },
+    { name: 'Tablette', l: 762, w: 540, qty: 5, grain: false, ops_text: '' },
+    { name: 'Fond', l: 2090, w: 780, qty: 1, grain: false, ops_text: 'poche x=200 y=200 lo=120 la=60 p=6\ntrou x=1045 y=390 d=12 p=T' },
+    { name: 'Taquet', l: 60, w: 40, qty: 4, grain: false, ops_text: '' },
+  ]));
   q.run('UPDATE stock_items SET supplier_id = ? WHERE category = ?', ff, 'Droguerie');
   const vernis = q.get("SELECT id FROM stock_items WHERE name = 'Vernis mat'").id;
   q.run('UPDATE stock_items SET state = 2 WHERE id = ?', vernis);

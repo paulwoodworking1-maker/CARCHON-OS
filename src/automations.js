@@ -27,11 +27,24 @@ const nextWorkday = (d) => { let x = d; while (!isWorkday(x)) x = addDays(x, 1);
 // projet, puis ordre du carnet), posées jour après jour selon ses heures par jour, en sautant les
 // week-ends, ses absences et les jours déjà pris par une barre posée à la main.
 // Renvoie aussi les heures posées par jour : c'est la base de la page « Charge ».
-function allocate(person, { includeUnsent = false, avg = averages() } = {}) {
+// Une fiche de fabrication (débit et suite) ne commence pas avant que toute la matière soit là.
+const NEEDS_MATERIAL = (phase) => !['Conception', 'Accord'].includes(phase || '');
+function readyDates() {
+  const chain = require('./chain');
+  const out = {};
+  for (const r of q.all("SELECT DISTINCT project_id FROM needs WHERE for_chain = 1 AND project_id IS NOT NULL")) {
+    const m = chain.material(r.project_id);
+    if (m.date) out[r.project_id] = m.date;
+  }
+  return out;
+}
+
+function allocate(person, { includeUnsent = false, avg = averages(), ready = readyDates() } = {}) {
   const start = nextWorkday(today());
   const perDay = Math.max(1, (person.hours_week || 35) / 5);
+  // Fiches envoyées à l'atelier, et carnets générés depuis le devis (prévisionnels tant qu'ils ne sont pas envoyés).
   const steps = q.all(`SELECT steps.*, projects.name pname, projects.ref pref FROM steps JOIN projects ON projects.id = steps.project_id
-    WHERE ${includeUnsent ? '' : 'steps.sent = 1 AND '}steps.who_id = ? AND steps.status != 'done' AND projects.status = 'en_cours'
+    WHERE ${includeUnsent ? '' : "(steps.sent = 1 OR projects.prod_status = 'pret') AND "}steps.who_id = ? AND steps.status != 'done' AND projects.status = 'en_cours'
     ORDER BY steps.status = 'doing' DESC, projects.due_date IS NULL, projects.due_date, steps.ord`, person.id);
   const busy = new Set();
   for (const b of q.all("SELECT start_date, end_date FROM bars WHERE person_id = ? AND auto = 0 AND kind != 'free' AND kind != 'work' AND end_date >= ?", person.id, start)) {
@@ -45,19 +58,29 @@ function allocate(person, { includeUnsent = false, avg = averages() } = {}) {
   const advance = () => { day = addDays(day, 1); used = 0; while (!isWorkday(day) || busy.has(day)) day = addDays(day, 1); };
   if (busy.has(day)) advance();
   const runs = [];
-  for (const s of steps) {
-    let left = stepHours(s, avg);
+  // Ordre du carnet respecté dans chaque projet ; une fiche qui attend sa matière laisse passer les autres projets.
+  const queue = steps.map((s) => ({ s, left: stepHours(s, avg), nb: s.status !== 'doing' && NEEDS_MATERIAL(s.phase) && ready[s.project_id] ? ready[s.project_id] : null }));
+  const blockedProject = (item) => queue.some((o) => o !== item && o.s.project_id === item.s.project_id && o.s.ord < item.s.ord && o.left > 0);
+  let cur = null;
+  while (queue.some((x) => x.left > 0) && guard++ < 8000) {
     if (used >= perDay) advance();
-    const from = day;
-    while (left > 0 && guard++ < 4000) {
-      const take = Math.min(perDay - used, left);
-      (days[day] = days[day] || []).push({ step: s, hours: take });
-      used += take; left -= take;
-      if (left > 0) advance();
+    if (!cur || cur.left <= 0) {
+      cur = queue.find((x) => x.left > 0 && (!x.nb || x.nb <= day) && !blockedProject(x)) || null;
+      if (!cur) {
+        // Tout attend la matière : on saute directement au premier jour où quelque chose peut commencer.
+        const waiting = queue.filter((x) => x.left > 0 && x.nb && !blockedProject(x)).map((x) => x.nb).sort()[0];
+        if (!waiting) break;
+        while (day < waiting) advance();
+        continue;
+      }
+      const last = runs[runs.length - 1];
+      if (last && last.project_id === cur.s.project_id && last.end === day) { last.titles.push(cur.s.title); last.sent = last.sent && !!cur.s.sent; }
+      else runs.push({ project_id: cur.s.project_id, pname: cur.s.pname, start: day, end: day, titles: [cur.s.title], sent: !!cur.s.sent });
     }
-    const last = runs[runs.length - 1];
-    if (last && last.project_id === s.project_id) { last.end = day; last.titles.push(s.title); last.sent = last.sent && !!s.sent; }
-    else runs.push({ project_id: s.project_id, pname: s.pname, start: from, end: day, titles: [s.title], sent: !!s.sent });
+    const take = Math.min(perDay - used, cur.left);
+    (days[day] = days[day] || []).push({ step: cur.s, hours: take });
+    used += take; cur.left -= take;
+    runs[runs.length - 1].end = day;
   }
   return { days, runs, busy };
 }
@@ -65,14 +88,15 @@ function allocate(person, { includeUnsent = false, avg = averages() } = {}) {
 function autoPlan() {
   if (!on('auto_plan')) return { skipped: true };
   const avg = averages();
+  const ready = readyDates();
   const people = q.all('SELECT * FROM people WHERE active = 1');
   const created = [];
   tx(() => {
     q.run('DELETE FROM bars WHERE auto = 1');
     for (const p of people) {
-      for (const r of allocate(p, { avg }).runs) {
+      for (const r of allocate(p, { avg, ready }).runs) {
         q.run("INSERT INTO bars (person_id, lane, project_id, label, detail, kind, start_date, end_date, auto) VALUES (?, 'person', ?, ?, ?, 'work', ?, ?, 1)",
-          p.id, r.project_id, r.pname, r.titles.join(' · '), r.start, r.end);
+          p.id, r.project_id, r.pname, `${r.sent ? '' : 'Prévisionnel · '}${r.titles.join(' · ')}`, r.start, r.end);
         created.push(r);
       }
     }
@@ -186,4 +210,4 @@ function start() {
 // Après un changement (carnet envoyé, fiche finie…) : on replanifie tout de suite.
 function changed() { try { autoPlan(); } catch (e) { console.error('[planning auto]', e); } }
 
-module.exports = { allocate, isWorkday, averages, stepHours, autoPlan, projectedEnds, alerts, digestText, sendDigest, poseReminders, tick, start, changed, mailto };
+module.exports = { readyDates, allocate, isWorkday, averages, stepHours, autoPlan, projectedEnds, alerts, digestText, sendDigest, poseReminders, tick, start, changed, mailto };
