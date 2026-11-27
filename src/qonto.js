@@ -23,8 +23,8 @@ const opts = () => ({
   vat: Number(String(setting('deposit_vat', '20')).replace(',', '.')),
   dueDays: Number(setting('deposit_due_days', '7')) || 7,
   iban: setting('qonto_iban', '') || process.env.QONTO_IBAN || '',
-  title: setting('deposit_mail_title', '') || 'Votre facture d’acompte · {projet}',
-  body: setting('deposit_mail_body', '') || 'Bonjour {prenom},\n\nMerci pour votre confiance. Vous trouverez ci-jointe la facture d’acompte de {pourcent} % pour « {projet} » (devis n° {devis}), soit {montant} TTC, à régler avant le {echeance}.\n\nDès réception, nous réservons le bois et planifions la fabrication.\n\nBien cordialement,\n{entreprise}',
+  title: require('./messages').raw('mail_facture_objet'),
+  body: require('./messages').raw('mail_facture_texte'),
 });
 
 class QontoError extends Error {}
@@ -48,7 +48,7 @@ async function api(method, path, body) {
 
 const money = (x) => (Math.round(x * 100) / 100).toFixed(2);
 const eur = (x) => `${(Math.round(x * 100) / 100).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €`;
-const fill = (tpl, v) => String(tpl).replace(/\{(\w+)\}/g, (m, k) => (v[k] ?? m));
+const fill = (tpl, v) => require('./messages').fill(tpl, v);
 
 async function iban() {
   const o = opts();

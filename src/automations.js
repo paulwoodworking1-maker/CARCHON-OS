@@ -4,6 +4,7 @@
 const { q, tx, setting, setSetting } = require('./db');
 const { today, addDays, parseDate, ddmm, longDate } = require('./html');
 const mail = require('./mail');
+const M = require('./messages');
 
 const HOURS_PER_DAY = 7;
 const DEFAULT_HOURS = 4;
@@ -124,7 +125,7 @@ function alerts() {
   // Devis sans réponse qui expire bientôt.
   for (const x of q.all("SELECT * FROM quotes WHERE status = 'sent' AND valid_until BETWEEN ? AND ?", t, addDays(t, 3))) {
     out.push({ kind: 'wa', tag: 'Devis', title: `${x.signer_name} · ${x.number} sans réponse`, text: `Le lien expire le ${ddmm(x.valid_until)}.`, href: '/portails', cta: 'Voir',
-      href2: mailto(x.signer_email, `Votre devis ${x.number}`, `Bonjour,\n\nJe me permets de revenir vers vous au sujet du devis ${x.number}, dont le lien de validation expire le ${ddmm(x.valid_until)}. Avez-vous des questions ou souhaitez-vous des ajustements ?\n\nBien cordialement,\nCarchon Les Ateliers`), cta2: 'Relancer par e-mail' });
+      href2: mailto(x.signer_email, M.t('mail_rappel_devis_objet', { numero: x.number }), M.t('mail_rappel_devis_texte', { numero: x.number, date_limite: ddmm(x.valid_until) })), cta2: 'Relancer par e-mail' });
   }
   // Commande fournisseur en retard.
   for (const o of q.all('SELECT orders.*, suppliers.name sname, suppliers.email semail, suppliers.phone sphone FROM orders LEFT JOIN suppliers ON suppliers.id = orders.supplier_id WHERE arrived_at IS NULL AND expected_at < ?', t)) {
@@ -139,7 +140,7 @@ function alerts() {
   // Acompte qui traîne : relance prête à envoyer.
   for (const p of q.all("SELECT projects.*, clients.email cemail, clients.name cname FROM projects JOIN clients ON clients.id = projects.client_id WHERE projects.status = 'en_cours' AND deposit_needed = 1 AND deposit_at IS NULL AND COALESCE(deposit_asked_at, projects.created_at) <= datetime('now', '-7 days')")) {
     if (p.cemail) out.push({ kind: 'ko', tag: 'Relance', title: `${p.cname} · acompte attendu depuis plus d'une semaine`, text: p.name, href: `/projets/${p.id}#acompte`, cta: 'Ouvrir', act: `/projets/${p.id}/acompte`, actLabel: 'Reçu aujourd’hui',
-      href2: mailto(p.cemail, `Acompte · ${p.name}`, `Bonjour,\n\nPour lancer la fabrication de votre projet « ${p.name} », nous attendons le règlement de l'acompte prévu au devis.\nSi c'est déjà fait, merci de ne pas tenir compte de ce message.\n\nBien cordialement,\nCarchon Les Ateliers`), cta2: 'Relancer par e-mail' });
+      href2: mailto(p.cemail, M.t('mail_rappel_acompte_objet', { projet: p.name }), M.t('mail_rappel_acompte_texte', { projet: p.name })), cta2: 'Relancer par e-mail' });
   }
   // Stock fini sous le seuil boutique (pièces libres + en fabrication).
   for (const m of q.all(`SELECT models.*, (SELECT COUNT(*) FROM units WHERE model_id = models.id AND status = 'en_stock' AND reserved_for = '') free,
@@ -188,7 +189,8 @@ async function poseReminders() {
     JOIN clients ON clients.id = projects.client_id WHERE trips.date = ? AND trips.reminder_sent_at IS NULL AND trips.done_at IS NULL`, addDays(today(), 2));
   for (const r of rows) {
     if (!r.cemail) continue;
-    await mail.send({ to: r.cemail, subject: `Votre livraison du ${longDate(r.date)}`, text: `Bonjour,\n\nNous vous rappelons notre venue le ${longDate(r.date)} pour : ${r.what || 'la livraison de votre projet'} (« ${r.pname} »).\nMerci de prévoir un accès dégagé. En cas d'empêchement, répondez simplement à ce message.\n\nÀ bientôt,\nL'équipe Carchon` });
+    { const v = { bonjour: r.cname ? `Bonjour ${r.cname},` : 'Bonjour,', date: longDate(r.date), quoi: r.what || 'la livraison de votre projet', projet: r.pname };
+      await mail.send({ to: r.cemail, subject: M.t('mail_pose_objet', v), text: M.t('mail_pose_texte', v) }); }
     q.run("UPDATE trips SET reminder_sent_at = datetime('now') WHERE id = ?", r.id);
     n++;
   }

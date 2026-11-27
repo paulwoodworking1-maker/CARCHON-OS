@@ -690,7 +690,7 @@ r.get('/projets/:id/nouvelles', loadProject, async (req, res, next) => {
     nPhotos && p.portal_state === 'open' ? `${nPhotos} photo${nPhotos > 1 ? 's' : ''} de l'atelier dans votre espace en ligne` : null,
   ].filter(Boolean);
   let subject = `Des nouvelles de votre projet · ${p.name}`;
-  let text = `Bonjour,\n\nVoici où en est votre projet « ${p.name} » :\n${facts.map((f) => `- ${f}`).join('\n')}\n\nN'hésitez pas à nous écrire si vous avez une question.\n\nBien cordialement,\nL'équipe Carchon`;
+  let text = require('../messages').t('mail_nouvelles_texte', { projet: p.name, faits: facts.map((f) => `- ${f}`).join('\n') });
   let note = ai.enabled() ? '' : 'Modèle simple : active l’assistant IA (Pilotage › Automatisations) pour un message rédigé.';
   if (ai.enabled() && req.query.modele !== '1') {
     try { const m = await ai.clientUpdate({ project: p, clientName: p.client.name, facts }); subject = m.objet; text = m.message; note = 'Rédigé par l’assistant à partir de l’avancement réel. Relis avant d’envoyer.'; }

@@ -117,7 +117,7 @@ const icon = (k, size = 18) => raw(`<svg width="${size}" height="${size}" viewBo
 // Colonne de navigation : [groupe, [[clé, libellé, lien, icône, chemins qui l'activent]]]
 const SIDE = [
   ['', [['dash', 'Tableau de bord', '/', 'dash', ['/']], ['decider', 'À décider', '/decider', 'check', ['/decider']], ['assistant', 'Assistant', '/assistant', 'spark', ['/assistant']]]],
-  ['Fabriquer', [['of', 'Fabrication', '/projets', 'of', ['/projets', '/carnets']], ['catalogue', 'Catalogue', '/catalogue', 'book', ['/catalogue']], ['portails', 'Portails clients', '/portails', 'globe', ['/portails']]]],
+  ['Fabriquer', [['of', 'Fabrication', '/projets', 'of', ['/projets', '/carnets']], ['catalogue', 'Catalogue', '/catalogue', 'book', ['/catalogue']], ['portails', 'Portails clients', '/portails', 'globe', ['/portails', '/messages']]]],
   ['Planifier', [['charge', 'Charge', '/charge', 'load', ['/charge']], ['planning', 'Planning', '/planning', 'cal', ['/planning']], ['poses', 'Livraisons et poses', '/poses', 'truck', ['/poses']]]],
   ['Approvisionner', [['stock', 'Matière et stock', '/stock', 'box', ['/stock', '/bois', '/pieces']], ['achats', 'Achats', '/achats', 'cart', ['/achats', '/commandes', '/fournisseurs']]]],
   ['Livrer et garantir', [['exp', 'Expéditions', '/expeditions', 'send', ['/expeditions']], ['sav', 'Qualité et SAV', '/sav', 'shield', ['/sav', '/unites']]]],
@@ -131,7 +131,7 @@ const SUBNAV = {
   pilotage: [['/pilotage', 'Heures et chiffrage'], ['/pilotage/couts', 'Coût par OF']],
   reglages: [['/equipe', 'Équipe'], ['/entreprise', 'Entreprise']],
   sav: [['/sav', 'Demandes SAV'], ['/unites', 'Registre des pièces']],
-  portails: [['/portails', 'Suivi des portails'], ['/portails/envoyer', 'Envoyer un devis'], ['/portails/reglages', 'Réglages et e-mails']],
+  portails: [['/portails', 'Suivi des portails'], ['/portails/envoyer', 'Envoyer un devis'], ['/messages', 'Messages aux clients'], ['/portails/reglages', 'Réglages et e-mails']],
 };
 
 // Compteurs de la colonne (calculés à chaque page, requêtes légères).

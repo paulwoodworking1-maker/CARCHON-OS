@@ -27,7 +27,7 @@ test('sans connexion, on est renvoyé vers la connexion', async () => {
 });
 
 const pages = ['/', '/projets', '/projets?vue=termines', '/projets/1', '/projets/nouveau', '/carnets', '/carnets/1', '/stock', '/achats', '/commandes',
-  '/fournisseurs', '/planning', '/planning?semaines=4', '/poses', '/poses/1/pv', '/pilotage', '/pilotage/export.csv', '/equipe', '/portails', '/portails?nouveau=1', '/recherche?q=chêne', '/automatisations', '/automatisations/resume', '/projets/1/nouvelles', '/entreprise', '/carnets/1/imprimer', '/poses/1/pv/imprimer', '/commandes/1/bon', '/catalogue', '/catalogue?m=1&qty=12', '/machines', '/machines?m=2', '/charge', '/charge?p=2&w=1', '/bois', '/pieces', '/expeditions', '/expeditions/1/bon', '/sav', '/sav?nouveau=1', '/unites', '/unites/1', '/unites/6', '/pilotage/couts', '/projets/4', '/assistant', '/decider', '/decider?tag=Achat', '/projets?f=retard', '/projets?vue=frise', '/projets?resp=1&canal=Boutique', '/projets?f=acompte', '/portails/envoyer', '/portails/reglages', '/portails/parcours?p=1', '/portails?f=espaces', '/portails?f=signes', '/portails/envoyer?depuis=1', '/analyse', '/analyse?periode=90', '/analyse?periode=0'];
+  '/fournisseurs', '/planning', '/planning?semaines=4', '/poses', '/poses/1/pv', '/pilotage', '/pilotage/export.csv', '/equipe', '/portails', '/portails?nouveau=1', '/recherche?q=chêne', '/automatisations', '/automatisations/resume', '/projets/1/nouvelles', '/entreprise', '/carnets/1/imprimer', '/poses/1/pv/imprimer', '/commandes/1/bon', '/catalogue', '/catalogue?m=1&qty=12', '/machines', '/machines?m=2', '/charge', '/charge?p=2&w=1', '/bois', '/pieces', '/expeditions', '/expeditions/1/bon', '/sav', '/sav?nouveau=1', '/unites', '/unites/1', '/unites/6', '/pilotage/couts', '/projets/4', '/assistant', '/decider', '/decider?tag=Achat', '/projets?f=retard', '/projets?vue=frise', '/projets?resp=1&canal=Boutique', '/projets?f=acompte', '/portails/envoyer', '/portails/reglages', '/portails/parcours?p=1', '/portails?f=espaces', '/portails?f=signes', '/portails/envoyer?depuis=1', '/analyse', '/messages', '/analyse?periode=90', '/analyse?periode=0'];
 for (const p of pages) {
   test(`GET ${p}`, async () => {
     const res = await fetch(base + p, { headers: { cookie } });
@@ -436,4 +436,22 @@ test('forfait Claude : dossier .zip à déposer dans claude.ai, réponse recoll�
   assert.match(q.get('SELECT note FROM steps WHERE project_id = ?', pid).note, /Dégauchisseuse/);
   assert.throws(() => C.importAnswer(pid, 'pas de json ici'), /JSON/);
   assert.throws(() => C.importAnswer(pid, '{"analyse": "x"}'), /format attendu/);
+});
+
+test('messages aux clients : texte modifié, encadré masqué si vidé, texte d’origine remis', async () => {
+  const M = require('../src/messages');
+  const post = (body) => fetch(base + '/messages', { method: 'POST', redirect: 'manual', headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams(body).toString() });
+  assert.strictEqual(M.t('next_preparation_titre'), '');
+  assert.strictEqual(M.fill('Régler[ : {montant} TTC]', { montant: '' }), 'Régler');
+  assert.strictEqual(M.fill('Régler[ : {montant} TTC]', { montant: '10 €' }), 'Régler : 10 € TTC');
+  assert.strictEqual((await post({ m_portail_question: 'Appelez Paul.' })).status, 302);
+  assert.strictEqual(M.t('portail_question'), 'Appelez Paul.');
+  await post({ reset: 'portail_question' });
+  assert.match(M.t('portail_question'), /dernier e-mail/);
+  // SMS : même réglage que Portails › Réglages.
+  await post({ m_sms_acompte: 'Acompte reçu, merci ! {lien}' });
+  assert.strictEqual(require('../src/sms').template('acompte'), 'Acompte reçu, merci ! {lien}');
+  const E = require('../src/emails').quote({ name: 'Jeanne', number: 'D-1', project: '', url: 'https://x', until: '2026-12-24' });
+  assert.match(E.subject, /^Votre devis n° D-1 · /);
+  assert.doesNotMatch(E.body, /\{|\[/);
 });

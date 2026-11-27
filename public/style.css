@@ -786,3 +786,11 @@ body.client .cl-foot{padding:16px 20px}
 .v3d-bar{position:absolute;left:10px;right:10px;bottom:10px;display:flex;gap:6px;align-items:center;flex-wrap:wrap;pointer-events:none}
 .v3d-bar .chip{pointer-events:auto;min-height:30px;background:#fff}
 .v3d-info{margin-left:auto;background:rgba(255,255,255,.9);padding:4px 8px}
+
+/* Messages aux clients */
+.msg-item{display:grid;gap:6px;padding:14px 0;border-top:1px solid var(--line2)}
+.msg-item:first-child{border-top:0}
+.msg-item textarea{font-size:14px;line-height:1.5}
+.msg-prev summary{cursor:pointer}
+.msg-prev .pre{white-space:pre-wrap;background:var(--gris);padding:10px 12px;margin-top:6px}
+.linkish{background:none;border:0;padding:0;cursor:pointer;text-decoration:underline;color:var(--mut);font:inherit}
