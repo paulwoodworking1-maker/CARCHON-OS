@@ -6,7 +6,7 @@ const { setting, setSetting, company } = require('./db');
 
 const G = {
   next: 'Portail · encadré « Prochaine étape »',
-  steps: 'Portail · étapes du projet',
+  steps: 'Étapes du projet (portail et fiche projet)',
   portal: 'Portail · autres textes',
   auto: 'E-mails envoyés automatiquement',
   prep: 'E-mails préparés (tu les relis avant d’envoyer)',
@@ -36,13 +36,15 @@ const CATALOG = [
   ['next_recu_titre', G.next, 'Réponse reçue, sans projet ouvert (titre)', 'Nous revenons vers vous', { title: true }],
   ['next_recu_texte', G.next, 'Réponse reçue, sans projet ouvert', 'L’atelier a bien reçu votre réponse.', {}],
   // --- Portail : étapes ---
-  ['etape_1', G.steps, 'Étape 1', 'Rencontre et prise de cotes', { title: true }],
+  ['etape_1', G.steps, 'Étape 1', 'Prise de cotes', { title: true }],
   ['etape_2', G.steps, 'Étape 2', 'Devis', { title: true }],
   ['etape_3', G.steps, 'Étape 3', 'Acompte', { title: true }],
   ['etape_4', G.steps, 'Étape 4', 'Fabrication', { title: true }],
-  ['etape_5', G.steps, 'Étape 5', 'Prête à poser', { title: true }],
+  ['etape_5', G.steps, 'Étape 5', 'Prête à livrer', { title: true }],
   ['etape_6', G.steps, 'Étape 6', 'Pose', { title: true }],
   ['etape_7', G.steps, 'Étape 7', 'Réception', { title: true }],
+  ['etape_8', G.steps, 'Étape 8', 'Règlement', { title: true }],
+  ['etape_9', G.steps, 'Étape 9', 'Procès-verbal', { title: true }],
   // --- Portail : autres textes ---
   ['portail_titre', G.portal, 'Titre en haut de chaque page (Bonjour avant 18 h, Bonsoir après)', '{salutation}[ {civilite}] {nom} {prenom}', { title: true, vars: ['salutation', 'civilite', 'nom', 'prenom'] }],
   ['portail_email', G.portal, 'Adresse e-mail affichée au client (pied de page, bloc « Une question ? »)', 'contact@carchon.com', { title: true }],

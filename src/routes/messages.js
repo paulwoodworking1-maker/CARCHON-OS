@@ -27,7 +27,7 @@ ${preview ? h`<details class="msg-prev"><summary class="mut t12">Aperçu avec un
 ${o.sms ? h`<span class="mut t12">${preview.length} caractères${preview.length > 160 ? ' : plus d’un SMS' : ''}</span>` : ''}</div>`;
   })}
 <div class="line"><button class="btn sm">Enregistrer</button></div></form></section>`)}`;
-  res.send(layout({ title: 'Messages aux clients', heading: 'Portails clients', tab: 'portails', sub: '/messages', body, flash: req.flash }));
+  res.send(layout({ title: 'Messages aux clients', heading: 'Réglages', tab: 'reglages', sub: '/messages', body, flash: req.flash }));
 });
 
 r.post('/messages', (req, res) => {

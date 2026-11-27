@@ -661,3 +661,27 @@ test('portails : « Copier le lien » redonne le lien existant sans en créer un
   const page = await (await fetch(base + '/projets/' + pid, { headers: { cookie } })).text();
   assert.match(page, /\/p\/espace\/jeton-garde/);
 });
+
+test('achats du projet : rangés par catégorie, prix le plus bas des catalogues fournisseurs', async () => {
+  const fs = require('node:fs'); const os = require('node:os'); const path = require('node:path');
+  const { q } = require('../src/db'); const P = require('../src/prix');
+  const a = Number(q.run("INSERT INTO suppliers (name) VALUES ('Quinca A')").lastInsertRowid);
+  const b = Number(q.run("INSERT INTO suppliers (name) VALUES ('Quinca B')").lastInsertRowid);
+  const fa = path.join(os.tmpdir(), 'cat-a.csv'), fb = path.join(os.tmpdir(), 'cat-b.csv');
+  fs.writeFileSync(fa, 'Référence;Désignation;Prix HT;Unité\nCH-35;Charnière invisible 35 mm;4,20;pce\nVS-4;Vis SPAX 4x40 boîte 200;12,90;boîte\n');
+  fs.writeFileSync(fb, 'Code,Libellé,Tarif\nBX35,Charnière invisible 35 mm clip,"3,80"\n');
+  assert.strictEqual(await P.importCatalog(a, fa, 'cat-a.csv'), 2);
+  assert.strictEqual(await P.importCatalog(b, fb, 'cat-b.csv'), 1);
+  const pid = Number(q.run("INSERT INTO projects (name) VALUES ('Achats test')").lastInsertRowid);
+  q.run("INSERT INTO needs (text, project_id, qty, source) VALUES ('Charnière invisible 35 mm', ?, 10, 'note'), ('Vernis mat 5 L', ?, 1, 'note')", pid, pid);
+  const g = P.projectNeeds(pid);
+  const quinca = g.find((x) => x.cat === 'Quincaillerie');
+  assert.strictEqual(quinca.items[0].best.sname, 'Quinca B');
+  assert.strictEqual(quinca.items[0].best.price, 3.8);
+  assert.strictEqual(Math.round(quinca.items[0].total * 100), 3800);
+  assert.ok(g.find((x) => x.cat === 'Droguerie'));
+  const page = await (await fetch(base + '/projets/' + pid, { headers: { cookie } })).text();
+  assert.match(page, /BX35/);
+  await fetch(base + `/projets/${pid}/achats/meilleurs`, { method: 'POST', redirect: 'manual', headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' }, body: '' });
+  assert.strictEqual(q.get("SELECT supplier_id s FROM needs WHERE project_id = ? AND text LIKE 'Charni%'", pid).s, b);
+});

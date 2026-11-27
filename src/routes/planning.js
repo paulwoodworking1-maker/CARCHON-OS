@@ -126,7 +126,7 @@ ${process.env.GOOGLE_SERVICE_ACCOUNT ? h`<p class="mut t12">La clé vient de la 
 
 <section class="card mt20 mw680" id="cockpit"><h2>Et le planning de Cockpit ?</h2>
 <p class="mut mt8">Cockpit écrit déjà dans ton Google Agenda : avec le point 1, ses rendez-vous (visites, métrés, signatures) s’affichent donc ici, à côté du travail de l’atelier, sans rien relier de plus. Google reste l’agenda de référence ; Carchon OS n’écrit que dans l’agenda « Atelier », jamais dans celui de Cockpit.</p></section>`;
-  res.send(layout({ title: 'Google Agenda', tab: 'planning', sub: '/planning/agenda', body, flash: req.flash }));
+  res.send(layout({ title: 'Google Agenda', heading: 'Réglages', tab: 'reglages', sub: '/planning/agenda', body, flash: req.flash }));
 });
 r.post('/planning/agenda', async (req, res, next) => {
   try {

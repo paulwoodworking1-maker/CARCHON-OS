@@ -307,7 +307,8 @@ function renderSpace(p, { token = null, preview = false, tab = 'accueil', quote:
   if (!next.t) next = null; // texte vidé dans « Messages aux clients » : pas d'encadré
 
   // 2. Les grandes étapes du projet.
-  const steps = [
+  const steps = p ? L.clientSteps(p, { quotes }).map((x) => [x.phase, x.state === 'p' ? 'c' : x.state === 'w' ? 't' : x.state, x.state === 'd' && x.label === 'Fait' ? '' : x.label === 'À venir' || x.label === 'En cours' || x.label === 'À traiter' ? '' : x.label])
+    : [
     [M.t('etape_1'), log.some((e) => e.date <= t) || quotes.length || p ? 'd' : 'c'],
     [M.t('etape_2'), quoteOk ? 'd' : 'c', accepted ? `accepté le ${dayMonth(accepted.accepted_at)}` : latest?.status === 'modif' ? 'nouvelle version en préparation' : ''],
     [M.t('etape_3'), depositOk ? 'd' : quoteOk ? 'c' : 't', p?.deposit_at ? `reçu le ${dayMonth(p.deposit_at)}` : p?.deposit_invoice_id ? `facture envoyée le ${dayMonth(p.deposit_invoice_sent_at || today())}` : ''],
@@ -315,7 +316,7 @@ function renderSpace(p, { token = null, preview = false, tab = 'accueil', quote:
     [M.t('etape_5'), fabDone ? 'd' : 't', !fabDone && p?.ready_date ? `vers le ${dayMonth(p.ready_date)}` : ''],
     [M.t('etape_6'), trip?.done_at ? 'd' : trip ? 'c' : 't', trip ? `le ${dayMonth(trip.date)}` : ''],
     [M.t('etape_7'), trip?.pv_signed_at ? 'd' : 't', trip?.pv_signed_at ? `le ${dayMonth(trip.pv_signed_at)}` : ''],
-  ];
+];
 
   // 3. Ce que nous avons fait ensemble (le plus récent en haut).
   const hist = [

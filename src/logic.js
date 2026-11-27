@@ -52,6 +52,41 @@ function frise(project) {
 }
 const defaultLabel = (s) => ({ d: 'Fait', c: 'En cours', p: 'À traiter', w: 'À venir', n: 'Sans objet' })[s];
 
+// Frise commune à la fiche projet, à la liste des projets et au portail du client.
+// État : d = fait, c = en cours, p = bloque, w = à venir. Libellés : Messages aux clients (etape_1…9).
+function clientSteps(p, { quotes = null } = {}) {
+  const M = require('./messages');
+  const { dayMonth } = require('./html');
+  const qs = quotes || (p ? q.all('SELECT * FROM quotes WHERE project_id = ? ORDER BY id', p.id) : []);
+  const latest = qs.length ? qs[qs.length - 1] : null;
+  const accepted = qs.filter((x) => x.status === 'accepted').pop() || null;
+  const hasLog = p ? !!q.get("SELECT id FROM client_log WHERE project_id = ? AND date <= date('now') LIMIT 1", p.id) : false;
+  const trips = p ? q.all('SELECT * FROM trips WHERE project_id = ? ORDER BY date', p.id) : [];
+  const trip = trips.find((x) => !x.done_at) || trips[trips.length - 1] || null;
+  const pvTrip = trips.find((x) => x.pv_signed_at) || null;
+  const started = p ? q.get('SELECT MIN(started_at) s FROM steps WHERE project_id = ? AND started_at IS NOT NULL', p.id).s : null;
+  const anySteps = p ? q.get('SELECT COUNT(*) n FROM steps WHERE project_id = ?', p.id).n : 0;
+  const remaining = p ? q.get("SELECT COUNT(*) n FROM steps WHERE project_id = ? AND status != 'done' AND COALESCE(phase, '') NOT IN ('Livraison', 'Réception')", p.id).n : 1;
+  const fabDone = (anySteps > 0 && remaining === 0) || !!(p && p.status === 'termine');
+  const quoteOk = !!accepted || !!(p && !qs.some((x) => x.status === 'sent'));
+  const depositOk = p ? !p.deposit_needed || !!p.deposit_at : false;
+  const posed = trips.length > 0 && trips.every((x) => x.done_at);
+  const paid = trips.some((x) => x.balance_paid_at);
+  const pvOk = pvTrip && (!pvTrip.pv_reserves || pvTrip.pv_reserves_lifted_at);
+  const S = (n, state, sub = '') => ({ phase: M.t(`etape_${n}`), state, label: sub || { d: 'Fait', c: 'En cours', p: 'À traiter', w: 'À venir' }[state] });
+  return [
+    S(1, hasLog || qs.length || p ? 'd' : 'c'),
+    S(2, quoteOk ? 'd' : latest ? 'c' : 'w', accepted ? `accepté le ${dayMonth(accepted.accepted_at)}` : latest?.status === 'modif' ? 'nouvelle version' : latest?.status === 'sent' ? 'en attente' : ''),
+    S(3, depositOk ? 'd' : quoteOk ? 'p' : 'w', p?.deposit_at ? `reçu le ${dayMonth(p.deposit_at)}` : p?.deposit_needed && quoteOk ? (p?.deposit_invoice_id ? 'facture envoyée' : 'attendu') : depositOk && p ? 'sans objet' : ''),
+    S(4, fabDone ? 'd' : started ? 'c' : 'w', started && !fabDone ? `depuis le ${dayMonth(started)}` : ''),
+    S(5, fabDone ? 'd' : 'w', !fabDone && p?.ready_date ? `vers le ${dayMonth(p.ready_date)}` : ''),
+    S(6, posed ? 'd' : trip ? 'c' : 'w', trip ? (posed ? `le ${dayMonth(trip.done_at || trip.date)}` : `le ${dayMonth(trip.date)}`) : ''),
+    S(7, pvTrip ? 'd' : posed ? 'c' : 'w', pvTrip ? `le ${dayMonth(pvTrip.pv_signed_at)}` : ''),
+    S(8, paid ? 'd' : pvTrip ? 'p' : 'w', paid ? 'solde reçu' : pvTrip ? 'solde attendu' : ''),
+    S(9, pvOk ? 'd' : pvTrip ? 'p' : 'w', pvOk ? (pvTrip.pv_reserves ? 'réserves levées' : 'sans réserve') : pvTrip ? 'réserve à lever' : ''),
+  ];
+}
+
 // Phase « courante » : la première pas faite (pour l'en-tête des cartes).
 function currentPhase(fr) { return fr.find((f) => f.state === 'c' || f.state === 'p') || fr.find((f) => f.state === 'w') || fr[fr.length - 1]; }
 
@@ -81,7 +116,7 @@ function projectSummary(p) {
   const cur = currentPhase(fr);
   const client = p.client_id ? q.get('SELECT * FROM clients WHERE id = ?', p.client_id) : null;
   const lead = p.lead_id ? q.get('SELECT * FROM people WHERE id = ?', p.lead_id) : null;
-  return { ...p, frise: fr, cur, client, lead, slack: slack(p), next: p.next_action || `${cur.phase} · ${cur.label}` };
+  return { ...p, frise: fr, cfrise: clientSteps(p), cur, client, lead, slack: slack(p), next: p.next_action || `${cur.phase} · ${cur.label}` };
 }
 
 // Tout ce qui attend une réponse du patron.
@@ -192,4 +227,4 @@ function stepsFor(personId) {
 const PCOLORS = ['#1A1714', '#6B635A', '#4A443E', '#8C8279', '#2E2925', '#5A534B'];
 const projectColor = (id) => PCOLORS[id % PCOLORS.length];
 
-module.exports = { upperName, syncProjectName, syncAllProjectNames, people, peopleMap, patron, personName, frise, currentPhase, slack, workdays, projectSummary, toDecide, groupDecide, projectFromQuote, stepsFor, projectColor, relDays, iso, addDays };
+module.exports = { clientSteps, upperName, syncProjectName, syncAllProjectNames, people, peopleMap, patron, personName, frise, currentPhase, slack, workdays, projectSummary, toDecide, groupDecide, projectFromQuote, stepsFor, projectColor, relDays, iso, addDays };

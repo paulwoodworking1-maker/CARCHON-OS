@@ -117,12 +117,13 @@ const icon = (k, size = 18) => raw(`<svg width="${size}" height="${size}" viewBo
 
 // Colonne de navigation : [groupe, [[clé, libellé, lien, icône, chemins qui l'activent]]]
 const SIDE = [
-  ['', [['dash', 'Tableau de bord', '/', 'dash', ['/']], ['decider', 'À décider', '/decider', 'check', ['/decider']], ['assistant', 'Assistant', '/assistant', 'spark', ['/assistant']]]],
-  ['Fabriquer', [['of', 'Fabrication', '/projets', 'of', ['/projets', '/carnets']], ['catalogue', 'Catalogue', '/catalogue', 'book', ['/catalogue']], ['portails', 'Portails clients', '/portails', 'globe', ['/portails', '/messages']]]],
+  ['', [['dash', 'Tableau de bord', '/', 'dash', ['/']], ['decider', 'À décider', '/decider', 'check', ['/decider']], ['assistant', 'Assistant', '/assistant', 'spark', ['/assistant']], ['devis', 'Envoyer un devis', '/portails/envoyer', 'send', ['/portails/envoyer']]]],
+  ['Fabriquer', [['of', 'Fabrication', '/projets', 'of', ['/projets', '/carnets']], ['catalogue', 'Catalogue', '/catalogue', 'book', ['/catalogue']], ['portails', 'Portails clients', '/portails', 'globe', ['/portails']]]],
   ['Planifier', [['charge', 'Charge', '/charge', 'load', ['/charge']], ['planning', 'Planning', '/planning', 'cal', ['/planning']], ['poses', 'Livraisons et poses', '/poses', 'truck', ['/poses']]]],
   ['Approvisionner', [['stock', 'Matière et stock', '/stock', 'box', ['/stock', '/bois', '/pieces']], ['achats', 'Achats', '/achats', 'cart', ['/achats', '/commandes', '/fournisseurs']]]],
   ['Livrer et garantir', [['exp', 'Expéditions', '/expeditions', 'send', ['/expeditions']], ['sav', 'Qualité et SAV', '/sav', 'shield', ['/sav', '/unites']]]],
-  ['Piloter', [['analyse', 'Analyse', '/analyse', 'dash', ['/analyse']], ['pilot', 'Heures et coûts', '/pilotage', 'gauge', ['/pilotage']], ['machines', 'Machines', '/machines', 'gear', ['/machines', '/cnc']], ['auto', 'Automatisations', '/automatisations', 'bolt', ['/automatisations']], ['equipe', 'Équipe et réglages', '/equipe', 'users', ['/equipe', '/entreprise']]]],
+  ['Piloter', [['analyse', 'Analyse', '/analyse', 'dash', ['/analyse']], ['pilot', 'Heures et coûts', '/pilotage', 'gauge', ['/pilotage']], ['machines', 'Machines', '/machines', 'gear', ['/machines', '/cnc']], ['auto', 'Automatisations', '/automatisations', 'bolt', ['/automatisations']]]],
+  ['Réglages', [['messages', 'Messages aux clients', '/messages', 'globe', ['/messages']], ['preg', 'Portail et e-mails', '/portails/reglages', 'gear', ['/portails/reglages']], ['agenda', 'Google Agenda', '/planning/agenda', 'cal', ['/planning/agenda']], ['equipe', 'Équipe et entreprise', '/equipe', 'users', ['/equipe', '/entreprise']]]],
 ];
 const TABHOME = { aujourdhui: '/', projets: '/projets', planning: '/planning', stock: '/stock', achats: '/achats', pilotage: '/pilotage' };
 const SUBNAV = {
@@ -130,10 +131,10 @@ const SUBNAV = {
   achats: [['/achats', 'À commander'], ['/commandes', 'Commandes en cours'], ['/fournisseurs', 'Fournisseurs']],
   stock: [['/stock', 'Consommables'], ['/bois', 'Panneaux et bois'], ['/pieces', 'Pièces finies']],
   pilotage: [['/pilotage', 'Heures et chiffrage'], ['/pilotage/couts', 'Coût par OF']],
-  reglages: [['/equipe', 'Équipe'], ['/entreprise', 'Entreprise']],
-  planning: [['/planning', 'Planning atelier'], ['/poses', 'Livraisons et poses'], ['/planning/agenda', 'Google Agenda']],
+  reglages: [['/messages', 'Messages aux clients'], ['/portails/reglages', 'Portail et e-mails'], ['/planning/agenda', 'Google Agenda'], ['/equipe', 'Équipe'], ['/entreprise', 'Entreprise']],
+  planning: [['/planning', 'Planning atelier'], ['/poses', 'Livraisons et poses']],
   sav: [['/sav', 'Demandes SAV'], ['/unites', 'Registre des pièces']],
-  portails: [['/portails', 'Suivi des portails'], ['/portails/envoyer', 'Envoyer un devis'], ['/messages', 'Messages aux clients'], ['/portails/reglages', 'Réglages et e-mails']],
+  portails: [['/portails', 'Suivi des portails'], ['/portails/envoyer', 'Envoyer un devis']],
 };
 
 // Compteurs de la colonne (calculés à chaque page, requêtes légères).
@@ -170,7 +171,10 @@ function layout({ title, tab, sub, body, flash, counts = {}, heading }) {
   const here = sub || TABHOME[tab] || '';
   const path = here.split('?')[0].split('#')[0];
   const c = sideCounts();
-  const isOn = (paths) => paths.some((p) => (p === '/' ? path === '/' : path === p || path.startsWith(p + '/')));
+  const hit = (paths) => Math.max(-1, ...paths.map((p) => (p === '/' ? (path === '/' ? 1 : -1) : path === p || path.startsWith(p + '/') ? p.length : -1)));
+  // Une seule entrée allumée : la plus précise (« Envoyer un devis » plutôt que « Portails clients »).
+  const best = Math.max(...SIDE.flatMap(([, items]) => items.map((it) => hit(it[4]))));
+  const isOn = (paths) => best > 0 && hit(paths) === best;
   const subsKey = Object.keys(SUBNAV).find((k) => SUBNAV[k].some(([href]) => href.split('?')[0] === path)) || '';
   const subs = SUBNAV[subsKey] || (tab && SUBNAV[tab]);
   const co = require('./db').company();

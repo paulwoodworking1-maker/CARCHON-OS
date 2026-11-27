@@ -91,7 +91,7 @@ r.get('/portails', (req, res) => {
   const f = F[req.query.f] || req.query.f === 'espaces' ? req.query.f : 'tous';
   const shown = req.session.shownLink;
   if (shown) { delete req.session.shownLink; res.saveSession(); }
-  const quoteRow = (x) => h`<tr id="q${x.id}"><td><b>${x.signer_name}</b><div class="mut t13">${x.project_name || x.projname || ''}${x.test ? ' · test' : ''}</div></td>
+  const quoteRow = (x) => h`<tr id="q${x.id}" class="rowlink" data-href="/portails/parcours?n=${encodeURIComponent(x.number)}${x.project_id ? `&p=${x.project_id}` : ''}"><td><a class="b" href="/portails/parcours?n=${encodeURIComponent(x.number)}${x.project_id ? `&p=${x.project_id}` : ''}">${x.signer_name}</a><div class="mut t13">${x.project_name || x.projname || ''}${x.test ? ' · test' : ''}</div></td>
 <td class="t13">${x.number}${x.version > 1 ? ` · v${x.version}` : ''}<div class="mut t12">envoyé le ${ddmm(x.link_at || x.created_at)}${x.status === 'sent' ? ` · jusqu’au ${ddmm(x.valid_until)}` : ''}</div></td>
 <td>${trackCell(x)}${smsLine(`q${x.id}`, ...(x.project_id ? [`p${x.project_id}`] : []))}</td>
 <td><div class="line acts">${quoteLink(req, x) && x.status !== 'expired' ? h`${copyBtn(`lk-q${x.id}`, quoteLink(req, x))}${x.status === 'sent' ? h`<a class="btn ghost sm" href="/portails/devis/${x.id}/lien">Relancer</a>` : ''}` : ['sent', 'expired', 'revoked'].includes(x.status) ? postBtn(`/portails/devis/${x.id}/relancer`, x.status === 'sent' ? 'Relancer' : 'Rouvrir et relancer', 'btn alt sm', {}, x.status === 'sent' ? 'Ce lien date d’avant la sauvegarde des liens : en créer un nouveau et préparer une relance ?' : 'Rouvrir ce devis avec un nouveau lien et préparer une relance ?') : ''}
@@ -99,7 +99,7 @@ ${x.status === 'modif' || x.status === 'refused' ? h`<a class="btn sm" href="/po
 ${x.status === 'accepted' ? h`<a class="btn alt sm" href="/portails/devis/${x.id}/preuve">Preuve</a>` : ''}${x.status === 'accepted' && x.project_id ? h`<a class="btn alt sm" href="/projets/${x.project_id}">OF</a>` : ''}
 <a class="btn ghost sm" href="/portails/parcours?n=${encodeURIComponent(x.number)}${x.project_id ? `&p=${x.project_id}` : ''}">Parcours</a><a class="btn ghost sm" href="/fichiers/${x.pdf}" target="_blank">PDF</a>
 ${['sent', 'modif'].includes(x.status) ? postBtn(`/portails/devis/${x.id}/fermer`, 'Fermer', 'btn ghost sm', {}, 'Fermer ce devis ? Le client ne pourra plus l’accepter (par exemple si tu ne fais plus le projet).') : ''}</div></td></tr>`;
-  const spaceRow = (p) => h`<tr id="p${p.id}"><td><b>${p.cname}</b><div class="mut t13">${p.name}</div></td><td class="t13">ouvert${p.portal_link_at ? ` le ${ddmm(p.portal_link_at)}` : ''}</td>
+  const spaceRow = (p) => h`<tr id="p${p.id}" class="rowlink" data-href="/portails/parcours?p=${p.id}"><td><a class="b" href="/portails/parcours?p=${p.id}">${p.cname}</a><div class="mut t13">${p.name}</div></td><td class="t13">ouvert${p.portal_link_at ? ` le ${ddmm(p.portal_link_at)}` : ''}</td>
 <td><b class="t13">${p.portal_views ? `Vu ${p.portal_views} fois` : 'Pas encore consulté'}</b>${p.portal_seen_at ? h`<div class="mut t12">dernière visite ${ago(p.portal_seen_at)}</div>` : ''}${smsLine(`p${p.id}`)}</td>
 <td><div class="line acts">${spaceLink(req, p) ? h`${copyBtn(`lk-p${p.id}`, spaceLink(req, p))}<a class="btn ghost sm" href="/portails/espace/${p.id}/lien">Envoyer le lien</a>` : postBtn(`/portails/espace/${p.id}/ouvrir`, 'Créer le lien', 'btn alt sm', {}, 'Ce lien date d’avant la sauvegarde des liens : en créer un nouveau ? L’ancien ne marchera plus.')}
 <a class="btn ghost sm" href="/portails/parcours?p=${p.id}">Parcours</a><a class="btn ghost sm" href="/portails/espace/${p.id}/apercu">Voir comme le client</a>
@@ -146,7 +146,27 @@ r.get('/portails/parcours', (req, res) => {
   const number = n || qt?.number || '';
   const log = q.all(`SELECT * FROM client_log WHERE ${p ? 'project_id = ? OR ' : ''}(number != '' AND number = ?) ORDER BY date DESC, id DESC`, ...(p ? [p.id] : []), number);
   const back = `/portails/parcours?${p ? `p=${p.id}&` : ''}n=${encodeURIComponent(number)}`;
-  const body = h`<div class="eb"><a href="/portails">Portails clients</a></div><h1 class="mt8">Parcours · ${p ? p.cname || p.name : qt.signer_name}</h1>
+  const quotes = number ? q.all('SELECT * FROM quotes WHERE number = ? ORDER BY version', number) : [];
+  const pLink = spaceLink(req, p), qLink = quoteLink(req, qt);
+  const fact = (l, v) => h`<div><span class="mut t12">${l}</span><b>${v}</b></div>`;
+  const body = h`<div class="eb"><a href="/portails">Portails clients</a></div><h1 class="mt8">${p ? p.cname || p.name : qt.signer_name}</h1>
+${p ? h`<p class="mut mt4">Dossier ${p.ref} · <a href="/projets/${p.id}">ouvrir la fiche projet</a></p>` : ''}
+<section class="card mt20"><h2>Le portail</h2>
+<div class="an-stats" style="border-top:0;margin-top:8px;padding-top:0">
+${p ? fact('Espace de suivi', p.portal_state === 'open' ? `ouvert${p.portal_link_at ? ` le ${ddmm(p.portal_link_at)}` : ''}` : p.portal_state === 'cut' ? 'accès coupé' : 'pas ouvert') : ''}
+${p ? fact('Consultations', p.portal_views ? `${p.portal_views} · dernière ${ago(p.portal_seen_at)}` : 'pas encore') : ''}
+${qt ? fact('Devis', `${qt.number}${quotes.length > 1 ? ` · ${quotes.length} versions` : ''} · ${{ sent: 'en attente', accepted: 'accepté', modif: 'modification demandée', refused: 'décliné', revoked: 'fermé', expired: 'expiré' }[qt.status] || qt.status}`) : ''}
+${qt ? fact('Lecture du devis', qt.views ? `${qt.views} ouverture(s)${qt.pdf_opened_at ? ' · PDF lu' : ''}` : 'pas encore ouvert') : ''}
+${qt?.amount_ht ? fact('Montant', `${Math.round(qt.amount_ht).toLocaleString('fr-FR')} € HT`) : ''}
+${p ? fact('Acompte', p.deposit_at ? `reçu le ${ddmm(p.deposit_at)}` : p.deposit_needed ? 'attendu' : 'sans objet') : ''}
+</div>
+<div class="line mt12">${pLink ? copyBtn('lk-fiche', pLink) : qLink ? copyBtn('lk-fiche', qLink) : ''}
+${pLink ? h`<a class="btn alt sm" href="/portails/espace/${p.id}/lien">Envoyer le lien</a>` : qt?.status === 'sent' && qLink ? h`<a class="btn alt sm" href="/portails/devis/${qt.id}/lien">Relancer</a>` : ''}
+${p && p.portal_state !== 'open' ? postBtn(`/portails/espace/${p.id}/ouvrir`, 'Ouvrir l’espace client', 'btn sm') : ''}
+${p ? h`<a class="btn ghost sm" href="/portails/espace/${p.id}/apercu">Voir comme le client</a>` : ''}
+${qt ? h`<a class="btn ghost sm" href="/fichiers/${qt.pdf}" target="_blank">PDF du devis</a>` : ''}${qt?.status === 'accepted' ? h`<a class="btn ghost sm" href="/portails/devis/${qt.id}/preuve">Preuve d’acceptation</a>` : ''}</div>
+${smsLine(...[p ? `p${p.id}` : null, qt ? `q${qt.id}` : null].filter(Boolean))}</section>
+<h2 class="mt20">Parcours</h2>
 <p class="mut mt8 mw680">Ce que vous avez fait ensemble et ce qui est prévu : le client le voit sur l'accueil de son portail, avec les versions du devis, l'acompte et l'avancement (ajoutés tout seuls). Une date à venir s'affiche comme prochaine étape.</p>
 ${(() => {
     const cl = p?.client_id ? q.get('SELECT * FROM clients WHERE id = ?', p.client_id) : qt?.client_id ? q.get('SELECT * FROM clients WHERE id = ?', qt.client_id) : null;
@@ -246,7 +266,7 @@ ${Q.configured() ? h`<p class="mt8">${pill('ok', 'Relié à Qonto')} Dès qu’u
 ${setting('cgv_file') ? h`<p class="mut">CGV actuelles : <a href="/fichiers/${setting('cgv_file')}" target="_blank">ouvrir</a></p>` : h`<p class="mut red">Aucune CGV déposée pour l’instant.</p>`}
 <button class="btn sm">Enregistrer</button></form>
 <p class="mut t12 mt8">Le passage en réel se fait après l'avis de ton juriste.</p></section>`;
-  res.send(layout({ title: 'Réglages des portails', heading: 'Portails clients', tab: SUB, sub: '/portails/reglages', body, flash: req.flash }));
+  res.send(layout({ title: 'Portail et e-mails', heading: 'Réglages', tab: 'reglages', sub: '/portails/reglages', body, flash: req.flash }));
 });
 r.post('/portails/qonto', (req, res) => {
   const b = req.body; const n = (v) => Number(String(v ?? '').replace(',', '.'));
@@ -461,6 +481,16 @@ r.get('/portails/devis/:id/lien', (req, res) => {
 });
 
 // Espace client du projet : un lien privé (gardé chiffré pour pouvoir le redonner).
+// Ouvre (ou renouvelle) l'espace de suivi d'un projet ; renvoie le lien.
+function openSpace(req, pid) {
+  const p = q.get('SELECT projects.*, clients.name cname, clients.email cemail FROM projects JOIN clients ON clients.id = projects.client_id WHERE projects.id = ?', pid);
+  if (!p) return null;
+  const t = token();
+  q.run("UPDATE projects SET portal_token_hash = ?, portal_token_enc = ?, portal_state = 'open', portal_link_at = datetime('now') WHERE id = ?", sha256(t), SMS.seal(t), p.id);
+  if (p.portal_state !== 'open') SMS.notify('espace', { projectId: p.id });
+  logActivity(p.id, null, p.portal_state === 'open' ? 'Nouveau lien d’espace client créé (l’ancien est fermé)' : 'Espace client ouvert', 'Patron');
+  return { p, url: `${base(req)}/p/espace/${t}` };
+}
 r.post('/portails/espace/:pid/ouvrir', (req, res) => {
   const p = q.get('SELECT projects.*, clients.name cname, clients.email cemail FROM projects JOIN clients ON clients.id = projects.client_id WHERE projects.id = ?', req.params.pid);
   if (!p) return res.redirect('/portails');
@@ -482,3 +512,4 @@ r.get('/portails/espace/:pid/apercu', (req, res) => {
 });
 
 module.exports = r;
+module.exports.openSpace = openSpace;

@@ -21,7 +21,7 @@ function projectCard(p) {
   return h`<a class="proj" href="/projets/${p.id}">
 <div class="line"><span class="ref">${p.ref}</span><b class="t16">${p.name}</b>${p.descr ? h`<span class="mut">${p.descr}</span>` : ''}${pill('no', p.kind)}<span class="mut">${p.client ? p.client.name : 'hors commande client'}</span>
 <span class="mut push">${p.due_date ? `Livraison ${ddmm(p.due_date)} · ` : ''}<b style="color:${p.slack.color}">${p.slack.text}</b></span></div>
-${friseBar(p.frise)}
+${friseBar(p.cfrise)}
 <div class="line"><span class="mut"><b class="ink">${p.cur.phase}</b> · ${p.next}</span><span class="push">${avatar(p.lead, 28)}</span></div></a>`;
 }
 
@@ -134,7 +134,7 @@ r.get('/projets', (req, res) => {
     tendu: ['Tendus', (p) => p.slack.text === 'tendu'],
     semaine: ['À livrer sous 7 j', (p) => p.due_date && p.due_date <= week],
     livrer: ['Ce mois', (p) => p.due_date && p.due_date <= monthEnd],
-    bloque: ['À débloquer', (p) => p.frise.some((f) => f.state === 'p')],
+    bloque: ['À débloquer', (p) => p.cfrise.some((f) => f.state === 'p') || p.frise.some((f) => f.state === 'p')],
     acompte: ['Acompte attendu', (p) => p.client_id && p.deposit_needed && !p.deposit_at],
     envoyer: ['Carnet à envoyer', (p) => (prog[p.id] || {}).unsent > 0],
     sansdate: ['Sans échéance', (p) => !p.due_date],
@@ -166,9 +166,9 @@ ${done ? '' : h`<form method="post" action="/projets/lot" id="lot" class="lotbar
 <button class="btn alt sm" name="act" value="terminer" data-confirm-btn="Marquer ces OF comme terminés ?">Terminer</button>
 <button type="button" class="btn ghost sm push" data-lot-clear>Désélectionner</button></form>`}
 ${frise ? h`<div class="tablebox mt12"><table class="frise" id="oftable">
-<thead><tr><th class="pcol">OF · prochaine action</th>${PHASES.map((p) => h`<th>${p}</th>`)}<th>Échéance</th></tr></thead>
+<thead><tr><th class="pcol">OF · prochaine action</th>${(rows[0]?.cfrise || L.clientSteps(null)).map((f) => h`<th>${f.phase}</th>`)}<th>Échéance</th></tr></thead>
 <tbody>${rows.map((p) => h`<tr data-q="${[p.ref, p.name, p.client ? p.client.name : '', p.for_whom].join(' ').toLowerCase()}"><td class="pcol"><span class="ref">${p.ref}</span> <a href="/projets/${p.id}" class="b">${p.name}</a><div class="mut">${p.client ? p.client.name : p.for_whom || 'atelier'} → ${p.next}</div></td>
-${p.frise.map((c) => h`<td><span class="c ${CELL[c.state]}">${c.label}</span></td>`)}
+${p.cfrise.map((c) => h`<td><span class="c ${CELL[c.state]}">${c.label}</span></td>`)}
 <td class="due"><b>${p.due_date ? ddmm(p.due_date) : 'à fixer'}</b><div style="color:${p.slack.color}" class="t12 b">${p.slack.text}</div></td></tr>`)}</tbody></table></div>
 <div class="legend"><span><i class="c d"></i>Fait</span><span><i class="c cc"></i>En cours</span><span><i class="c p"></i>Bloque · à traiter</span><span><i class="c w"></i>À venir</span><span><i class="c n"></i>Sans objet</span></div>`
   : h`<div class="tablebox mt12"><table class="tbl dense" id="oftable">
@@ -246,8 +246,17 @@ r.get('/projets/nouveau', (req, res) => {
 <label>Pour (client, revendeur, salon…) <input name="for_whom"></label>
 <label>Client (base Cockpit) <input name="client_pick" list="clientbase" placeholder="Tape le nom, l’e-mail ou la ville" autocomplete="off"></label>
 <datalist id="clientbase">${q.all('SELECT id, name, email, address FROM clients ORDER BY name').map((c) => h`<option value="${c.name}${c.email ? ` · ${c.email}` : ''} #${c.id}">${c.address || ''}</option>`)}</datalist>
-<label>Échéance <input type="date" name="due_date"></label>
-<label>Responsable <select name="lead_id">${options(L.people().map((p) => [p.id, p.role === 'patron' ? 'Toi' : p.name]))}</select></label>
+<div class="grid2"><label>Échéance <input type="date" name="due_date"></label>
+<label>Responsable <select name="lead_id">${options(L.people().map((p) => [p.id, p.role === 'patron' ? 'Toi' : p.name]))}</select></label></div>
+<fieldset class="card warm m0"><legend class="b">Portail du client</legend>
+<p class="mut t13">Réglé une fois ici, à la création. Sans client choisi, ces réglages sont ignorés.</p>
+<label class="ck"><input type="checkbox" name="open_portal" value="1" checked> Ouvrir son espace de suivi tout de suite</label>
+<div class="grid2"><label>Civilité <select name="civility">${options([['', 'Deviner d’après le prénom'], ['Mme', 'Mme'], ['M.', 'M.'], ['none', 'Aucune']], '')}</select></label>
+<label>Portable (SMS de suivi) <input type="tel" name="phone" placeholder="06 12 34 56 78"></label></div>
+<div class="grid2"><label>Nom <input name="last_name" placeholder="vide = repris de la fiche client"></label><label>Prénom <input name="first_name" placeholder="vide = repris de la fiche client"></label></div>
+<div class="grid2"><label>Montant vendu HT (€) <input name="amount_ht" inputmode="decimal" placeholder="ex. 8400"></label>
+<label class="ck" style="align-self:end"><input type="checkbox" name="deposit_needed" value="1" checked> Acompte demandé</label></div>
+<label class="ck"><input type="checkbox" name="sms_on" value="1" checked> Prévenir le client par SMS à chaque nouveauté</label></fieldset>
 <button class="btn">Créer le projet</button></form>`;
   res.send(layout({ title: 'Nouveau projet', tab: 'projets', sub: '/projets', body }));
 });
@@ -269,7 +278,48 @@ r.post('/projets/nouveau', (req, res) => {
     str(b.name) || str(b.descr), str(b.descr), str(b.kind), str(b.canal) || 'Sur-mesure', str(b.for_whom), int(b.client_id), str(b.due_date) || null, int(b.lead_id), b.client_id ? 1 : 0).lastInsertRowid;
   L.syncProjectName(Number(id));
   logActivity(Number(id), null, 'Projet créé', 'Patron');
-  res.flashTo(`/projets/${id}`, 'Projet créé. Prépare son carnet de fabrication quand tu es prêt.');
+  let opened = false;
+  if (b.client_id) {
+    const C = require('../civilite');
+    const sets = [], vals = [];
+    if (['Mme', 'M.', 'none'].includes(b.civility)) { sets.push('civility = ?'); vals.push(b.civility); }
+    if (str(b.last_name)) { sets.push('last_name = ?'); vals.push(C.tidy(str(b.last_name))); }
+    if (str(b.first_name)) { sets.push('first_name = ?'); vals.push(C.tidy(str(b.first_name))); }
+    if (str(b.phone)) { sets.push('phone = ?'); vals.push(str(b.phone)); }
+    sets.push('sms_off = ?'); vals.push(b.sms_on ? 0 : 1);
+    q.run(`UPDATE clients SET ${sets.join(', ')} WHERE id = ?`, ...vals, b.client_id);
+    q.run('UPDATE projects SET deposit_needed = ?, amount_ht = ?, deposit_asked_at = CASE WHEN ? THEN datetime(\'now\') END WHERE id = ?', b.deposit_needed ? 1 : 0, euros(b.amount_ht), b.deposit_needed ? 1 : 0, id);
+    if (b.open_portal) opened = !!require('./portails').openSpace(req, Number(id));
+  }
+  res.flashTo(`/projets/${id}`, opened ? 'Projet créé et espace client ouvert : « Copier le lien du portail » dans l’onglet Client et documents.' : 'Projet créé. Prépare son carnet de fabrication quand tu es prêt.');
+});
+
+// ---------- Achats du projet : rangés comme le stock, au prix le plus bas des catalogues ----------
+function achatsCard(p) {
+  const P = require('../prix');
+  const groups = P.projectNeeds(p.id);
+  const eur = (v) => (v == null ? '—' : `${(Math.round(v * 100) / 100).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €`);
+  const n = groups.reduce((a, g) => a + g.items.length, 0);
+  const total = groups.reduce((a, g) => a + g.total, 0);
+  const priced = groups.some((g) => g.items.some((x) => x.best));
+  const state = (x) => (x.status === 'ordered' ? pill('wa', 'Commandé') : x.needs_deposit && !x.force ? pill('ko', 'Attend l’acompte') : pill('no', 'À commander'));
+  return h`<section class="card" id="achats-projet"><div class="line"><h2>Achats du projet</h2><span class="count">${n}</span>
+<span class="push line">${priced ? postBtn(`/projets/${p.id}/achats/meilleurs`, 'Attribuer au moins cher', 'btn alt sm') : ''}<a class="btn ghost sm" href="/achats">Tous les achats</a></span></div>
+${n ? h`<p class="mut">${priced ? h`Comparé dans les catalogues fournisseurs : <b>${eur(total)} HT</b> au total au meilleur prix.` : h`Aucun prix trouvé : dépose les tarifs de tes fournisseurs dans <a href="/fournisseurs#catalogues">Fournisseurs › Catalogues</a>.`}</p>
+${groups.map((g) => h`<h3 class="h3 mt20">${g.cat}${g.total ? h` <span class="mut">· ${eur(g.total)}</span>` : ''}</h3>
+<div class="tablebox"><table class="tbl dense"><thead><tr><th>Article</th><th class="num">Qté</th><th>Référence</th><th>Fournisseur</th><th class="num">Prix u.</th><th class="num">Total</th><th>État</th></tr></thead><tbody>
+${g.items.map((x) => h`<tr><td>${x.text}${x.offers.length > 1 ? h`<div class="mut t12">${x.offers.length} offres · jusqu’à ${eur(x.saving)} d’écart</div>` : ''}</td>
+<td class="num">${String(x.qty).replace('.', ',')}${x.unit ? ` ${x.unit}` : ''}</td>
+<td class="mono">${x.best?.ref || '—'}</td>
+<td>${x.best ? h`<b>${x.best.sname}</b>${x.best.pack ? h`<div class="mut t12">${x.best.pack}</div>` : ''}` : x.sname || h`<span class="mut">—</span>`}</td>
+<td class="num">${x.best ? eur(x.best.price) : '—'}</td><td class="num b">${x.total != null ? eur(x.total) : '—'}</td><td>${state(x)}</td></tr>`)}
+</tbody></table></div>`)}` : h`<p class="mut">Rien à acheter pour ce projet. La matière arrive ici quand la chaîne de production est générée, ou quand l’atelier signale un manque.</p>`}
+</section>`;
+}
+r.post('/projets/:id/achats/meilleurs', loadProject, (req, res) => {
+  const P = require('../prix'); let n = 0;
+  for (const g of P.projectNeeds(req.project.id)) for (const x of g.items) if (x.best && x.status !== 'ordered') { q.run('UPDATE needs SET supplier_id = ?, category = ? WHERE id = ?', x.best.supplier_id, g.cat, x.id); n++; }
+  res.flashTo(`/projets/${req.project.id}#achats`, `${n} article(s) attribué(s) au fournisseur le moins cher : ils sont regroupés par fournisseur dans Achats.`);
 });
 
 // ---------- Chaîne de production (devis + 3D + chiffrage → carnet, matière, planning) ----------
@@ -512,11 +562,8 @@ r.get('/projets/:id', loadProject, (req, res) => {
 <div class="push line"><a class="btn alt" href="#photos">Ajouter une photo</a><a class="btn alt" href="#dossier">Dossier de production</a><a class="btn" href="/carnets/${p.id}">Ouvrir le carnet</a></div></div>
 
 <section class="card mt20" aria-label="Avancement">
-<div class="frise-big">${p.frise.map((f) => h`<details class="fz ${f.state}"><summary><span class="fz-dot"></span><b>${f.phase}</b><span class="mut t12">${f.label}</span></summary>
-<form method="post" action="/projets/${p.id}/phase" class="pop"><input type="hidden" name="phase" value="${f.phase}">
-<label>État <select name="state">${options([['auto', 'Automatique'], ['d', 'Fait'], ['c', 'En cours'], ['p', 'Bloque'], ['w', 'À venir'], ['n', 'Sans objet']], 'auto')}</select></label>
-<label>Texte <input name="label" placeholder="${f.label}"></label><button class="btn sm">OK</button></form></details>`)}</div>
-<p class="mut t12 mt8">La frise se calcule toute seule depuis les fiches du carnet, les plans, l’acompte et les poses. Clique une étape pour la forcer à la main.</p>
+<div class="frise-big">${p.cfrise.map((f) => h`<div class="fz ${f.state}"><span class="fz-dot"></span><b>${f.phase}</b><span class="mut t12">${f.label}</span></div>`)}</div>
+<p class="mut t12 mt8">La même frise que sur le portail du client. Elle avance toute seule : devis, acompte, fiches de l’atelier, dates de pose, PV et solde.</p>
 </section>
 
 ${issues.map((s) => {
@@ -538,13 +585,18 @@ ${tripsCard(p)}
 
 <section class="card"><h2>Prochaine action</h2><p class="t15 mt8"><b>${p.next}</b></p>
 <p class="mut t12">Tirée de la frise si le champ « Prochaine action » est vide.</p></section>
-<section class="card" id="historique"><h2>Historique</h2><p class="mut">Tout ce qui s’est passé sur ce dossier, daté.</p>
-<ol class="timeline mt8">${history.map((a) => h`<li><time datetime="${a.created_at}">${ddmm(a.created_at)} · ${hhmm(a.created_at)}</time><span>${a.text}${a.who ? h` <span class="mut">· ${a.who}</span>` : ''}</span></li>`)}</ol>
-${history.length ? '' : h`<p class="mut">Rien encore.</p>`}</section>
+
 </div>
 <aside class="side-col">
 <section class="card" id="acompte"><h2>Projet</h2>
-<form method="post" action="/projets/${p.id}/infos" class="form">
+${(() => { const c = p.client || {}; const qx = quote; const eur = (v) => (v ? `${Math.round(v).toLocaleString('fr-FR')} € HT` : '');
+    const rows = [['Client', c.name ? h`${c.name}${c.phone ? h`<br><a href="tel:${c.phone}">${c.phone}</a>` : ''}${c.email ? h`<br><a href="mailto:${c.email}">${c.email}</a>` : ''}` : ''],
+      ['Adresse', c.address || ''], ['On fabrique', p.descr || ''], ['Montant', eur(p.amount_ht || qx?.amount_ht)], ['Devis', qx ? `${qx.number} · accepté le ${ddmm(qx.accepted_at)}` : ''],
+      ['Acompte', p.deposit_at ? `reçu le ${ddmm(p.deposit_at)}` : p.deposit_needed && p.client_id ? 'attendu' : ''], ['Livraison', p.due_date ? `${ddmm(p.due_date)} · ${p.slack.text}` : 'à fixer'],
+      ['Responsable', p.lead ? (p.lead.role === 'patron' ? 'Toi' : p.lead.name) : ''], ['Famille', p.family || ''], ['Origine', p.source || ''], ['Bois', p.wood || ''], ['Notes', p.notes || '']].filter(([, v]) => v);
+    return h`<dl class="pinfo">${rows.map(([k, v]) => h`<div><dt>${k}</dt><dd>${v}</dd></div>`)}</dl>`; })()}
+<details class="mt12"><summary class="btn alt sm">Modifier</summary>
+<form method="post" action="/projets/${p.id}/infos" class="form mt12">
 ${p.client_id ? h`<p class="mut">Titre : nom du client.</p>` : h`<label>Nom <input name="name" value="${p.name}"></label>`}
 <label>Ce qu'on fabrique <input name="descr" value="${p.descr || ''}"></label>
 <label>Échéance (livraison) <input type="date" name="due_date" value="${p.due_date || ''}"></label>
@@ -557,7 +609,7 @@ ${p.client_id ? h`<label class="ck"><input type="checkbox" name="deposit_needed"
 <p class="mut t12">Servent à l'Analyse : taux horaire réel, familles et canaux qui rapportent.</p>
 <label>Bois <textarea name="wood" rows="2">${p.wood}</textarea></label>
 <label>Notes <textarea name="notes" rows="4">${p.notes}</textarea></label>
-<button class="btn sm">Enregistrer</button></form>
+<button class="btn sm">Enregistrer</button></form></details>
 <div class="line mt12">${p.status === 'en_cours' ? postBtn(`/projets/${p.id}/statut`, 'Marquer terminé', 'btn alt sm', { status: 'termine' }, 'Marquer ce projet comme terminé ?') : postBtn(`/projets/${p.id}/statut`, 'Reprendre', 'btn alt sm', { status: 'en_cours' })}</div>
 </section>
 <section class="card"><h2>Temps passé</h2><p class="mut">Déclaré en un tap quand une fiche est finie.</p>
@@ -598,10 +650,9 @@ ${units.some((u) => u.status === 'a_faire') || !units.length ? h`<div class="mt1
 </aside></div></div>
 
 <div class="ptab" id="achats"><div class="cols">
-<div class="main-col">${D.sstSection(p)}</div>
+<div class="main-col">${achatsCard(p)}${D.sstSection(p)}</div>
 <aside class="side-col">
-<section class="card"><div class="line"><h2>Achats liés</h2><a class="mut t13 push" href="/achats">Tous les achats</a></div>
-${pneeds.map((n, i) => h`<div class="row${i ? '' : ' f'}"><span class="grow">${n.text}</span>${pill(n.status === 'ordered' ? 'wa' : n.needs_deposit && !n.force ? 'ko' : 'no', n.status === 'ordered' ? 'Commandé' : n.needs_deposit && !n.force ? 'Attend l’acompte' : 'À commander')}</div>`)}${pneeds.length ? '' : h`<p class="mut">Rien à acheter.</p>`}</section>
+
 <section class="card"><h2>Panneaux et bois réservés</h2>${panelRes.map((l, i) => h`<div class="row${i ? '' : ' f'}"><span class="grow">${l.name}</span><span>${String(Math.round(l.m2 * 10) / 10).replace('.', ',')} m² · ${l.panels} panneau${l.panels > 1 ? 'x' : ''}</span></div>`)}${lots.map((l, i) => h`<div class="row${i || panelRes.length ? '' : ' f'}"><b>${l.code}</b><span class="grow">${l.essence} ${l.thickness}</span><span>${String(l.volume).replace('.', ',')} m³</span></div>`)}${panelRes.length || lots.length ? '' : h`<p class="mut">Rien de réservé. Les panneaux se réservent quand la <a href="/projets/${p.id}/chaine">chaîne de production</a> est figée ; <a href="/bois">réserver un lot de bois</a>.</p>`}</section>
 </aside></div></div>
 
@@ -646,6 +697,9 @@ ${docs.map((d) => h`<div class="row"><a class="grow" href="${fileUrl(d.file)}" t
 <form method="post" action="/projets/${p.id}/documents/${d.id}" class="ckrow"><label><input type="checkbox" name="visible_client" value="1" ${d.visible_client ? 'checked' : ''} data-auto> Client</label></form></div>`)}
 <form method="post" action="/projets/${p.id}/documents" enctype="multipart/form-data" class="form mt12"><label>Titre <input name="title" required placeholder="ex. Facture de solde"></label><input type="file" name="file" required accept="application/pdf,image/*"><label class="ck"><input type="checkbox" name="visible_client" value="1"> Visible par le client</label><button class="btn alt sm">Ajouter</button></form>
 </section>
+<details class="card hist" id="historique"><summary class="h3">Historique du dossier · ${history.length}</summary>
+<ol class="timeline mt8">${history.map((a) => h`<li><time datetime="${a.created_at}">${ddmm(a.created_at)} · ${hhmm(a.created_at)}</time><span>${a.text}${a.who ? h` <span class="mut">· ${a.who}</span>` : ''}</span></li>`)}</ol>
+${history.length ? '' : h`<p class="mut">Rien encore.</p>`}</details>
 </aside></div></div>`;
   res.send(layout({ title: p.name, tab: 'projets', sub: '/projets', body, flash: req.flash }));
 });

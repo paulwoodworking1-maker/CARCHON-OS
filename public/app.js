@@ -119,6 +119,12 @@
     lot.querySelector('[data-lot-clear]').addEventListener('click', function () { boxes().forEach(function (b) { b.checked = false; }); var a = document.querySelector('[data-lot-all]'); if (a) a.checked = false; upd(); });
     upd();
   }
+  // Ligne de tableau cliquable (sauf sur ses boutons et liens).
+  document.addEventListener('click', function (e) {
+    var tr = e.target.closest && e.target.closest('tr[data-href]');
+    if (!tr || e.target.closest('a, button, input, select, textarea, summary, details, form, label')) return;
+    location.href = tr.getAttribute('data-href');
+  });
   // Copier un lien.
   document.addEventListener('click', function (e) {
     var b = e.target.closest && e.target.closest('[data-copy]');

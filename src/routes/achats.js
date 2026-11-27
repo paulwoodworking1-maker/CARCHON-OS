@@ -201,7 +201,13 @@ r.get('/fournisseurs', (req, res) => {
 <div class="flexcards mt20">${rows.map((s) => h`<section class="card"><div class="line"><h2>${s.name}</h2></div><p class="mut">${[s.contact, s.phone, s.email].filter(Boolean).join(' · ') || 'Pas de contact noté'}</p><p>${s.note}</p>
 <div class="line">${s.phone ? h`<a class="btn alt sm" href="tel:${s.phone}">Appeler</a>` : ''}${s.email ? h`<a class="btn alt sm" href="/mail/nouveau?to=${encodeURIComponent(s.email)}&back=%2Ffournisseurs">Écrire</a>` : ''}
 <details class="menu"><summary class="btn alt sm">Modifier</summary><form method="post" action="/fournisseurs/${s.id}" class="menu-list form pad wide">${form(s)}<div class="line"><button class="btn sm">Enregistrer</button><button class="btn alt sm" name="del" value="1" data-confirm-btn="Supprimer ce fournisseur ?">Supprimer</button></div></form></details></div></section>`)}
-${rows.length ? '' : h`<section class="card"><p class="mut">Ajoute tes fournisseurs habituels : scierie, droguerie, quincaillerie, négoce de panneaux…</p></section>`}</div>`;
+${rows.length ? '' : h`<section class="card"><p class="mut">Ajoute tes fournisseurs habituels : scierie, droguerie, quincaillerie, négoce de panneaux…</p></section>`}</div>
+<section class="card mt20" id="catalogues"><h2>Catalogues et prix</h2>
+<p class="mut mw680">Dépose le tarif de chaque fournisseur (Excel ou CSV, avec au moins une colonne « Désignation » et une colonne « Prix » ; « Référence », « Unité », « Conditionnement » si tu les as). Pour chaque achat d’un projet, Carchon OS cherche l’article dans tous les catalogues et propose le moins cher, avec sa référence exacte.</p>
+<div class="tablebox mt12"><table class="tbl"><thead><tr><th>Fournisseur</th><th class="num">Articles</th><th>Mis à jour</th><th>Nouveau tarif</th></tr></thead><tbody>
+${require('../prix').catalogs().map((c) => h`<tr><td class="b">${c.name}</td><td class="num">${c.n || '—'}</td><td>${c.at ? ddmm(c.at) : '—'}</td>
+<td><form method="post" action="/fournisseurs/${c.id}/catalogue" enctype="multipart/form-data" class="line"><input type="file" name="file" accept=".csv,.xlsx,.txt" required aria-label="Tarif de ${c.name}" style="max-width:240px"><button class="btn alt sm">Importer</button></form></td></tr>`)}
+</tbody></table></div></section>`;
   res.send(layout({ title: 'Fournisseurs', tab: 'achats', sub: '/fournisseurs', body, flash: req.flash, counts: counts() }));
 });
 const supFields = (b) => [str(b.name), str(b.contact), str(b.phone), str(b.email), str(b.habit), str(b.note), Number(b.lead_days) > 0 ? Math.round(Number(b.lead_days)) : null];
@@ -210,6 +216,13 @@ r.post('/fournisseurs/:id', (req, res) => {
   if (req.body.del) q.run('DELETE FROM suppliers WHERE id = ?', req.params.id);
   else q.run('UPDATE suppliers SET name = ?, contact = ?, phone = ?, email = ?, habit = ?, note = ?, lead_days = ? WHERE id = ?', ...supFields(req.body), req.params.id);
   res.redirect('/fournisseurs');
+});
+
+r.post('/fournisseurs/:id/catalogue', require('../uploads').uploadDocs.single('file'), async (req, res) => {
+  if (!req.file) return res.flashTo('/fournisseurs#catalogues', 'Choisis un fichier Excel ou CSV.', 'ko');
+  try { const n = await require('../prix').importCatalog(Number(req.params.id), req.file.path, req.file.originalname); res.flashTo('/fournisseurs#catalogues', `${n} articles importés : les prix sont comparés dans les achats de chaque projet.`); }
+  catch (e) { res.flashTo('/fournisseurs#catalogues', e.message, 'ko'); }
+  finally { try { require('node:fs').rmSync(req.file.path, { force: true }); } catch { /* rien */ } }
 });
 
 module.exports = r;
