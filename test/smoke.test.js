@@ -1,5 +1,7 @@
 'use strict';
 // Test rapide : base neuve + démo, connexion patron, toutes les pages répondent sans erreur.
+// Même fuseau que le serveur en production (render.yaml, install-vps.sh) : les heures de l'agenda en dépendent.
+process.env.TZ = 'Europe/Paris';
 const { test, before, after } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
