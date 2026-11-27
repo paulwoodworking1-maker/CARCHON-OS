@@ -71,7 +71,7 @@ const crypto = require('node:crypto');
 const mail = require('./mail');
 const { sha256 } = require('./auth');
 const sessionGen = () => setting('session_gen', '0');
-const patronEmail = () => setting('patron_email', '') || process.env.PATRON_EMAIL || '';
+const patronEmail = () => setting('patron_email', '') || process.env.PATRON_EMAIL || mail.gmailUser();
 
 app.get('/mot-de-passe-oublie', (req, res) => {
   const canMail = mail.configured() && patronEmail();
@@ -150,6 +150,7 @@ app.get('/fichiers/:name', (req, res) => {
 
 // Après chaque modification faite dans le logiciel, le planning automatique se recalcule.
 const automations = require('./automations');
+require('./logic').syncAllProjectNames(); // titres = nom du client en majuscules
 let replanQueued = false;
 app.use((req, res, next) => {
   if (req.method === 'POST' && !req.path.startsWith('/p/') && !req.path.startsWith('/api/')) {
@@ -172,7 +173,7 @@ app.get('/agenda/:t.ics', (req, res) => {
 app.use('/api/v1', require('./routes/api'));       // liaison Cockpit (clé API)
 app.use('/p', require('./routes/client'));          // portail client (liens privés)
 app.use('/atelier', require('./routes/atelier'));   // iPad
-for (const m of ['decider', 'patron', 'carnets', 'achats', 'planning', 'reglages', 'portails', 'automatisations', 'catalogue', 'machines', 'charge', 'matiere', 'livraison', 'assistant', 'dossier', 'cnc', 'analyse', 'messages']) app.use('/', requirePatron, require(`./routes/${m}`));
+for (const m of ['decider', 'patron', 'carnets', 'achats', 'planning', 'reglages', 'portails', 'automatisations', 'catalogue', 'machines', 'charge', 'matiere', 'livraison', 'assistant', 'dossier', 'cnc', 'analyse', 'messages', 'mail', 'chaine', 'panneaux']) app.use('/', requirePatron, require(`./routes/${m}`));
 
 app.use((req, res) => res.status(404).send(page('Introuvable', h`<main class="login"><h1>Page introuvable</h1><p><a href="/">Revenir à l’accueil</a></p></main>`)));
 app.use((err, req, res, next) => {
@@ -185,6 +186,7 @@ if (require.main === module) {
   app.listen(port, () => console.log(`Carchon OS prêt sur http://localhost:${port}`));
   automations.start();
   require('./sms').start();
+  require('./cockpit').start();
   require('./gcal').start();
 }
 module.exports = app;

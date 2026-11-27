@@ -31,7 +31,7 @@ r.get('/planning', (req, res) => {
       bars: bars.filter((b) => b.person_id === p.id).map((b) => (b.auto ? { ...b, kind: 'b1 autob', ro: `/carnets/${b.project_id}`, title: 'Planifié automatiquement depuis le carnet' } : b)) })),
     { key: 'sup', title: 'Livraisons fournisseur', sub: '', bars: q.all('SELECT orders.*, suppliers.name sname FROM orders LEFT JOIN suppliers ON suppliers.id = orders.supplier_id WHERE expected_at BETWEEN ? AND ? AND arrived_at IS NULL', start, end).map((o) => ({ kind: 'ev', label: `Livraison ${o.sname || ''}`, detail: o.what, start_date: o.expected_at, end_date: o.expected_at, ro: '/commandes' })) },
     { key: 'pose', title: 'Poses et rendez-vous', sub: '', bars: [
-      ...q.all('SELECT trips.*, projects.name pname FROM trips JOIN projects ON projects.id = trips.project_id WHERE date BETWEEN ? AND ?', start, end).map((t) => ({ kind: 'b3', label: t.pname, detail: t.what, start_date: t.date, end_date: t.date, ro: '/poses' })),
+      ...q.all('SELECT trips.*, projects.name pname FROM trips JOIN projects ON projects.id = trips.project_id WHERE date BETWEEN ? AND ?', start, end).map((t) => ({ kind: 'b3', label: t.pname, detail: [t.kind || t.what, t.team].filter(Boolean).join(' · '), start_date: t.date, end_date: t.date, ro: `/projets/${t.project_id}#livraisons` })),
       ...bars.filter((b) => b.lane === 'event'),
     ] },
     ...(G.importUrl() ? [{ key: 'gcal', title: 'Google Agenda', sub: 'mis à jour toutes les 10 min', bars: G.between(start, end).map((e) => ({ kind: 'gc', label: `${e.time ? `${e.time.replace(':', 'h')} · ` : ''}${e.title}`, detail: e.location, start_date: e.start_date, end_date: e.end_date, title: e.title, ro: `https://calendar.google.com/calendar/r/day/${e.start_date.replace(/-/g, '/')}` })) }] : []),
@@ -194,7 +194,7 @@ r.post('/planning/barres/:id', (req, res) => {
 
 // ---------- Livraisons et poses ----------
 r.get('/poses', (req, res) => {
-  const trips = q.all('SELECT trips.*, projects.name pname, projects.kind pkind FROM trips JOIN projects ON projects.id = trips.project_id WHERE pv_signed_at IS NULL ORDER BY date');
+  const trips = q.all('SELECT trips.*, projects.name pname, projects.descr pdescr, projects.kind pkind FROM trips JOIN projects ON projects.id = trips.project_id WHERE pv_signed_at IS NULL ORDER BY date');
   const signed = q.all('SELECT trips.*, projects.name pname FROM trips JOIN projects ON projects.id = trips.project_id WHERE pv_signed_at IS NOT NULL ORDER BY pv_signed_at DESC LIMIT 10');
   const projects = q.all("SELECT id, name FROM projects WHERE status = 'en_cours' ORDER BY name");
   const tripForm = (t = {}) => h`<div class="grid2"><label>Projet <select name="project_id" required>${options(projects.map((p) => [p.id, p.name]), t.project_id)}</select></label><label>Date <input type="date" name="date" value="${t.date || ''}" required></label></div>
@@ -203,15 +203,15 @@ r.get('/poses', (req, res) => {
 <div class="grid2"><label>Contact <input name="contact" value="${t.contact || ''}"></label><label>Équipe <input name="team" value="${t.team || ''}" placeholder="ex. Lucas + toi · 4 h"></label></div>
 <label>Dans le camion, un par ligne (vide = depuis la fiche « Pose » du carnet) <textarea name="items" rows="4">${t.items ? JSON.parse(t.items).map((i) => i.t).join('\n') : ''}</textarea></label>`;
   const body = h`<div class="head"><div><div class="eb">Planning</div><h1>Livraisons et poses</h1><p class="mut mt8">Tout ce qu'il faut savoir avant de charger le camion.</p></div>
-<details class="menu push"><summary class="btn">+ Livraison ou pose</summary><form method="post" action="/poses" class="menu-list right-al form pad wide">${tripForm()}<button class="btn sm">Ajouter</button></form></details></div>
+<p class="mut push mw480">Les dates de livraison et de pose se décident dans la fiche de chaque projet (plusieurs dates possibles). Elles arrivent ici et dans le planning toutes seules.</p></div>
 <div class="stack18 mt20">${trips.map((t) => {
     const items = JSON.parse(t.items); const n = items.filter((i) => i.done).length;
     const d = parseDate(t.date);
     return h`<section class="card trip"><div class="date"><span>${JOURS_C[d.getDay()].toUpperCase()}</span><b>${d.getDate()}</b><span>${MOIS_C[d.getMonth()]}</span></div>
-<div class="grow"><div class="line"><h2>${t.pname}</h2>${pill('no', t.pkind)}${pill(items.length && n === items.length ? 'ok' : 'wa', items.length && n === items.length ? 'Prêt à partir' : `${n} / ${items.length} prêts`)}${t.done_at ? pill('ok', 'Livré') : ''}</div>
+<div class="grow"><div class="line"><h2>${t.pname}</h2>${pill('no', t.kind || t.pkind)}${t.pdescr ? h`<span class="mut">${t.pdescr}</span>` : ''}${pill(items.length && n === items.length ? 'ok' : 'wa', items.length && n === items.length ? 'Prêt à partir' : `${n} / ${items.length} prêts`)}${t.done_at ? pill('ok', 'Livré') : ''}</div>
 <dl class="facts"><dt>Quoi</dt><dd>${t.what}</dd><dt>Où</dt><dd>${t.place}</dd><dt>Accès</dt><dd>${t.access}</dd><dt>Contact</dt><dd>${t.contact}</dd><dt>Équipe</dt><dd>${t.team}</dd></dl>
 <div class="h3 mt12">Dans le camion</div><div class="chips">${items.map((it, i) => h`<form method="post" action="/poses/${t.id}/item" class="inline"><input type="hidden" name="i" value="${i}"><button class="chip${it.done ? ' on' : ''}" aria-pressed="${!!it.done}">${it.done ? '✓ ' : ''}${it.t}</button></form>`)}</div>
-<div class="line mt12"><a class="btn alt sm" href="/projets/${t.project_id}">Ouvrir le projet</a>${t.place ? h`<a class="btn alt sm" target="_blank" rel="noopener" href="https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(t.place)}">Itinéraire</a>` : ''}
+<div class="line mt12"><a class="btn alt sm" href="/projets/${t.project_id}#livraisons">Ouvrir le projet</a>${t.place ? h`<a class="btn alt sm" target="_blank" rel="noopener" href="https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(t.place)}">Itinéraire</a>` : ''}
 <a class="btn sm" href="/poses/${t.id}/pv">PV de réception sur l'iPad</a><a class="btn alt sm" href="/poses/${t.id}/pv/imprimer">PV papier</a>
 <details class="menu"><summary class="btn alt sm">Modifier</summary><form method="post" action="/poses/${t.id}" class="menu-list form pad wide">${tripForm(t)}<div class="line"><button class="btn sm">Enregistrer</button><button class="btn alt sm" name="del" value="1">Supprimer</button></div></form></details></div></div></section>`;
   })}

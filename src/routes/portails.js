@@ -60,12 +60,10 @@ function shownCard(shown) {
   if (!shown) return '';
   // Le texte de l'e-mail est rédigé ici (trop long pour être gardé dans le cookie de session).
   const msg = shown.msg && E[shown.msg[0]] ? E[shown.msg[0]](shown.msg[1]) : null;
-  if (msg) { shown.gmail = E.gmailUrl(shown.to, msg); shown.mailto = E.mailto(shown.to, msg); }
   return h`<section class="card ok-card mt20" role="status"><b>${shown.title}</b>
-<p class="mut">Clique « Créer le brouillon Gmail » : le message est rédigé et rangé dans tes brouillons Gmail, tu n’as plus qu’à le relire et l’envoyer. Ce lien ne sera plus affiché ensuite (au besoin, « Relancer » en crée un nouveau).</p>
-<div class="line mt8"><input class="qin" readonly value="${shown.url}" id="shownlink" aria-label="Lien">
-${shown.gmail ? h`<a class="btn" href="${shown.gmail}" target="_blank" rel="noopener">Créer le brouillon Gmail</a>` : ''}<button type="button" class="btn alt" data-copy="#shownlink">Copier le lien</button></div>
-${shown.mailto ? h`<p class="t12 mt8"><a class="mut" href="${shown.mailto}">Autre messagerie (Apple Mail, Outlook…)</a></p>` : ''}</section>`;
+<div class="line mt8"><input class="qin" readonly value="${shown.url}" id="shownlink" aria-label="Lien"><button type="button" class="btn alt" data-copy="#shownlink">Copier le lien</button></div>
+${msg ? h`<p class="mut mt12">Relis le message puis « Envoyer » : il part directement de ta boîte Gmail, avec le logo. Ce lien ne sera plus affiché ensuite (au besoin, « Relancer » en crée un nouveau).</p>
+<div class="mt8">${require('./mail').composeForm({ to: shown.to, subject: msg.subject, body: msg.body, back: '/portails', id: 'shownmsg', rows: 14 })}</div>` : ''}</section>`;
 }
 
 r.get('/portails', (req, res) => {
@@ -189,23 +187,17 @@ r.post('/portails/parcours/:id/suppr', (req, res) => {
 r.get('/portails/reglages', (req, res) => {
   const configured = mail.configured();
   const body = h`
-<section class="card mw680" id="emails" style="border-top:0;padding-top:0"><h2>E-mails aux clients</h2>
-${configured ? h`<p class="mt8">${pill('ok', 'Branché')} Les codes de validation partent de <b>${mail.fromAddress()}</b> ${mail.via() === 'brevo' ? '(via Brevo)' : mail.via() === 'gmail' ? '(via Gmail)' : ''}.</p>
-<form method="post" action="/portails/test-email" class="line mt12"><button class="btn alt sm">M’envoyer un e-mail de test</button><span class="mut t12">à l’adresse du patron (Automatisations)</span></form>`
-  : h`<p class="mt8">${pill('ko', 'Pas encore branché')} Sans cela, le client ne reçoit pas son code et ne peut pas signer en mode réel. Deux solutions, une seule suffit :</p>
-<h3 class="mt12">Solution A · Brevo (la même clé que pour les SMS)</h3>
-<ol class="steps mt8">
-<li>Dans Brevo : menu en haut à droite › <b>Expéditeurs, domaines et IP dédiées</b> › <b>Expéditeurs</b> › Ajouter un expéditeur : nom « ${require('../db').company().name} », et l’adresse qui enverra les codes. Brevo t’envoie un code pour la valider.</li>
-<li>Idéal contre les indésirables : une adresse de ton domaine (ex. contact@carchon.com) et, dans <b>Domaines</b>, « Authentifier le domaine » (Brevo donne 2 ou 3 lignes à copier chez l’hébergeur du site).</li>
-<li>Dans Render › Environment : <code>BREVO_API_KEY</code> (si ce n’est pas déjà fait) et <code>MAIL_FROM</code> = l’adresse validée. Save, rebuild and deploy.</li></ol>
-${process.env.BREVO_API_KEY && !mail.sender() ? h`<p class="flash ko mt8">La clé Brevo est là, il ne manque que l’adresse d’expédition (MAIL_FROM, ou l’e-mail dans Réglages › Entreprise).</p>` : ''}
-<h3 class="mt12">Solution B · Gmail</h3>
-<ol class="steps mt8">
-<li>Validation en deux étapes activée sur ton compte Google.</li>
-<li>Mot de passe d’application : <a href="https://myaccount.google.com/apppasswords" target="_blank" rel="noopener">myaccount.google.com/apppasswords</a> (vérifie en haut à droite que c’est le bon compte Google), nom « Carchon OS ». Copie les 16 lettres.</li>
-<li>Dans Render › Environment : <code>GMAIL_USER</code> = ton adresse Gmail, <code>GMAIL_APP_PASSWORD</code> = les 16 lettres. Save, rebuild and deploy.</li></ol>`}
-<form method="post" action="/portails/gmail" class="form mt20"><label>Compte Gmail où ranger les brouillons (devis, relances, liens de suivi) <input type="email" name="gmail_account" value="${setting('gmail_account') || ''}" placeholder="ton.adresse@gmail.com"></label>
-<p class="mut t12">Si tu es connecté à plusieurs comptes Google dans ton navigateur, c’est celui-ci qui s’ouvrira.</p><button class="btn sm">Enregistrer</button></form></section>
+<section class="card mw680" id="emails" style="border-top:0;padding-top:0"><h2>E-mails</h2>
+<p class="mut mt8">Tous les e-mails (devis, relances, nouvelles, commandes fournisseurs, codes de validation) partent directement de ta boîte Gmail, avec le logo Carchon, sans quitter Carchon OS. Ils apparaissent ensuite dans « Envoyés » de Gmail.</p>
+${configured ? h`<p class="mt12">${pill('ok', 'Branché')} Envoi depuis <b>${mail.fromAddress()}</b> ${mail.via() === 'brevo' ? '(via Brevo)' : mail.via() === 'gmail' ? '(Gmail)' : ''}.</p>
+<form method="post" action="/portails/test-email" class="line mt12"><button class="btn alt sm">M’envoyer un e-mail de test</button><span class="mut t12">à ${mail.fromAddress()}</span></form>`
+  : h`<p class="mt12">${pill('ko', 'Pas encore branché')} Une seule étape, à faire une fois :</p>
+<ol class="steps mt8"><li>Ouvre <a href="https://myaccount.google.com/apppasswords" target="_blank" rel="noopener">myaccount.google.com/apppasswords</a> avec le compte <b>${mail.gmailUser()}</b> (la validation en deux étapes doit être activée), nom « Carchon OS ».</li>
+<li>Copie les 16 lettres données par Google et colle-les ci-dessous.</li></ol>`}
+<form method="post" action="/portails/gmail" class="form mt12"><div class="grid2"><label>Boîte Gmail d’envoi <input type="email" name="gmail_user" value="${mail.gmailUser()}" required></label>
+<label>Mot de passe d’application (16 lettres) <input type="password" name="gmail_app_password" autocomplete="new-password" placeholder="${setting('gmail_app_password') ? 'enregistré · laisser vide pour le garder' : 'xxxx xxxx xxxx xxxx'}"></label></div>
+<button class="btn sm">Enregistrer</button></form>
+<h3 class="mt20">Derniers e-mails envoyés</h3>${require('./mail').sentList(8)}</section>
 
 <section class="card mt20 mw680" id="sms"><h2>SMS au client</h2>
 ${SMS.configured() ? h`<p class="mt8">${pill('ok', 'Branché')} Les SMS partent via Brevo, au nom de <b>${setting('sms_sender') || 'CARCHON'}</b>.</p>`
@@ -283,9 +275,13 @@ r.post('/portails/sms/test', async (req, res) => {
   try { await SMS.sendNow(to, `${setting('sms_signature') || require('../db').company().name} : ceci est un SMS de test de Carchon OS. Tout fonctionne.`); res.flashTo('/portails/reglages#sms', 'SMS de test envoyé : regarde ton téléphone.'); }
   catch (e) { res.flashTo('/portails/reglages#sms', `Échec : ${e.message}`, 'ko'); }
 });
-r.post('/portails/gmail', (req, res) => { setSetting('gmail_account', str(req.body.gmail_account)); res.flashTo('/portails/reglages', 'Compte Gmail enregistré.'); });
+r.post('/portails/gmail', async (req, res) => {
+  setSetting('gmail_user', str(req.body.gmail_user).toLowerCase() || mail.DEFAULT_GMAIL);
+  if (str(req.body.gmail_app_password)) setSetting('gmail_app_password', str(req.body.gmail_app_password).replace(/\s+/g, ''));
+  res.flashTo('/portails/reglages#emails', mail.configured() ? 'Gmail branché : les e-mails partent maintenant directement de ta boîte. Fais un e-mail de test.' : 'Enregistré.');
+});
 r.post('/portails/test-email', async (req, res) => {
-  const to = setting('patron_email') || process.env.SMTP_USER;
+  const to = mail.fromAddress() || setting('patron_email');
   try {
     await mail.send({ to, ...E.otp({ number: 'TEST', signer_name: 'Test' }, '123456') });
     res.flashTo('/portails/reglages', `E-mail de test envoyé à ${to}. Regarde ta boîte de réception : c’est exactement ce que reçoit le client.`);

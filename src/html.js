@@ -110,6 +110,7 @@ const ICONS = {
   users: '<circle cx="9" cy="8" r="3"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6M16 5a3 3 0 010 6M21 20c0-2.6-1.6-4.8-4-5.6"/>',
   home: '<path d="M3 11l9-7 9 7v9H3z"/>',
   spark: '<path d="M12 3l2.2 5.8L20 11l-5.8 2.2L12 19l-2.2-5.8L4 11l5.8-2.2z"/>',
+  moon: '<path d="M20 14.5A8 8 0 019.5 4a8 8 0 1010.5 10.5z"/>',
   ipad: '<rect x="5" y="2" width="14" height="20"/><path d="M11 18h2"/>',
 };
 const icon = (k, size = 18) => raw(`<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true">${ICONS[k] || ''}</svg>`);
@@ -127,7 +128,7 @@ const TABHOME = { aujourdhui: '/', projets: '/projets', planning: '/planning', s
 const SUBNAV = {
   projets: [['/projets', 'En cours'], ['/carnets', 'Carnets de fabrication'], ['/projets?vue=termines', 'Terminés']],
   achats: [['/achats', 'À commander'], ['/commandes', 'Commandes en cours'], ['/fournisseurs', 'Fournisseurs']],
-  stock: [['/stock', 'Consommables'], ['/bois', 'Bois noble'], ['/pieces', 'Pièces finies']],
+  stock: [['/stock', 'Consommables'], ['/bois', 'Panneaux et bois'], ['/pieces', 'Pièces finies']],
   pilotage: [['/pilotage', 'Heures et chiffrage'], ['/pilotage/couts', 'Coût par OF']],
   reglages: [['/equipe', 'Équipe'], ['/entreprise', 'Entreprise']],
   planning: [['/planning', 'Planning atelier'], ['/poses', 'Livraisons et poses'], ['/planning/agenda', 'Google Agenda']],
@@ -176,11 +177,12 @@ function layout({ title, tab, sub, body, flash, counts = {}, heading }) {
   return page(title, h`
 <div class="shell">
 <nav class="side" aria-label="Navigation principale">
-  <a href="/" class="side-h"><span class="side-name">Carchon <span>OS</span></span><span class="side-sub">${co.name}</span></a>
+  <a href="/" class="side-h" aria-label="Carchon OS, tableau de bord"><span class="side-brand"><img class="logo side-logo" src="/static/logo.png" alt="Carchon"><span class="side-os">OS</span></span><span class="side-sub">${co.name}</span></a>
   ${SIDE.map(([g, items]) => h`<div class="side-g">${g ? h`<div class="side-gh">${g}</div>` : ''}
     ${items.map(([k, label, href, ic, paths]) => h`<a class="side-a${isOn(paths) ? ' on' : ''}" href="${href}">${icon(ic)}<span>${label}</span>${c[k] ? h`<span class="side-n">${c[k]}</span>` : ''}</a>`)}</div>`)}
   <div class="side-f">
     <a class="side-a" href="/atelier">${icon('ipad')}<span>Mode atelier (iPad)</span></a>
+    <button type="button" class="side-a linkish" data-theme-toggle>${icon('moon')}<span data-theme-label>Mode nuit</span></button>
     <form method="post" action="/deconnexion"><button type="submit" class="side-a linkish">${icon('home')}<span>Se déconnecter</span></button></form>
     <div class="side-cta">${cockpitBtn()}</div>
   </div>
@@ -207,6 +209,7 @@ function page(title, body, { bodyClass = '', head = '' } = {}) {
 <link rel="icon" href="/static/logo.png">
 <link rel="preconnect" href="https://fonts.googleapis.com"><link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/static/style.css">${head}
+<script>try{var t=localStorage.getItem('theme');if(t==='dark'||(!t&&matchMedia('(prefers-color-scheme: dark)').matches&&localStorage.getItem('theme-auto')!=='0'))document.documentElement.setAttribute('data-theme','dark')}catch(e){}</script>
 </head><body class="${bodyClass}">${body}<script src="/static/app.js" defer></script></body></html>`.toString();
 }
 

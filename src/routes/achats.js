@@ -138,8 +138,8 @@ r.post('/achats/commander', (req, res) => {
     oid = q.run('INSERT INTO orders (supplier_id, what, expected_at) VALUES (?, ?, ?)', sid, what, str(req.body.expected_at) || null).lastInsertRowid;
     lines.forEach((l) => q.run("UPDATE needs SET status = 'ordered', order_id = ?, acknowledged = 1 WHERE id = ?", oid, l.id));
   });
-  const mail = s.email ? `mailto:${encodeURIComponent(s.email)}?subject=${encodeURIComponent('Commande Carchon Les Ateliers')}&body=${encodeURIComponent(`Bonjour,\n\nPouvez-vous nous livrer :\n${lines.map((l) => `- ${l.text}`).join('\n')}\n\nMerci,\nCarchon Les Ateliers`)}` : '';
-  res.flashTo('/achats', '', 'ok', { html: `Commande notée chez ${s.name.replace(/[<>&"]/g, '')}. <a href="/commandes/${oid}/bon">Bon de commande</a> · ${mail ? `<a href="${mail.replace(/"/g, '&quot;')}">Écrire le mail de commande</a>` : s.phone ? `Appelle le ${s.phone.replace(/[<>&"]/g, '')}.` : ''}` });
+  const mail = s.email ? `/mail/nouveau?to=${encodeURIComponent(s.email)}&subject=${encodeURIComponent('Commande Carchon Les Ateliers')}&back=%2Fachats&body=${encodeURIComponent(`Bonjour,\n\nPouvez-vous nous livrer :\n${lines.map((l) => `- ${l.text}`).join('\n')}\n\nMerci,\nCarchon Les Ateliers`)}` : '';
+  res.flashTo('/achats', '', 'ok', { html: `Commande notée chez ${s.name.replace(/[<>&"]/g, '')}. <a href="/commandes/${oid}/bon">Bon de commande</a> · ${mail ? `<a href="${mail.replace(/"/g, '&quot;')}">Envoyer la commande par e-mail</a>` : s.phone ? `Appelle le ${s.phone.replace(/[<>&"]/g, '')}.` : ''}` });
 });
 
 // Bon de commande imprimable (ou à joindre en PDF au fournisseur).
@@ -199,7 +199,7 @@ r.get('/fournisseurs', (req, res) => {
   const body = h`<div class="head"><div><div class="eb">Achats</div><h1>Fournisseurs</h1><p class="mut mt8">Un contact et une note, écrits une fois. L'équipe sait qui appeler.</p></div>
 <details class="menu push"><summary class="btn">+ Fournisseur</summary><form method="post" action="/fournisseurs" class="menu-list right-al form pad wide">${form()}<button class="btn sm">Ajouter</button></form></details></div>
 <div class="flexcards mt20">${rows.map((s) => h`<section class="card"><div class="line"><h2>${s.name}</h2></div><p class="mut">${[s.contact, s.phone, s.email].filter(Boolean).join(' · ') || 'Pas de contact noté'}</p><p>${s.note}</p>
-<div class="line">${s.phone ? h`<a class="btn alt sm" href="tel:${s.phone}">Appeler</a>` : ''}${s.email ? h`<a class="btn alt sm" href="mailto:${s.email}">Écrire</a>` : ''}
+<div class="line">${s.phone ? h`<a class="btn alt sm" href="tel:${s.phone}">Appeler</a>` : ''}${s.email ? h`<a class="btn alt sm" href="/mail/nouveau?to=${encodeURIComponent(s.email)}&back=%2Ffournisseurs">Écrire</a>` : ''}
 <details class="menu"><summary class="btn alt sm">Modifier</summary><form method="post" action="/fournisseurs/${s.id}" class="menu-list form pad wide">${form(s)}<div class="line"><button class="btn sm">Enregistrer</button><button class="btn alt sm" name="del" value="1" data-confirm-btn="Supprimer ce fournisseur ?">Supprimer</button></div></form></details></div></section>`)}
 ${rows.length ? '' : h`<section class="card"><p class="mut">Ajoute tes fournisseurs habituels : scierie, droguerie, quincaillerie, négoce de panneaux…</p></section>`}</div>`;
   res.send(layout({ title: 'Fournisseurs', tab: 'achats', sub: '/fournisseurs', body, flash: req.flash, counts: counts() }));

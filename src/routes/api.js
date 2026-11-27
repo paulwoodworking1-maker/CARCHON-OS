@@ -32,10 +32,7 @@ r.post('/affaires', (req, res) => {
   try {
     tx(() => {
       let clientId = null;
-      if (str(c.name)) {
-        const ex = str(c.email) ? q.get('SELECT id FROM clients WHERE lower(email) = lower(?)', str(c.email)) : null;
-        clientId = ex ? ex.id : Number(q.run('INSERT INTO clients (name, kind, email, phone, address) VALUES (?, ?, ?, ?, ?)', str(c.name), str(c.kind) || 'Particulier', str(c.email), str(c.phone), str(c.address)).lastInsertRowid);
-      }
+      if (str(c.name)) clientId = require('../cockpit').upsert(c);
       const canal = P.CANALS.includes(b.canal) ? b.canal : (str(b.model_code) ? 'Revendeur' : 'Sur-mesure');
       if (str(b.model_code)) {
         const m = q.get('SELECT id FROM models WHERE code = ? AND active = 1', str(b.model_code).toUpperCase());
@@ -47,6 +44,8 @@ r.post('/affaires', (req, res) => {
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, 'Préparer le carnet')`, str(b.name), str(c.kind) || canal, canal, clientId, str(b.due_date) || null, L.patron().id, str(c.name),
           b.deposit_needed === false ? 0 : 1, b.deposit_received ? new Date().toISOString().slice(0, 10) : null).lastInsertRowid);
       }
+      if (str(b.name)) q.run("UPDATE projects SET descr = ? WHERE id = ? AND COALESCE(descr, '') = ''", str(b.name), projectId);
+      L.syncProjectName(projectId);
       const amt = Number(String(b.amount_ht ?? b.amount ?? '').replace(/[\s\u00a0\u202f€]/g, '').replace(',', '.'));
       const { FAMILIES, SOURCES } = require('../db');
       q.run('UPDATE projects SET amount_ht = ?, family = ?, source = ? WHERE id = ?', Number.isFinite(amt) && amt > 0 ? amt : null,
@@ -57,6 +56,15 @@ r.post('/affaires', (req, res) => {
   const p = q.get('SELECT id, ref FROM projects WHERE id = ?', projectId);
   res.status(201).json({ id: p.id, ref: p.ref });
 });
+
+// Base clientèle de Cockpit : un client ou une liste ({ clients: [...] }).
+r.post('/clients', (req, res) => {
+  const b = req.body || {};
+  const list = Array.isArray(b) ? b : Array.isArray(b.clients) ? b.clients : [b];
+  const n = require('../cockpit').upsertMany(list);
+  res.json({ ok: true, clients: n });
+});
+r.get('/clients', (req, res) => res.json({ clients: q.all('SELECT id, cockpit_id, name, kind, email, phone, address FROM clients ORDER BY name') }));
 
 r.post('/affaires/:ref/acompte', (req, res) => {
   const p = q.get('SELECT * FROM projects WHERE ref = ?', req.params.ref);
