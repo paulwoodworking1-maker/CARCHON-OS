@@ -1,16 +1,19 @@
 'use strict';
 // Patron : Aujourd'hui, recherche, liste des projets et fiche projet.
 const express = require('express');
-const { q, tx, PHASES, logActivity } = require('../db');
+const { q, tx, PHASES, FAMILIES, SOURCES, logActivity } = require('../db');
 const { icon, h, raw, layout, pill, avatar, postBtn, options, hidden, ddmm, longDate, today, addDays, rel, hoursLabel, dayMonth, hhmm } = require('../html');
 const L = require('../logic');
 const { upload, fileUrl, isImage } = require('../uploads');
 const decideRow = (...a) => require('./decider').row(...a);
 const SMS = require('../sms');
+const Q = require('../qonto');
 
 const r = express.Router();
 const int = (v) => (v === undefined || v === '' || v === null ? null : Number(v));
 const str = (v) => String(v ?? '').trim();
+// « 8 400,50 € » -> 8400.5 ; vide -> null.
+const euros = (v) => { const x = Number(String(v ?? '').replace(/[\s\u00a0\u202f€]/g, '').replace(',', '.')); return String(v ?? '').trim() && Number.isFinite(x) ? x : null; };
 
 const friseBar = (fr) => h`<div class="bar" aria-hidden="true">${fr.map((f) => h`<i class="${f.state}" title="${f.phase} · ${f.label}"></i>`)}</div>`;
 
@@ -549,6 +552,9 @@ ${p.client_id ? h`<p class="mut">Titre : nom du client.</p>` : h`<label>Nom <inp
 <label>Prochaine action (vide = automatique) <input name="next_action" value="${p.next_action}"></label>
 ${p.client_id ? h`<label class="ck"><input type="checkbox" name="deposit_needed" value="1" ${p.deposit_needed ? 'checked' : ''}> Acompte demandé</label>
 <label>Acompte reçu le <input type="date" name="deposit_at" value="${p.deposit_at ? p.deposit_at.slice(0, 10) : ''}"></label>` : ''}
+<div class="grid2"><label>Montant vendu HT (€) <input name="amount_ht" inputmode="decimal" value="${p.amount_ht ?? ''}" placeholder="ex. 8400"></label><label>Matière et sous-traitance HT (€) <input name="material_ht" inputmode="decimal" value="${p.material_ht ?? ''}" placeholder="ex. 1900"></label></div>
+<div class="grid2"><label>Famille <select name="family"><option value="">—</option>${options(FAMILIES, p.family)}</select></label><label>Origine du client <select name="source"><option value="">—</option>${options(SOURCES, p.source)}</select></label></div>
+<p class="mut t12">Servent à l'Analyse : taux horaire réel, familles et canaux qui rapportent.</p>
 <label>Bois <textarea name="wood" rows="2">${p.wood}</textarea></label>
 <label>Notes <textarea name="notes" rows="4">${p.notes}</textarea></label>
 <button class="btn sm">Enregistrer</button></form>
@@ -614,10 +620,13 @@ ${p.client_id ? h`<section class="card"><div class="line"><h2>Portail client</h2
 <p class="mut">Ce que ${p.client.name} voit dans son espace. Tout part tout seul, dates de livraison comprises.</p>
 <div class="who f"><span class="grow">Devis</span><b>${quote ? `Accepté le ${ddmm(quote.accepted_at)}` : '—'}</b></div>
 <div class="who"><span class="grow">Acompte</span><b>${p.deposit_at ? `Reçu le ${ddmm(p.deposit_at)}` : 'Attendu'}</b></div>
-${(() => { const inv = q.get("SELECT * FROM documents WHERE project_id = ? AND kind = 'facture_acompte' ORDER BY id DESC LIMIT 1", p.id);
+${p.deposit_invoice_id || Q.on() ? h`<div class="who" id="facture"><span class="grow">Facture d’acompte${p.deposit_invoice_number ? h` <span class="mut">${p.deposit_invoice_number}</span>` : ''}${p.deposit_invoice_error ? h`<span class="mut t12 red">${p.deposit_invoice_error}</span>` : ''}</span>
+<b>${p.deposit_invoice_status === 'paid' || (p.deposit_invoice_id && p.deposit_at) ? 'Payée' : p.deposit_invoice_status === 'sent' ? `Envoyée le ${ddmm(p.deposit_invoice_sent_at)}` : p.deposit_invoice_status === 'created' ? 'Créée, pas envoyée' : p.deposit_invoice_status === 'creating' ? 'En cours…' : p.deposit_invoice_status === 'error' ? 'Échec' : '—'}</b></div>
+${p.deposit_invoice_url ? h`<a class="btn alt sm mt8" href="${p.deposit_invoice_url}" target="_blank" rel="noopener">Voir la facture</a>` : ''}
+${quote && !p.deposit_at && Q.configured() && p.deposit_invoice_status !== 'sent' && p.deposit_invoice_status !== 'creating' ? postBtn(`/projets/${p.id}/facture-acompte`, p.deposit_invoice_id ? 'Renvoyer la facture' : 'Créer et envoyer la facture d’acompte', 'btn alt sm mt8', {}, p.deposit_invoice_id ? '' : 'Créer la facture d’acompte dans Qonto et l’envoyer au client ?') : ''}` : h`${(() => { const inv = q.get("SELECT * FROM documents WHERE project_id = ? AND kind = 'facture_acompte' ORDER BY id DESC LIMIT 1", p.id);
     return inv ? h`<div class="who" id="facture"><span class="grow">Facture d’acompte</span><a class="b" href="${fileUrl(inv.file)}" target="_blank">${inv.number ? `n° ${inv.number}` : 'publiée'}</a></div>`
       : p.deposit_needed && !p.deposit_at ? h`<form method="post" action="/projets/${p.id}/facture" enctype="multipart/form-data" class="who" id="facture"><span class="grow">Facture d’acompte<span class="mut t12" style="display:block">${require('../cockpit').configured() ? 'attendue de Cockpit · ou dépose-la ici' : 'dépose le PDF : il part sur le portail'}</span></span>
-<input type="file" name="pdf" accept="application/pdf" required aria-label="Facture d’acompte (PDF)" style="max-width:190px"><input name="numero" placeholder="N°" aria-label="Numéro de facture" style="max-width:90px"><button class="btn alt sm">Publier</button></form>` : ''; })()}
+<input type="file" name="pdf" accept="application/pdf" required aria-label="Facture d’acompte (PDF)" style="max-width:190px"><input name="numero" placeholder="N°" aria-label="Numéro de facture" style="max-width:90px"><button class="btn alt sm">Publier</button></form>` : ''; })()}`}
 <form method="post" action="/projets/${p.id}/infos" class="who"><label class="grow" for="rd">Prête à poser vers le</label><input id="rd" type="date" name="ready_date" value="${p.ready_date || ''}" data-auto><input type="hidden" name="only" value="ready_date"></form>
 <div class="who"><span class="grow">Photos partagées</span><b>${shared} sur ${photos.length}</b></div>
 <div class="line mt12"><a class="btn alt sm" href="/portails#p${p.id}">Gérer le portail</a><a class="btn alt sm" href="/projets/${p.id}/nouvelles">Donner des nouvelles</a></div>
@@ -667,13 +676,24 @@ r.post('/projets/:id/infos', loadProject, (req, res) => {
   }
   const depositAt = str(b.deposit_at) || null;
   tx(() => {
-    q.run('UPDATE projects SET name = ?, descr = ?, due_date = ?, lead_id = ?, next_action = ?, wood = ?, notes = ?, deposit_needed = ?, deposit_at = ? WHERE id = ?',
-      p.client_id ? p.name : str(b.name) || p.name, str(b.descr), str(b.due_date) || null, int(b.lead_id), str(b.next_action), str(b.wood), str(b.notes), p.client_id ? (b.deposit_needed ? 1 : 0) : 0, depositAt, p.id);
+    q.run('UPDATE projects SET name = ?, descr = ?, due_date = ?, lead_id = ?, next_action = ?, wood = ?, notes = ?, deposit_needed = ?, deposit_at = ?, amount_ht = ?, material_ht = ?, family = ?, source = ? WHERE id = ?',
+      p.client_id ? p.name : str(b.name) || p.name, str(b.descr), str(b.due_date) || null, int(b.lead_id), str(b.next_action), str(b.wood), str(b.notes), p.client_id ? (b.deposit_needed ? 1 : 0) : 0, depositAt,
+      euros(b.amount_ht), euros(b.material_ht), FAMILIES.includes(b.family) ? b.family : '', SOURCES.includes(b.source) ? b.source : '', p.id);
     // Acompte reçu : les achats qui l'attendaient se débloquent.
     if (depositAt && !p.deposit_at) { q.run('UPDATE needs SET needs_deposit = 0 WHERE project_id = ?', p.id); logActivity(p.id, null, `Acompte reçu le ${ddmm(depositAt)}`, 'Patron'); SMS.notify('acompte', { projectId: p.id }); }
     if (str(b.due_date) && str(b.due_date) !== (p.due_date || '')) logActivity(p.id, null, `Date de livraison : ${ddmm(str(b.due_date))}${p.due_date ? ` (au lieu du ${ddmm(p.due_date)})` : ''}`, 'Patron');
   });
   res.flashTo(`/projets/${p.id}`, depositAt && !p.deposit_at ? 'Acompte noté. Les achats bloqués sont débloqués.' : 'Enregistré.');
+});
+
+// Facture d'acompte Qonto : créer, ou renvoyer si elle existe déjà.
+r.post('/projets/:id/facture-acompte', loadProject, async (req, res) => {
+  const p = req.project;
+  const back = String(req.body.back || '').startsWith('/') ? String(req.body.back) : `/projets/${p.id}#facture`;
+  try {
+    const out = p.deposit_invoice_id ? await Q.resend(p.id) : await Q.createDeposit(p.id);
+    res.flashTo(back, out.busy ? 'La facture est déjà en cours de création.' : p.deposit_invoice_id ? 'Facture d’acompte renvoyée au client par Qonto.' : `Facture d’acompte ${out.number || ''} créée et envoyée au client par Qonto.`);
+  } catch (e) { res.flashTo(back, e.message, 'ko'); }
 });
 
 // Acompte reçu en un clic (depuis À décider).
@@ -773,7 +793,7 @@ r.get('/projets/:id/nouvelles', loadProject, async (req, res, next) => {
     nPhotos && p.portal_state === 'open' ? `${nPhotos} photo${nPhotos > 1 ? 's' : ''} de l'atelier dans votre espace en ligne` : null,
   ].filter(Boolean);
   let subject = `Des nouvelles de votre projet · ${p.name}`;
-  let text = `Bonjour,\n\nVoici où en est votre projet « ${p.name} » :\n${facts.map((f) => `- ${f}`).join('\n')}\n\nN'hésitez pas à nous écrire si vous avez une question.\n\nBien cordialement,\nL'équipe Carchon`;
+  let text = require('../messages').t('mail_nouvelles_texte', { projet: p.name, faits: facts.map((f) => `- ${f}`).join('\n') });
   let note = ai.enabled() ? '' : 'Modèle simple : active l’assistant IA (Pilotage › Automatisations) pour un message rédigé.';
   if (ai.enabled() && req.query.modele !== '1') {
     try { const m = await ai.clientUpdate({ project: p, clientName: p.client.name, facts }); subject = m.objet; text = m.message; note = 'Rédigé par l’assistant à partir de l’avancement réel. Relis avant d’envoyer.'; }

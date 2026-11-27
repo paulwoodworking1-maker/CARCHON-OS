@@ -118,7 +118,8 @@ function toDecide() {
   // Devis signé, acompte attendu, mais pas encore de facture d'acompte sur le portail.
   for (const p of q.all(`SELECT projects.* FROM projects JOIN quotes ON quotes.project_id = projects.id AND quotes.status = 'accepted'
       WHERE projects.status = 'en_cours' AND projects.deposit_needed = 1 AND projects.deposit_at IS NULL AND quotes.accepted_at <= datetime('now', '-1 day')
-      AND NOT EXISTS (SELECT 1 FROM documents WHERE documents.project_id = projects.id AND documents.kind = 'facture_acompte') GROUP BY projects.id`)) {
+      AND projects.deposit_invoice_id IS NULL AND NOT EXISTS (SELECT 1 FROM documents WHERE documents.project_id = projects.id AND documents.kind = 'facture_acompte') GROUP BY projects.id`)) {
+    if (require('./qonto').on()) continue; // suivi par l'alerte « Facture d’acompte » (Qonto)
     items.push({ kind: 'wa', tag: 'Facture', title: `${p.name} · facture d’acompte pas encore sur le portail`, text: 'Cockpit ne l’a pas encore envoyée. Tu peux déposer le PDF sur l’OF.', href: `/projets/${p.id}#facture`, cta: 'Déposer' });
   }
   const all = [...items, ...require('./automations').alerts()];
@@ -163,6 +164,7 @@ function projectFromQuote(quote) {
     projectId = Number(q.run("INSERT INTO projects (name, kind, client_id, next_action, deposit_asked_at, lead_id) VALUES (?, 'Particulier', ?, 'Lancer le projet', datetime('now'), ?)", name, clientId, patron().id).lastInsertRowid);
     q.run('UPDATE quotes SET project_id = ? WHERE id = ?', projectId, quote.id);
   }
+  q.run("UPDATE projects SET amount_ht = COALESCE(?, amount_ht), family = COALESCE(NULLIF(?, ''), family), source = COALESCE(NULLIF(?, ''), source) WHERE id = ?", quote.amount_ht ?? null, quote.family || '', quote.source || '', projectId);
   q.run("INSERT OR REPLACE INTO phase_overrides (project_id, phase, state, label) VALUES (?, 'Conception', 'c', 'À démarrer')", projectId);
   syncProjectName(projectId);
   return projectId;

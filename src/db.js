@@ -16,6 +16,10 @@ const PHASES = ['Conception', 'Accord', 'Bois', 'Débit', 'Assemblage', 'Finitio
 // Les gestes suivis dans « Pilotage ».
 const GESTES = ['Débit, corroyage', "Queues d'aronde", 'Assemblage', 'Collage', 'Ponçage', 'Vernis', 'Huile-cire', 'Contrôle', 'Pose', 'Usinage CNC', 'Autre'];
 const STOCK_CATS = ['Quincaillerie', 'Droguerie', 'Matériaux', 'Consommables'];
+// Familles de la stratégie 2027 (les trois premières sont le « cœur ») et origines des affaires.
+const FAMILIES = ['Pièce signature', 'Agencement sur mesure', 'Projet pro', 'Petite pièce', 'Hors positionnement'];
+const CORE_FAMILIES = FAMILIES.slice(0, 3);
+const SOURCES = ['Prescripteur (architecte, décorateur)', 'Client livré, parrainage', 'Site web', 'Instagram, Pinterest', 'Fiche Google', 'Salon, porte ouverte', 'Revendeur', 'Autre'];
 
 db.exec(`
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);
@@ -196,6 +200,18 @@ addColumn('clients', 'cockpit_id', 'TEXT');                  // fiche client de 
 addColumn('clients', 'synced_at', 'TEXT');
 addColumn('trips', 'kind', "TEXT DEFAULT 'Livraison et pose'");
 addColumn('trips', 'hours', 'REAL DEFAULT 0');
+// Analyse : montant vendu, matière, famille et origine de chaque affaire (pour le taux horaire réel et les sources).
+addColumn('projects', 'amount_ht', 'REAL');
+addColumn('projects', 'material_ht', 'REAL');
+addColumn('projects', 'family', "TEXT DEFAULT ''");
+addColumn('projects', 'source', "TEXT DEFAULT ''");
+addColumn('quotes', 'amount_ht', 'REAL');
+addColumn('quotes', 'source', "TEXT DEFAULT ''");
+addColumn('quotes', 'family', "TEXT DEFAULT ''");
+// Facture d'acompte émise dans Qonto à l'acceptation du devis.
+addColumn('quotes', 'billing_json', 'TEXT');
+for (const [c, d] of [['deposit_invoice_id', 'TEXT'], ['deposit_invoice_number', 'TEXT'], ['deposit_invoice_url', 'TEXT'], ['deposit_invoice_status', 'TEXT'], ['deposit_invoice_error', "TEXT DEFAULT ''"],
+  ['deposit_invoice_ttc', 'REAL'], ['deposit_invoice_due', 'TEXT'], ['deposit_invoice_sent_at', 'TEXT']]) addColumn('projects', c, d);
 
 db.exec(`
 CREATE TABLE IF NOT EXISTS models (
@@ -443,4 +459,4 @@ const COMPANY_FIELDS = [['company_name', 'Raison sociale', 'Carchon Les Ateliers
   ['company_phone', 'Téléphone', ''], ['company_email', 'E-mail', ''], ['company_site', 'Site web', 'www.carchon.com']];
 const company = () => Object.fromEntries(COMPANY_FIELDS.map(([k, , d]) => [k.replace('company_', ''), setting(k, d) || d]));
 
-module.exports = { db, q, tx, setting, setSetting, logActivity, company, COMPANY_FIELDS, PHASES, GESTES, STOCK_CATS, DATA_DIR, UPLOAD_DIR };
+module.exports = { db, q, tx, setting, setSetting, logActivity, company, COMPANY_FIELDS, PHASES, GESTES, STOCK_CATS, FAMILIES, CORE_FAMILIES, SOURCES, DATA_DIR, UPLOAD_DIR };

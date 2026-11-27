@@ -64,7 +64,9 @@ function quotePayload(x) {
     devis: { numero: x.number, version: x.version, accepte_le: x.accepted_at, reference_acceptation: x.accept_ref, signataire: x.accept_name, qualite: x.accept_quality,
       lignes: (() => { try { return JSON.parse(x.lines || '[]').map((l) => ({ designation: l.d, quantite: l.q })); } catch { return []; } })() },
     client: { nom: c?.name || x.signer_name, email: c?.email || x.signer_email, telephone: c?.phone || x.signer_phone || '' },
-    acompte_attendu: !!(p && p.deposit_needed && !p.deposit_at),
+    // Qonto relié : la facture d'acompte part de Carchon OS, Cockpit n'en édite pas une deuxième.
+    acompte_attendu: !!(p && p.deposit_needed && !p.deposit_at) && !(require('./qonto').on() && !x.test),
+    facture_acompte: require('./qonto').on() && !x.test ? 'qonto' : 'cockpit',
     retour_facture: p && publicBase() ? `${publicBase()}/api/v1/affaires/${encodeURIComponent(p.ref)}/factures` : null,
   };
 }

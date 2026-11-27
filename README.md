@@ -96,6 +96,18 @@ Pour que les clients reçoivent leur code par e-mail, renseigner `SMTP_*` (l'adr
 2. **Chaîne de production** (Opus 5.5, réflexion maximale) : le modèle 3D (STEP ou Rhino .3dm) est mesuré pièce par pièce sur le serveur et affiché dans l'OF (visionneuse 3D). Au clic « Générer la production », quatre vues du modèle, la nomenclature mesurée, le devis, les plans et le chiffrage partent à l'assistant, qui rend l'analyse technique, la fiche de débit (cotes finies et brutes), la matière à commander et la gamme de fabrication (sans conception : elle est faite avant le chiffrage). Les fiches arrivent en brouillon. **Avec le forfait Claude** (sans coût d'API) : « Préparer la production avec Claude » télécharge un dossier (.zip : instructions + nomenclature 3D, vues, devis, plans, chiffrage) à déposer dans une conversation claude.ai ; la réponse JSON de Claude est recollée dans Carchon OS, vérifiée, puis appliquée de la même façon.
 3. **Planning** : les fiches de fabrication ne sont pas placées avant la date où toute la matière est là (date de livraison des commandes, sinon délai habituel du fournisseur, plus un jour de réception).
 
+## Facture d'acompte automatique (Qonto)
+
+Quand Qonto est relié, c'est lui qui émet la facture d'acompte ; Cockpit est prévenu (`facture_acompte: "qonto"`, `acompte_attendu: false`) pour ne pas en éditer une deuxième.
+
+Quand un client accepte son devis sur le portail (montant HT indiqué à l'envoi du devis), Carchon OS :
+1. crée ou retrouve le client dans Qonto (avec l'adresse de facturation saisie à l'acceptation) ;
+2. émet dans Qonto la facture d'acompte (40 % du HT par défaut, TVA 20 %, à régler sous 7 jours, reliée au devis Qonto du même numéro) ;
+3. la fait envoyer par e-mail par Qonto, et l'affiche dans l'espace du client (« Voir la facture et payer ») ;
+4. vérifie toutes les 10 minutes si elle est payée : l'acompte passe alors à « reçu » et les achats bloqués se débloquent.
+
+À régler une fois : dans Qonto, **Paramètres › Intégrations et partenariats › Clé API**, puis dans Render › Environment : `QONTO_LOGIN` (identifiant) et `QONTO_SECRET_KEY` (clé secrète). Pourcentage, TVA, échéance, IBAN et texte de l'e-mail : Portails clients › Réglages et e-mails. Les devis de test ne créent jamais de facture. En cas d'échec, « À décider » propose « Réessayer ».
+
 ## Sauvegardes
 
 Chaque nuit, une copie complète de la base est écrite dans `DATA_DIR/sauvegardes/` (les 14 dernières sont gardées). Dans Réglages › Entreprise › Sauvegardes, on peut en télécharger une à tout moment : en ranger une chaque semaine hors du serveur.

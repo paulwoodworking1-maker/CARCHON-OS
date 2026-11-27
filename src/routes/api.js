@@ -1,6 +1,7 @@
 'use strict';
 // Liaison avec Cockpit (ou tout autre logiciel) : API JSON protégée par une clé (Pilotage › Équipe et réglages › Entreprise).
 //   POST /api/v1/affaires            une affaire signée devient un OF (sur-mesure, ou lot depuis un modèle du catalogue)
+//                                    champs utiles à l'Analyse : amount_ht (€ HT), family, source
 //   POST /api/v1/affaires/:ref/acompte   l'acompte est encaissé : les achats bloqués se débloquent
 //   POST /api/v1/affaires/:ref/factures  facture d'acompte / de solde (PDF) : publiée sur le portail client
 //   GET  /api/v1/ofs                 avancement, dates, heures et coût réel de chaque OF
@@ -45,6 +46,10 @@ r.post('/affaires', (req, res) => {
       }
       if (str(b.name)) q.run("UPDATE projects SET descr = ? WHERE id = ? AND COALESCE(descr, '') = ''", str(b.name), projectId);
       L.syncProjectName(projectId);
+      const amt = Number(String(b.amount_ht ?? b.amount ?? '').replace(/[\s\u00a0\u202f€]/g, '').replace(',', '.'));
+      const { FAMILIES, SOURCES } = require('../db');
+      q.run('UPDATE projects SET amount_ht = ?, family = ?, source = ? WHERE id = ?', Number.isFinite(amt) && amt > 0 ? amt : null,
+        FAMILIES.includes(b.family) ? b.family : '', SOURCES.includes(b.source) ? b.source : '', projectId);
       logActivity(projectId, null, `Affaire signée reçue de Cockpit${str(b.reference) ? ` (réf. ${str(b.reference)})` : ''}${str(b.amount) ? ` · ${str(b.amount)}` : ''}`, 'Cockpit');
     });
   } catch (e) { return res.status(e.status || 500).json({ error: e.message }); }
