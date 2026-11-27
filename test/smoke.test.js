@@ -324,7 +324,7 @@ const form = (o) => ({ method: 'POST', redirect: 'manual', headers: { cookie, 'c
 
 test('la fiche projet est rangée en onglets avec le dossier de production et la sous-traitance', async () => {
   const html = await (await fetch(base + '/projets/1', { headers: { cookie } })).text();
-  for (const id of ['id="vue"', 'id="dossier"', 'id="achats"', 'id="echanges"', 'id="sous-traitance"', 'id="carnet"', 'id="debit"', 'Laquage des façades', 'Retour en retard']) assert.ok(html.includes(id), id);
+  for (const id of ['id="vue"', 'id="dossier"', 'id="04"', 'id="07"', 'id="08"', 'id="09"', 'id="echanges"', 'id="sous-traitance"', 'id="carnet"', 'id="debit"', 'Laquage des façades', 'Retour en retard']) assert.ok(html.includes(id), id);
 });
 
 test('une commande de sous-traitance se crée, avance et recule', async () => {

@@ -1007,3 +1007,20 @@ td.where{min-width:220px}td.where .bar{margin-top:6px;max-width:260px}
 .ip-steps{list-style:none;margin:8px 0 0;padding:0;display:grid;gap:6px}
 .ip-steps .box{font-weight:700}
 td.where .bar{display:flex;gap:3px}td.where .bar i{flex:1 1 0!important;width:auto!important;min-width:0;height:6px}
+/* Dossier de production dans la fiche projet : 9 étapes, barre collante. */
+.dz-nav{position:sticky;top:0;z-index:6;background:var(--bg,#fff);margin-top:8px}
+.ptab#dossier .ch-step{scroll-margin-top:64px;margin-top:48px}
+.ptab#dossier .ch-step:first-of-type{margin-top:24px}
+.dz-block{margin-top:16px;display:flex;flex-direction:column;gap:20px}
+.dz-cols{margin-top:16px}
+details.dz-more{margin-top:16px}details.dz-more>summary{cursor:pointer;margin:0}
+.dz-fiche{list-style:none;margin:8px 0 0;padding:0;counter-reset:f}
+.dz-fiche li{display:flex;align-items:center;gap:12px;padding:10px 0;border-top:1px solid var(--line2);counter-increment:f}
+.dz-fiche li::before{content:counter(f, decimal-leading-zero);font-weight:300;font-size:18px;width:30px;flex:none;color:var(--mut)}
+.dz-fiche li.done a{text-decoration:line-through;text-decoration-color:var(--mut)}
+.dz-fiche .grow{display:flex;flex-direction:column;min-width:0}
+.dz-h{white-space:nowrap;color:var(--mut)}
+.dz-checks{list-style:none;margin:8px 0 0;padding:0}
+.dz-checks li{display:flex;gap:10px;align-items:center;padding:8px 0;border-top:1px solid var(--line2);font-size:14px}
+.dz-checks .box{width:18px;height:18px;border:1px solid var(--ink);display:inline-flex;align-items:center;justify-content:center;font-size:12px;flex:none}
+.dz-checks li.on .box{background:var(--ink);color:#fff}

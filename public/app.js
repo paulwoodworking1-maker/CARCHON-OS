@@ -182,7 +182,7 @@
       return true;
     };
     document.body.classList.add('js-tabs');
-    var h0 = location.hash.slice(1), saved = null;
+    var h0 = location.hash.slice(1) || (new URLSearchParams(location.search).get('tab') || ''), saved = null;
     try { saved = sessionStorage.getItem(key); } catch (x) {}
     if (!(h0 && show(h0, h0)) && !(saved && show(saved))) show(panels[0].id);
     window.addEventListener('hashchange', function () { var id = location.hash.slice(1); if (id) show(id, id); });

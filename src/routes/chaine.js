@@ -97,8 +97,8 @@ function stepHead(num, title, tag, ia, you, youTitle = 'Vous validez') {
 }
 const frozenBox = (c) => (c.frozen_at ? h`<div class="ch-frozen"><span class="eb">Fabrication</span> <b>Indice ${c.indice}</b> · version figée le ${ddmmyyyy(c.frozen_at)}, fait foi pour l’atelier.</div>` : '');
 
-r.get('/projets/:id/chaine', loadProject, (req, res) => {
-  const p = req.project;
+// Les étapes de la chaîne, réutilisées dans l'onglet « Dossier de production » de la fiche projet.
+function chaineParts(p) {
   const c = ensure(p);
   const x = C.compute(p.id, c.params, c.study);
   const P = x.p, frozen = !!c.frozen_at;
@@ -129,11 +129,11 @@ r.get('/projets/:id/chaine', loadProject, (req, res) => {
     ['Bois', `livré ${ddmm(plan.rows[1].end)}`, false], ...['Débit', 'Assemblage', 'Finition', 'Contrôle'].map((ph) => [ph, plan.byPhase(ph) ? ddmm(plan.byPhase(ph).start) : 'sans objet', ph === 'Débit' && !!c.consumed_at]),
     ['Livraison', ddmm(plan.poseDate), false], ['Réception', 'PV à signer', false],
   ];
-  const body = h`
+  const top = h`
 <div class="mut"><a href="/projets/${p.id}">‹ ${p.name}</a></div>
 <nav class="ch-nav" aria-label="Étapes">${STEPS.map(([k, l], i) => h`<a href="#${String(i + 1).padStart(2, '0')}"><span>${String(i + 1).padStart(2, '0')}</span> ${l}</a>`)}</nav>
-<header class="ch-top"><img class="logo ch-logo" src="/static/logo.png" alt="Carchon"><div class="push ch-ref"><div class="eb">Chaîne de production</div><div class="mut">Projet ${p.ref} · ${client ? client.name : p.for_whom || 'atelier'}</div></div></header>
-<div class="ch-hero"><div class="eb mt20">Du devis à la pose</div>
+<header class="ch-top"><img class="logo ch-logo" src="/static/logo.png" alt="Carchon"><div class="push ch-ref"><div class="eb">Chaîne de production</div><div class="mut">Projet ${p.ref} · ${client ? client.name : p.for_whom || 'atelier'}</div></div></header>`;
+  const hero = h`<div class="ch-hero"><div class="eb mt20">Du devis à la pose</div>
 <h1 class="ch-title">${p.descr || x.title || p.name}</h1>
 <p class="ch-lead">Une seule saisie : la demande du client, telle qu’elle est, en haut de l’étape 01. L’IA en fait l’étude, sans modèle figé. Tout le reste en découle et se recalcule : prix, plans, débit, calepinage, commandes, quincaillerie, planning et pose. L’atelier valide.</p></div>
 <div class="ch-kpis">${kpi(eur(x.ht), 'prix de vente HT')}${kpi(`${Math.round(x.marge * 100)} %`, 'marge sur prix de revient')}${kpi(x.pieces, `pièces · ${x.panelsCount} panneaux`)}${kpi(`${Math.round(x.hours)} h`, 'heures d’atelier et de pose')}${kpi(ddmm(plan.poseDate), 'pose au plus tôt')}</div>
@@ -142,7 +142,8 @@ r.get('/projets/:id/chaine', loadProject, (req, res) => {
 ${frozen ? h`<p class="mt12"><b>Devis accepté, indice ${c.indice} figé le ${ddmmyyyy(c.frozen_at)}.</b> Débit, commandes, étiquettes, montage et pose partent de cette version. Les cotes sont verrouillées.</p>
 <div class="line mt12">${postBtn(`/projets/${p.id}/chaine/avenant`, `Modifier : avenant ${String.fromCharCode((c.indice || 'A').charCodeAt(0) + 1)}`, 'btn alt', {}, 'Rouvrir le chiffrage pour un avenant ?')}${c.consumed_at ? pill('ok', `Débit fait le ${ddmm(c.consumed_at)}`) : postBtn(`/projets/${p.id}/chaine/debit`, 'Débit fait : sortir les panneaux du stock', 'btn', {}, 'Les panneaux sortent du stock et les chutes utiles entrent dans le stock de chutes. Continuer ?')}</div>`
     : h`<p class="mt12">Chiffrage en cours. Quand le client accepte le devis, fige la version : elle fait foi pour l’atelier, et les panneaux sont réservés dans le stock.</p><div class="line mt12">${postBtn(`/projets/${p.id}/chaine/figer`, `Devis accepté : figer l’indice ${c.indice ? String.fromCharCode(c.indice.charCodeAt(0) + 1) : 'A'}`, 'btn')}</div>`}</div>
-
+`;
+  const s1 = h`
 ${stepHead('01', 'La demande et le devis', 'Chiffrage automatique', 'Nomenclature, matière, quincaillerie, heures par poste, prix de revient et descriptif du devis, à partir de la demande du client, quelle qu’elle soit.', 'Le coefficient, le prix final et la formulation, puis l’envoi au client depuis son portail : il y signe le devis et règle l’acompte.')}
 <h3 class="ch-h3">La demande du client</h3>
 ${studyBlock(p, c, x, frozen)}
@@ -184,12 +185,14 @@ ${x.quote.map((l) => h`<div class="ch-ql"><div class="grow"><b>${l.name}</b><p c
 <div class="ch-total"><span class="mut">Total HT</span><div class="ch-big b">${eur(x.ht)}</div><span class="mut">TVA 20 % · ${eur(x.ttc)} TTC</span></div>
 <p class="mut mt12">Acompte de 30 % à la commande, soit ${eur(x.ttc * 0.3)} TTC. Solde à la réception. Devis valable un mois. Délai indicatif : pose au plus tôt le ${JOURS_C[parseDate(plan.poseDate).getDay()].toLowerCase()}. ${ddmm(plan.poseDate)}.</p>
 <div class="line mt12"><a class="btn alt sm" href="/projets/${p.id}/chaine/devis">Imprimer / PDF</a><a class="btn alt sm" href="/portails/envoyer">Envoyer le devis au client</a></div></div>
-
+`;
+  const s2 = h`
 ${stepHead('02', 'Plans', 'Générés depuis les cotes', 'Vue de face cotée, à partir des cotes saisies.', 'La même vue, ouverte sur l’étape en cours du carnet sur l’iPad de l’atelier.', 'Sur l’iPad de production')}
 ${c.study ? h`<div class="ch-panels">${(c.study.ensembles || []).map((e) => h`<figure class="ch-box"><figcaption><b>${e.nom}</b> <span class="mut t12">${e.largeur} × ${e.hauteur} × ${e.profondeur} · ${e.description}</span></figcaption>${ensembleView(e)}</figure>`)}</div>` : h`<div class="ch-box">${faceView(x)}</div>`}
 <table class="tbl mt12"><tbody><tr><td class="mut">Projet</td><td class="num b">${p.ref}</td></tr><tr><td class="mut">Ensemble</td><td class="num">${x.dims}</td></tr>
 <tr><td class="mut">Matière</td><td class="num">${[...new Set(x.lines.map((l) => `${l.ref.name} ${l.ref.thickness}`))].join(' · ')}</td></tr><tr><td class="mut">Finition</td><td class="num">${x.finition}${x.couches ? `, ${x.couches} couches` : ''}</td></tr><tr><td class="mut">Indice</td><td class="num">${c.indice ? `${c.indice}${frozen ? ' · fait foi' : ''}` : 'chiffrage'}</td></tr></tbody></table>
-
+`;
+  const s3 = h`
 ${stepHead('03', 'Nomenclature, débit et calepinage', 'Calepinage automatique', 'Les repères, le sens du fil, les chants à plaquer, le placement sur panneaux sans rotation des pièces plaquées.', 'Le calepinage et l’appairage des veinages sur les faces vues.')}
 ${frozenBox(c)}
 <div class="tablebox mt12"><table class="tbl ch-tbl"><thead><tr><th>Repère</th><th>Ensemble</th><th>Désignation</th><th class="num">Long. (fil)</th><th class="num">Larg.</th><th class="num">Ép.</th><th class="num">Qté</th><th>Chants</th><th>Usinage CNC</th></tr></thead><tbody>
@@ -197,7 +200,8 @@ ${x.lines.map((l) => h`<tr><td class="b">${l.label}</td><td class="mut">${l.ense
 ${x.cal.map((g) => h`<h3 class="ch-h3 mt20">${g.ref.name} ${g.ref.thickness} mm · ${g.panels.length} panneau${g.panels.length > 1 ? 'x' : ''} · ${Math.round(g.usage * 1000) / 10} % de matière utilisée · ${n1(g.m2)} m²</h3>
 ${g.tooBig.length ? h`<p class="flash ko">Trop grand pour le panneau : ${g.tooBig.map((t) => t.rep).join(', ')}</p>` : ''}
 <div class="ch-panels">${g.panels.map((pn, i) => h`<figure class="ch-box"><figcaption class="mut t12">Panneau ${i + 1} · ${pn.items.length} pièces${pn.offcuts.length ? ` · chutes : ${pn.offcuts.map((o) => `${o.len} × ${o.wid}`).join(', ')}` : ''}</figcaption>${panelView(g, pn)}</figure>`)}</div>`)}
-
+`;
+  const s4 = h`
 ${stepHead('04', 'Commandes fournisseurs et quincaillerie', 'Bons prêts', 'Les quantités, un bon de commande par fournisseur et le mail qui l’accompagne.', 'Le fournisseur, les références, puis l’envoi depuis ta boîte Gmail. La commande passe alors dans « Commandes en cours ».')}
 ${frozenBox(c)}
 ${groups.map((g) => { const tot = g.lines.reduce((a, l) => a + l.qty * l.pu, 0); const m = mailFor(g); const sup = g.sup; return h`
@@ -207,7 +211,8 @@ ${groups.map((g) => { const tot = g.lines.reduce((a, l) => a + l.qty * l.pu, 0);
 <div class="tablebox"><table class="tbl ch-tbl"><thead><tr><th>Référence</th><th class="num">Qté</th><th class="num">PU HT</th><th class="num">Total HT</th></tr></thead><tbody>
 ${g.lines.map((l) => h`<tr><td>${l.name}</td><td class="num">${l.qty}${l.unit ? ` ${l.unit}` : ''}</td><td class="num">${eur(l.pu, 2)}</td><td class="num">${eur(l.qty * l.pu, 2)}</td></tr>`)}
 <tr class="b"><td>${g.delay}</td><td></td><td></td><td class="num">${eur(tot, 2)}</td></tr></tbody></table></div>`; })}
-
+`;
+  const s5 = h`
 ${stepHead('05', 'Planning de fabrication', 'Recalculé à chaque changement', 'Un poste terminé : « Fait », puis « Ça t’a pris combien ? » en demi-journées. Deux touches, rien d’autre.', 'Se recale tout seul sur ce temps réel : les postes suivants glissent et la date de pose se met à jour. Envoyé au carnet, il entre dans le planning de l’atelier.', 'Le planning')}
 <p class="mut">Ici, la colonne « Fait en » joue le rôle de l’iPad : choisis la durée réelle d’un poste terminé.</p>
 <div class="tablebox mt12"><table class="ch-gantt"><thead><tr><th class="pc">Poste</th>${cols.map((d) => h`<th>${JOURS_C[parseDate(d).getDay()].slice(0, 2).toLowerCase()}<br>${parseDate(d).getDate()}</th>`)}</tr></thead><tbody>
@@ -220,11 +225,18 @@ ${cols.map((d) => { const inR = d >= r0.start && d <= r0.end; if (!inR) return h
 ${postBtn(`/projets/${p.id}/chaine/pose`, 'Mettre la pose dans les livraisons du projet', 'btn alt')}
 ${Object.keys(c.done).length ? postBtn(`/projets/${p.id}/chaine/fait`, 'Effacer les temps réels', 'btn alt', { clear: '1' }) : ''}
 <span class="mut t12">${x.b.jour_h} h par jour d’atelier.</span></div>
-
+`;
+  const s6 = h`
 ${stepHead('06', 'Étiquettes des pièces', 'À la sortie de la machine', 'Une étiquette par pièce : repère, désignation, dimensions, chant et sens du fil, projet et panneau.', 'L’impression, puis le collage sur chaque pièce à la sortie du débit.')}
 <div class="ch-labels">${x.cal.flatMap((g) => g.panels.flatMap((pn, i) => pn.items.slice(0, 6).map((it) => ({ it, i, g })))).slice(0, 6).map(({ it, i }) => h`<div class="ch-label"><div class="ch-big b">${it.rep}</div><b>${it.name}</b><div class="mut">${it.len} × ${it.wid}</div><div class="eb mt8">${p.ref} · panneau ${i + 1}</div></div>`)}</div>
 <div class="line mt12"><a class="btn" href="/projets/${p.id}/chaine/etiquettes">Imprimer toutes les étiquettes (${x.pieces})</a></div>`;
-  res.send(layout({ title: `Chaîne · ${p.name}`, heading: 'Chaîne de production', tab: 'projets', sub: '/projets', body, flash: req.flash }));
+  return { top: h`${top}${hero}`, hero, steps: [s1, s2, s3, s4, s5, s6], c, x };
+}
+
+r.get('/projets/:id/chaine', loadProject, (req, res) => {
+  const p = req.project;
+  ensure(p);
+  res.redirect(`/projets/${p.id}?tab=dossier`);
 });
 
 const back = (p, a = '') => `/projets/${p.id}/chaine${a}`;
@@ -340,3 +352,5 @@ r.get('/projets/:id/chaine/etiquettes', loadProject, (req, res) => {
 });
 
 module.exports = r;
+module.exports.chaineParts = chaineParts;
+module.exports.stepHead = stepHead;

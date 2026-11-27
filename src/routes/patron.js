@@ -293,6 +293,80 @@ r.post('/projets/nouveau', (req, res) => {
   res.flashTo(`/projets/${id}`, opened ? 'Projet créé et espace client ouvert : « Copier le lien du portail » dans l’onglet Client et documents.' : 'Projet créé. Prépare son carnet de fabrication quand tu es prêt.');
 });
 
+// ---------- Dossier de production : étapes 07 à 09 ----------
+function studyOf(p) {
+  const CH = require('../chaine'); const c = CH.get(p.id);
+  if (!c) return { c: null, x: null, ens: [] };
+  let x = null; try { x = CH.compute(p.id, c.params, c.study); } catch { x = null; }
+  const ens = (c.study?.ensembles || []).map((e) => ({ nom: e.nom, L: Number(e.largeur) || 0, H: Number(e.hauteur) || 0, P: Number(e.profondeur) || 0 }));
+  return { c, x, ens };
+}
+const mm = (v) => `${Math.round(v).toLocaleString('fr-FR')} mm`;
+function assemblageBlock(p) {
+  const { x, ens } = studyOf(p);
+  const steps = q.all('SELECT * FROM steps WHERE project_id = ? ORDER BY ord, id', p.id);
+  const pm = L.peopleMap();
+  const est = steps.reduce((a, t) => a + (t.est_hours || 0), 0);
+  const doneS = steps.filter((t) => t.status === 'done' && t.declared_hours != null);
+  const e1 = doneS.reduce((a, t) => a + (t.est_hours || 0), 0), r1 = doneS.reduce((a, t) => a + t.declared_hours, 0);
+  const ctrl = ens.length ? ens : x?.dims ? [{ nom: 'Ensemble', txt: x.dims }] : [];
+  return h`<div class="cols dz-cols"><div class="main-col"><section class="card" id="carnet"><div class="line"><h2>Fiches de l’atelier</h2><span class="count">${steps.length}</span>
+<span class="push line"><a class="btn alt sm" href="/carnets/${p.id}/imprimer">Imprimer</a><a class="btn sm" href="/carnets/${p.id}">Ouvrir le carnet</a></span></div>
+${steps.length ? h`<ol class="dz-fiche">${steps.map((t) => h`<li class="${t.status}"><div class="grow"><a class="b" href="/carnets/${p.id}?fiche=${t.id}">${t.piece ? `${t.piece} · ` : ''}${t.title}</a>
+<span class="mut t12">${[pm[t.who_id] ? (pm[t.who_id].role === 'patron' ? 'toi' : pm[t.who_id].name) : 'à attribuer', t.geste, t.sent ? '' : 'pas encore envoyée'].filter(Boolean).join(' · ')}</span></div>
+<span class="t12 dz-h">${t.est_hours ? hoursLabel(t.est_hours) : '—'}${t.declared_hours != null ? h`<b> → ${hoursLabel(t.declared_hours)}</b>` : ''}</span>${t.status === 'done' ? pill('ok', 'Fait') : t.status === 'doing' ? pill('wa', 'En cours') : ''}</li>`)}</ol>`
+  : h`<p class="mut">Pas encore de fiche : envoie la chaîne au carnet (étape 05) ou génère le carnet depuis les plans, ci-dessous.</p>`}</section></div>
+<aside class="side-col"><section class="card"><h2>Cotes de contrôle</h2>
+${ctrl.length ? h`<table class="tbl mt8"><tbody>${ctrl.map((e) => (e.txt ? h`<tr><td>${e.nom}</td><td class="num b">${e.txt}</td></tr>` : h`<tr><td>${e.nom}<div class="mut t12">diagonale de face (équerrage)</div></td><td class="num"><b>${e.L} × ${e.H} × ${e.P}</b><div class="mut t12">${mm(Math.hypot(e.L, e.H))} ± 2</div></td></tr>`))}</tbody></table>`
+  : h`<p class="mut">Les cotes apparaissent quand l’étude du devis (étape 01) est faite.</p>`}</section>
+<section class="card"><h2>Prévu et réel</h2><table class="tbl mt8"><tbody>
+<tr><td>Temps prévu au carnet</td><td class="num b">${hoursLabel(est)}</td></tr>
+<tr><td>Fiches finies avec un temps</td><td class="num">${doneS.length} / ${steps.length}</td></tr>
+${doneS.length ? h`<tr><td>Sur ces fiches : prévu → réel</td><td class="num b" style="color:${r1 > e1 * 1.1 ? 'var(--red)' : 'var(--ink)'}">${hoursLabel(e1)} → ${hoursLabel(r1)}</td></tr>` : ''}
+</tbody></table></section></aside></div>`;
+}
+function poseBlock(p) {
+  const { x, ens } = studyOf(p);
+  const trips = q.all('SELECT * FROM trips WHERE project_id = ? ORDER BY date', p.id);
+  const next = trips.find((t) => !t.done_at) || null;
+  const items = next ? (() => { try { return JSON.parse(next.items || '[]'); } catch { return []; } })() : [];
+  // Colis : un par ensemble, poids estimé depuis les pièces de l'étude (panneaux ~ 700 kg/m³).
+  const kgOf = (name) => (x?.lines || []).filter((l) => !name || l.ensemble === name).reduce((a, l) => a + (Number(l.len) * Number(l.wid) * Number(l.ep) * (Number(l.qty) || 1)) * 7e-7, 0);
+  const colis = ens.length ? ens.map((e) => ({ n: e.nom, d: `${e.H} × ${e.L} × ${e.P}`, kg: kgOf(e.nom) })) : x ? [{ n: 'Ouvrage', d: x.dims || '', kg: kgOf('') }] : [];
+  const kgMax = Math.max(0, ...colis.map((c) => c.kg));
+  const camion = items.length ? items : ['Couvertures et sangles', 'Cornières de protection', 'Visserie et fixations murales', 'Niveau, perceuse, visseuse', 'Cales de réglage', 'Chiffon et produit de retouche', 'iPad chargé pour le PV'].map((t) => ({ t, done: false }));
+  return h`<div class="cols dz-cols"><div class="main-col"><section class="card"><h2>Colisage</h2>
+${colis.length ? h`<div class="tablebox mt8"><table class="tbl"><thead><tr><th>Colis</th><th class="num">Dimensions</th><th class="num">Poids estimé</th></tr></thead><tbody>
+${colis.map((c) => h`<tr><td>${c.n}</td><td class="num">${c.d}</td><td class="num">${c.kg ? `${Math.round(c.kg)} kg` : '—'}</td></tr>`)}</tbody></table></div>
+<p class="mut t12 mt8">${kgMax > 35 ? 'Un colis dépasse 35 kg : prévoir deux personnes.' : 'Colis portables par une personne.'}${next ? ` Prochaine date : ${ddmm(next.date)}${next.team ? ` · ${next.team}` : ''}.` : ''}</p>`
+  : h`<p class="mut">Le colisage se calcule depuis l’étude du devis (étape 01).</p>`}</section></div>
+<aside class="side-col"><section class="card"><h2>Dans le camion</h2>${next ? h`<p class="mut t12">Coché depuis l’iPad la veille de la pose.</p>` : ''}
+<ul class="dz-checks">${camion.map((it) => h`<li class="${it.done ? 'on' : ''}"><span class="box">${it.done ? '✓' : ''}</span>${it.t}</li>`)}</ul></section>
+<section class="card"><h2>Procès-verbal</h2>${trips.filter((t) => t.pv_signed_at).map((t) => h`<div class="who f"><span class="grow">Signé le ${ddmm(t.pv_signed_at)}${t.pv_reserves ? h`<span class="mut t12 red">Réserve : ${t.pv_reserves}${t.pv_reserves_lifted_at ? ' (levée)' : ''}</span>` : h`<span class="mut t12">sans réserve</span>`}</span><a class="btn alt sm" href="/poses/${t.id}/pv">Voir</a></div>`)}
+${trips.some((t) => t.pv_signed_at) ? '' : next ? h`<p class="mut">Signé sur l’iPad à la pose.</p><a class="btn alt sm mt8" href="/poses/${next.id}/pv">Ouvrir le PV</a>` : h`<p class="mut">Ajoute d’abord une date de pose ci-dessous.</p>`}</section></aside></div>`;
+}
+function retourBlock(p) {
+  const rows = q.all(`SELECT COALESCE(NULLIF(geste, ''), 'Autre') g, COUNT(*) n, SUM(est_hours) e, SUM(declared_hours) d FROM steps
+    WHERE project_id = ? AND status = 'done' AND declared_hours IS NOT NULL GROUP BY g ORDER BY (SUM(declared_hours) - SUM(est_hours)) DESC`, p.id);
+  const rate = Number(String(require('../db').setting('hourly_rate', '0')).replace(',', '.')) || Number(require('../db').setting('obj_rate', '78')) || 78;
+  const added = q.get('SELECT COUNT(*) n, COALESCE(SUM(declared_hours), 0) h FROM steps WHERE project_id = ? AND added_by_atelier = 1', p.id);
+  const res = q.all("SELECT pv_reserves FROM trips WHERE project_id = ? AND pv_reserves != ''", p.id);
+  const sav = q.get('SELECT COUNT(*) n FROM sav WHERE project_id = ?', p.id).n;
+  const E = rows.reduce((a, r0) => a + (r0.e || 0), 0), D = rows.reduce((a, r0) => a + (r0.d || 0), 0);
+  return h`<div class="cols dz-cols"><div class="main-col"><section class="card"><h2>Prévu contre réel, par geste</h2>
+${rows.length ? h`<div class="tablebox mt8"><table class="tbl"><thead><tr><th>Geste</th><th class="num">Fiches</th><th class="num">Prévu</th><th class="num">Réel</th><th class="num">Écart</th></tr></thead><tbody>
+${rows.map((r0) => { const g = r0.e ? (r0.d - r0.e) / r0.e : null; return h`<tr><td>${r0.g}</td><td class="num">${r0.n}</td><td class="num">${hoursLabel(r0.e || 0)}</td><td class="num b">${hoursLabel(r0.d)}</td><td class="num" style="color:${g > 0.1 ? 'var(--red)' : 'var(--ink)'}">${g == null ? '—' : `${g > 0 ? '+' : ''}${Math.round(g * 100)} %`}</td></tr>`; })}
+<tr class="b"><td>Total</td><td></td><td class="num">${hoursLabel(E)}</td><td class="num">${hoursLabel(D)}</td><td class="num">${E ? `${D >= E ? '+' : ''}${Math.round((D - E) / E * 100)} %` : '—'}</td></tr></tbody></table></div>
+<p class="mt8">${D > E ? h`<b>${hoursLabel(D - E)} de plus que prévu</b>, soit environ ${Math.round((D - E) * rate).toLocaleString('fr-FR')} € au taux de ${rate} € / h. Corrige ces gestes dans le barème avant le prochain devis du même type.` : E ? 'Chiffrage tenu : le barème est bon pour ce type de projet.' : ''}</p>`
+  : h`<p class="mut">Se remplit au fil des fiches finies à l’atelier (« Ça t’a pris combien ? »).</p>`}</section></div>
+<aside class="side-col"><section class="card"><h2>À retenir</h2><table class="tbl mt8"><tbody>
+<tr><td>Tâches ajoutées par l’atelier</td><td class="num b">${added.n}${added.h ? ` · ${hoursLabel(added.h)}` : ''}</td></tr>
+<tr><td>Réserves au PV</td><td class="num b">${res.length}</td></tr>
+<tr><td>Demandes SAV</td><td class="num b">${sav}</td></tr></tbody></table>
+${res.map((r0) => h`<p class="mut t12 mt8">« ${r0.pv_reserves} »</p>`)}
+<p class="mut t12 mt8">Toutes les affaires : <a href="/analyse#chiffrage">Analyse › Chiffrage</a>.</p></section></aside></div>`;
+}
+
 // ---------- Achats du projet : rangés comme le stock, au prix le plus bas des catalogues ----------
 function achatsCard(p) {
   const P = require('../prix');
@@ -549,10 +623,10 @@ r.get('/projets/:id', loadProject, (req, res) => {
   const toBuy = pneeds.filter((n) => n.status !== 'ordered').length;
   // Bandeau « À suivre » : l'essentiel du dossier en un coup d'œil, chaque case ouvre le bon onglet.
   const tiles = [
-    { href: '#dossier', label: 'Carnet', val: steps.length ? `${stDone}/${steps.length} fiches` : 'Vide', sub: !steps.length ? (valid ? `Générer depuis ${valid.version}` : 'Ajouter un plan') : stDrafts ? `${stDrafts} à envoyer à l’atelier` : 'À jour sur l’iPad', warn: !steps.length || stDrafts },
-    { href: '#achats', label: 'Sous-traitance', val: sst.list.length ? `${sst.open.length} en cours` : 'Aucune', sub: sst.late.length ? `${sst.late.length} retour en retard` : sst.toOrder ? `${sst.toOrder} à commander` : sst.nextBack ? `Retour prévu ${ddmm(sst.nextBack)}` : sst.list.length ? 'Tout est revenu' : 'Laquage, verre, CNC…', ko: sst.late.length, warn: sst.toOrder },
-    { href: '#achats', label: 'Achats', val: pneeds.length ? `${pneeds.length} en attente` : 'Rien à acheter', sub: pneeds.length ? `${toBuy} à commander · ${pneeds.length - toBuy} commandé${pneeds.length - toBuy > 1 ? 's' : ''}` : lots.length ? `${lots.length} lot${lots.length > 1 ? 's' : ''} de bois réservé${lots.length > 1 ? 's' : ''}` : '', warn: toBuy },
-    { href: '#vue', label: 'Livraison', val: p.due_date ? ddmm(p.due_date) : 'À fixer', sub: p.slack.text, ko: p.slack.color === '#A20212' },
+    { href: '#07', label: 'Carnet', val: steps.length ? `${stDone}/${steps.length} fiches` : 'Vide', sub: !steps.length ? (valid ? `Générer depuis ${valid.version}` : 'Ajouter un plan') : stDrafts ? `${stDrafts} à envoyer à l’atelier` : 'À jour sur l’iPad', warn: !steps.length || stDrafts },
+    { href: '#04', label: 'Sous-traitance', val: sst.list.length ? `${sst.open.length} en cours` : 'Aucune', sub: sst.late.length ? `${sst.late.length} retour en retard` : sst.toOrder ? `${sst.toOrder} à commander` : sst.nextBack ? `Retour prévu ${ddmm(sst.nextBack)}` : sst.list.length ? 'Tout est revenu' : 'Laquage, verre, CNC…', ko: sst.late.length, warn: sst.toOrder },
+    { href: '#04', label: 'Achats', val: pneeds.length ? `${pneeds.length} en attente` : 'Rien à acheter', sub: pneeds.length ? `${toBuy} à commander · ${pneeds.length - toBuy} commandé${pneeds.length - toBuy > 1 ? 's' : ''}` : lots.length ? `${lots.length} lot${lots.length > 1 ? 's' : ''} de bois réservé${lots.length > 1 ? 's' : ''}` : '', warn: toBuy },
+    { href: '#08', label: 'Livraison', val: p.due_date ? ddmm(p.due_date) : 'À fixer', sub: p.slack.text, ko: p.slack.color === '#A20212' },
   ];
   const body = h`
 <div class="mut"><a href="/projets">Projets</a> › ${p.name}</div>
@@ -574,13 +648,11 @@ ${issues.map((s) => {
 <div class="suivi mt20" aria-label="À suivre">${tiles.map((t) => h`<a class="suivi-t${t.ko ? ' ko' : t.warn ? ' wa' : ''}" href="${t.href}" data-tab-link><span class="h3">${t.label}</span><b>${t.val}</b><span class="mut t12">${t.sub}</span></a>`)}</div>
 
 <nav class="ptabs mt20" aria-label="Sections du projet" data-ptabs>
-<a href="#vue">Vue d’ensemble</a><a href="#dossier">Dossier de production${stDrafts ? h` <span class="dot"></span>` : ''}</a><a href="#achats">Achats et sous-traitance${sst.late.length || sst.toOrder || toBuy ? h` <span class="dot"></span>` : ''}</a><a href="#echanges">Client et documents</a></nav>
+<a href="#vue">Vue d’ensemble</a><a href="#dossier">Dossier de production${stDrafts ? h` <span class="dot"></span>` : ''}</a><a href="#echanges">Client et documents</a></nav>
 
 <div class="ptab" id="vue"><div class="cols">
 <div class="main-col">
 ${chaineCard(p)}
-
-${tripsCard(p)}
 
 <section class="card"><h2>Prochaine action</h2><p class="t15 mt8"><b>${p.next}</b></p>
 <p class="mut t12">Tirée de la frise si le champ « Prochaine action » est vide.</p></section>
@@ -616,44 +688,46 @@ ${time.map((t, i) => h`<div class="who${i ? '' : ' f'}"><span class="grow">${t.g
 <div class="who"><b class="grow">Total à ce jour</b><b>${hoursLabel(total)}</b></div></section>
 </aside></div></div>
 
-<div class="ptab" id="dossier"><div class="cols">
-<div class="main-col">
-${chainCard(p)}
-${D.dossierSection(p, { dictee })}
-${require('./cnc').cncSection(p)}
-<section class="card" id="plans"><div class="line"><h2>Plans</h2></div>
+<div class="ptab" id="dossier">
+${(() => { const CH = require('./chaine'); const k = CH.chaineParts(p); const S = k.steps; const SH = CH.stepHead;
+  const NAV = [['01', 'Devis'], ['02', 'Plans et 3D'], ['03', 'Débit'], ['04', 'Commandes'], ['05', 'Planning'], ['06', 'CNC et étiquettes'], ['07', 'Assemblage'], ['08', 'Pose'], ['09', 'Retour']];
+  return h`<nav class="ch-nav dz-nav" aria-label="Étapes du dossier">${NAV.map(([n, l]) => h`<a href="#${n}"><span>${n}</span> ${l}</a>`)}</nav>
+${k.hero}
+${S[0]}<details class="card dz-more"><summary class="h3">Préparer avec l’IA depuis le devis, le modèle 3D et le chiffrage</summary>${chainCard(p)}</details>
+${S[1]}<div class="cols dz-cols"><div class="main-col"><section class="card" id="plans"><div class="line"><h2>Plans</h2></div>
 ${plans.map((x, i) => h`<div class="row${i ? '' : ' f'}"><div class="grow"><b>${x.version}${x.descr ? ` · ${x.descr}` : ''}</b><span class="mut">${x.status === 'validee' ? `Validée${x.validated_at ? ` le ${ddmm(x.validated_at)}` : ''} · fait foi pour l'atelier` : x.status === 'archivee' ? `${ddmm(x.created_at)} · remplacée` : `${ddmm(x.created_at)} · à valider`}</span></div>
 ${pill(x.status === 'validee' ? 'ok' : 'no', x.status === 'validee' ? 'Validée' : x.status === 'archivee' ? 'Archivée' : 'Brouillon')}
 ${x.file ? h`<a class="btn alt sm" href="${fileUrl(x.file)}" target="_blank">Ouvrir</a>` : ''}
 ${x.status === 'brouillon' ? postBtn(`/projets/${p.id}/plans/${x.id}/valider`, 'Valider', 'btn sm') : ''}</div>`)}
 <details class="mt12"${plans.length ? '' : ' open'}><summary class="btn alt sm">+ Nouvelle version</summary>
 <form method="post" action="/projets/${p.id}/plans" enctype="multipart/form-data" class="form grid2 mt8"><label>Version <input name="version" value="V${plans.length + 1}" required></label><label>Ce qui change <input name="descr"></label><label>Fichier (PDF ou image) <input type="file" name="file" accept="application/pdf,image/*"></label><button class="btn sm">Ajouter</button></form></details>
-</section>
-</div>
-<aside class="side-col">
-<section class="card"><div class="line"><h2>Éléments du projet</h2></div>
+</section></div></div>
+${S[2]}
+${S[3]}<div class="dz-block">${achatsCard(p)}${D.sstSection(p)}<section class="card"><h2>Panneaux et bois réservés</h2>${panelRes.map((l, i) => h`<div class="row${i ? '' : ' f'}"><span class="grow">${l.name}</span><span>${String(Math.round(l.m2 * 10) / 10).replace('.', ',')} m² · ${l.panels} panneau${l.panels > 1 ? 'x' : ''}</span></div>`)}${lots.map((l, i) => h`<div class="row${i || panelRes.length ? '' : ' f'}"><b>${l.code}</b><span class="grow">${l.essence} ${l.thickness}</span><span>${String(l.volume).replace('.', ',')} m³</span></div>`)}${panelRes.length || lots.length ? '' : h`<p class="mut">Rien de réservé. Les panneaux se réservent quand la <a href="/projets/${p.id}/chaine">chaîne de production</a> est figée ; <a href="/bois">réserver un lot de bois</a>.</p>`}</section></div>
+${S[4]}
+${SH('06', 'Usinage CNC et étiquettes', 'Programme par panneau', 'Le programme par panneau et par outil, le placement des pièces, la simulation et les étiquettes.', 'La passe à vide, puis le départ cycle : rien ne démarre sans toi devant la machine.')}
+<div class="dz-block">${require('./cnc').cncSection(p)}</div>${raw(S[5].toString().replace(/<div class="ch-step" id="06">[\s\S]*?<\/div><\/div><\/div>/, ''))}
+${SH('07', 'Assemblage à l’atelier', 'Carnet de fabrication', 'Les fiches dans l’ordre, avec la pièce, son plan et les étapes à cocher sur l’iPad. À la fin de chacune : « Ça t’a pris combien ? ».', 'Les fiches avant de les envoyer à l’atelier, puis le contrôle final de chaque pièce.')}
+${assemblageBlock(p)}
+<div class="cols dz-cols"><div class="main-col">${raw(D.dossierSection(p, { dictee }).toString().replace(/<section class="card" id="carnet">[\s\S]*?<\/section>/, ''))}</div><aside class="side-col"><section class="card"><div class="line"><h2>Éléments du projet</h2></div>
 ${pieces.map((x, i) => h`<details class="row${i ? '' : ' f'}"><summary class="line grow"><div class="grow"><b>${x.name}</b><span class="mut">${x.descr}</span></div>${x.status ? pill('no', x.status) : ''}${avatar(pm[x.who_id], 28)}</summary>
 <form method="post" action="/projets/${p.id}/pieces/${x.id}" class="form mt8"><label>Nom <input name="name" value="${x.name}"></label><label>Description <input name="descr" value="${x.descr}"></label>
 <label>État <input name="status" value="${x.status}" placeholder="ex. Finition 2/3"></label><label>Qui <select name="who_id"><option value="">—</option>${options(people.map((pp) => [pp.id, pp.name]), x.who_id)}</select></label>
 <div class="line"><button class="btn sm">Enregistrer</button><button class="btn alt sm" name="del" value="1">Retirer</button></div></form></details>`)}
 ${pieces.length ? '' : h`<p class="mut">Caisson, plateau, façades… remplis à la génération du carnet ou à la main.</p>`}
 <details class="mt12"><summary class="btn alt sm">+ Élément</summary><form method="post" action="/projets/${p.id}/pieces" class="form mt8"><label>Nom <input name="name" required></label><label>Description <input name="descr"></label><button class="btn sm">Ajouter</button></form></details>
-</section>
-<section class="card"><div class="line"><h2>Contrôle et numéros</h2>${pill('no', p.canal)}</div>
+</section><section class="card"><div class="line"><h2>Contrôle et numéros</h2>${pill('no', p.canal)}</div>
 ${model ? h`<p class="mut"><a href="/catalogue?m=${model.id}">Modèle ${model.name}</a>${p.for_whom ? ` · pour ${p.for_whom}` : ''}</p>` : p.for_whom ? h`<p class="mut">Pour ${p.for_whom}</p>` : ''}
 ${units.length ? h`<div class="h3 mt12">Pièces · ${units.filter((u) => u.status !== 'a_faire').length} contrôlée(s) sur ${units.length}</div><div class="unitgrid">${units.map((u) => h`<a class="unit ${ustate[u.status]}" href="/unites/${u.id}"><b>${u.serial}</b>${ulabel[u.status]}</a>`)}</div>` : h`<p class="mut mt8">La pièce reçoit son numéro (${p.ref}) au contrôle final.</p>`}
 ${units.some((u) => u.status === 'a_faire') || !units.length ? h`<div class="mt12">${postBtn(`/projets/${p.id}/controle`, units.length > 1 ? 'Contrôler la pièce suivante' : 'Contrôle final', 'btn sm')}</div>` : ''}
-</section>
-<section class="card"><h2>Imprimer</h2><p class="mut">Pour l’établi ou le classeur du dossier.</p>
-<div class="stack mt12"><a class="btn alt sm" href="/projets/${p.id}/dossier/imprimer">Dossier de production complet</a><a class="btn alt sm" href="/carnets/${p.id}/imprimer">Carnet seul</a></div></section>
-</aside></div></div>
-
-<div class="ptab" id="achats"><div class="cols">
-<div class="main-col">${achatsCard(p)}${D.sstSection(p)}</div>
-<aside class="side-col">
-
-<section class="card"><h2>Panneaux et bois réservés</h2>${panelRes.map((l, i) => h`<div class="row${i ? '' : ' f'}"><span class="grow">${l.name}</span><span>${String(Math.round(l.m2 * 10) / 10).replace('.', ',')} m² · ${l.panels} panneau${l.panels > 1 ? 'x' : ''}</span></div>`)}${lots.map((l, i) => h`<div class="row${i || panelRes.length ? '' : ' f'}"><b>${l.code}</b><span class="grow">${l.essence} ${l.thickness}</span><span>${String(l.volume).replace('.', ',')} m³</span></div>`)}${panelRes.length || lots.length ? '' : h`<p class="mut">Rien de réservé. Les panneaux se réservent quand la <a href="/projets/${p.id}/chaine">chaîne de production</a> est figée ; <a href="/bois">réserver un lot de bois</a>.</p>`}</section>
-</aside></div></div>
+</section></aside></div>
+${SH('08', 'Livraison et pose', 'Préparée la veille', 'Les colis, la liste du camion, les dates et l’équipe, le rappel au client deux jours avant.', 'La pose et la réception avec le client : PV signé sur l’iPad, puis le solde.')}
+${poseBlock(p)}<div class="dz-block">${tripsCard(p)}</div>
+${SH('09', 'Retour d’expérience', 'Le projet suivant est mieux chiffré', 'Les temps réels déclarés au carnet comparés au chiffrage, poste par poste, et les réserves du PV.', 'Ce qu’il faut corriger dans le barème et dans les carnets types.')}
+${retourBlock(p)}
+<div class="dz-block"><section class="card"><h2>Imprimer</h2><p class="mut">Pour l’établi ou le classeur du dossier.</p>
+<div class="stack mt12"><a class="btn alt sm" href="/projets/${p.id}/dossier/imprimer">Dossier de production complet</a><a class="btn alt sm" href="/carnets/${p.id}/imprimer">Carnet seul</a></div></section></div>`; })()}
+</div>
 
 <div class="ptab" id="echanges"><div class="cols">
 <div class="main-col">
