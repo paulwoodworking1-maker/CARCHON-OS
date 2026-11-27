@@ -27,7 +27,7 @@ test('sans connexion, on est renvoyé vers la connexion', async () => {
 });
 
 const pages = ['/', '/projets', '/projets?vue=termines', '/projets/1', '/projets/nouveau', '/carnets', '/carnets/1', '/stock', '/achats', '/commandes',
-  '/fournisseurs', '/planning', '/planning?semaines=4', '/poses', '/poses/1/pv', '/pilotage', '/pilotage/export.csv', '/equipe', '/portails', '/portails?nouveau=1', '/recherche?q=chêne', '/automatisations', '/automatisations/resume', '/projets/1/nouvelles', '/entreprise', '/carnets/1/imprimer', '/poses/1/pv/imprimer', '/commandes/1/bon', '/catalogue', '/catalogue?m=1&qty=12', '/machines', '/machines?m=2', '/charge', '/charge?p=2&w=1', '/bois', '/pieces', '/expeditions', '/expeditions/1/bon', '/sav', '/sav?nouveau=1', '/unites', '/unites/1', '/unites/6', '/pilotage/couts', '/projets/4', '/assistant', '/decider', '/decider?tag=Achat', '/projets?f=retard', '/projets?vue=frise', '/projets?resp=1&canal=Boutique', '/projets?f=acompte', '/portails/envoyer', '/portails/reglages', '/portails/parcours?p=1', '/portails?f=espaces', '/portails?f=signes', '/portails/envoyer?depuis=1'];
+  '/fournisseurs', '/planning', '/planning?semaines=4', '/poses', '/poses/1/pv', '/pilotage', '/pilotage/export.csv', '/equipe', '/portails', '/portails?nouveau=1', '/recherche?q=chêne', '/automatisations', '/automatisations/resume', '/projets/1/nouvelles', '/entreprise', '/carnets/1/imprimer', '/poses/1/pv/imprimer', '/commandes/1/bon', '/catalogue', '/catalogue?m=1&qty=12', '/machines', '/machines?m=2', '/charge', '/charge?p=2&w=1', '/bois', '/pieces', '/expeditions', '/expeditions/1/bon', '/sav', '/sav?nouveau=1', '/unites', '/unites/1', '/unites/6', '/pilotage/couts', '/projets/4', '/assistant', '/decider', '/decider?tag=Achat', '/projets?f=retard', '/projets?vue=frise', '/projets?resp=1&canal=Boutique', '/projets?f=acompte', '/portails/envoyer', '/portails/reglages', '/portails/parcours?p=1', '/portails?f=espaces', '/portails?f=signes', '/portails/envoyer?depuis=1', '/planning/agenda'];
 for (const p of pages) {
   test(`GET ${p}`, async () => {
     const res = await fetch(base + p, { headers: { cookie } });
@@ -186,6 +186,70 @@ test('SMS : numéro, lien chiffré, regroupement des nouveautés, texte final', 
   assert.strictEqual(SMS.quietNow(new Date('2026-11-29T12:00:00+01:00')), true); // dimanche
   assert.strictEqual(SMS.quietNow(new Date('2026-11-26T10:00:00+01:00')), false);
   assert.strictEqual(SMS.quietNow(new Date('2026-11-26T22:00:00+01:00')), true);
+});
+
+test('Google Agenda : page de réglage, flux iCal privé et lecture d’un agenda', async () => {
+  const pg = await (await fetch(base + '/planning/agenda', { headers: { cookie } })).text();
+  const m = /\/agenda\/([\w-]+)\.ics/.exec(pg);
+  assert.ok(m, 'adresse du flux affichée');
+  const ics = await fetch(base + `/agenda/${m[1]}.ics`);
+  assert.strictEqual(ics.status, 200);
+  const txt = await ics.text();
+  assert.match(txt, /^BEGIN:VCALENDAR/);
+  assert.match(txt, /BEGIN:VEVENT/);
+  assert.strictEqual((await fetch(base + '/agenda/faux.ics')).status, 404);
+  const G = require('../src/gcal');
+  const sample = ['BEGIN:VCALENDAR', 'BEGIN:VEVENT', 'UID:a1', 'SUMMARY:Métré chez M. Dupont', 'LOCATION:Lyon', 'DTSTART:20261203T090000Z', 'DTEND:20261203T100000Z', 'END:VEVENT',
+    'BEGIN:VEVENT', 'UID:a2', 'SUMMARY:Salon', 'DTSTART;VALUE=DATE:20261210', 'DTEND;VALUE=DATE:20261213', 'END:VEVENT',
+    'BEGIN:VEVENT', 'UID:a3', 'SUMMARY:Point hebdo', 'DTSTART;TZID=Europe/Paris:20261130T080000', 'DTEND;TZID=Europe/Paris:20261130T083000', 'RRULE:FREQ=WEEKLY;COUNT=3', 'EXDATE;TZID=Europe/Paris:20261207T080000', 'END:VEVENT',
+    'END:VCALENDAR'].join('\r\n');
+  const ev = G.parseICS(sample, '2026-11-01', '2026-12-31');
+  assert.deepStrictEqual(ev.map((e) => [e.title, e.start_date, e.end_date]), [
+    ['Point hebdo', '2026-11-30', '2026-11-30'], ['Métré chez M. Dupont', '2026-12-03', '2026-12-03'], ['Salon', '2026-12-10', '2026-12-12'], ['Point hebdo', '2026-12-14', '2026-12-14']]);
+  assert.strictEqual(ev[1].time, '10:00');
+});
+
+test('Google Agenda : écriture directe (Google simulé) : création, mise à jour, suppression', async () => {
+  const crypto = require('node:crypto');
+  const { setSetting, q } = require('../src/db');
+  const G = require('../src/gcal');
+  const { privateKey, publicKey } = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
+  setSetting('gcal_sa', JSON.stringify({ type: 'service_account', client_email: 'carchon@test.iam.gserviceaccount.com', private_key: privateKey.export({ type: 'pkcs8', format: 'pem' }) }));
+  setSetting('gcal_push_cal', 'atelier@group.calendar.google.com');
+  const store = new Map(); const calls = [];
+  const real = global.fetch;
+  global.fetch = async (url, o = {}) => {
+    url = String(url);
+    if (url.startsWith('https://oauth2.googleapis.com/')) {
+      const [h, c, s] = new URLSearchParams(o.body).get('assertion').split('.');
+      assert.ok(crypto.verify('RSA-SHA256', Buffer.from(`${h}.${c}`), publicKey, Buffer.from(s, 'base64url')), 'jeton signé avec la clé');
+      return new Response(JSON.stringify({ access_token: 'tok', expires_in: 3600 }), { status: 200 });
+    }
+    if (url.startsWith('https://www.googleapis.com/calendar/v3/calendars/atelier%40group.calendar.google.com/events')) {
+      const id = url.split('/events/')[1]; calls.push(o.method);
+      if (o.method === 'PUT') { if (!store.has(id)) return new Response('{}', { status: 404 }); store.set(id, JSON.parse(o.body)); return new Response(o.body, { status: 200 }); }
+      if (o.method === 'POST') { const b = JSON.parse(o.body); store.set(b.id, b); return new Response(o.body, { status: 200 }); }
+      if (o.method === 'DELETE') { store.delete(id); return new Response(null, { status: 204 }); }
+    }
+    return real(url, o);
+  };
+  try {
+    const want = G.items('2000-01-01').filter((e) => e.end >= require('../src/html').addDays(require('../src/html').today(), -30));
+    let x = await G.push();
+    assert.ok(!x.error, x.error);
+    assert.strictEqual(store.size, want.length);
+    assert.ok(want.length > 0);
+    // Rien de changé : aucun appel.
+    calls.length = 0; await G.push(); assert.strictEqual(calls.length, 0);
+    // Une barre modifiée : une mise à jour ; une barre supprimée : une suppression.
+    const bars = q.all("SELECT id FROM bars WHERE end_date >= date('now') LIMIT 2");
+    q.run("UPDATE bars SET label = 'Nouveau titre' WHERE id = ?", bars[0].id);
+    q.run('DELETE FROM bars WHERE id = ?', bars[1].id);
+    calls.length = 0; x = await G.push();
+    assert.deepStrictEqual(calls.sort(), ['DELETE', 'PUT']);
+    assert.match(store.get(G.evId(`bar-${bars[0].id}`)).summary, /Nouveau titre/);
+    assert.ok(!store.has(G.evId(`bar-${bars[1].id}`)));
+  } finally { global.fetch = real; setSetting('gcal_push_cal', ''); }
 });
 
 test('chaîne de production : l’assistant (simulé) crée pièces, fiches et matière, le planning attend la matière', async () => {
