@@ -22,7 +22,15 @@ r.get('/automatisations', (req, res) => {
 ${toggle('auto_plan', '1', 'Planning automatique', 'Les fiches envoyées à l’atelier se posent toutes seules dans le planning de chacun, jour après jour, d’après les heures prévues (ou la moyenne réelle du geste). Recalculé à chaque changement et chaque nuit. Tes barres posées à la main (rendez-vous, congé) sont respectées.')}
 ${toggle('digest_email', '1', 'Résumé du matin par e-mail', 'Chaque jour vers 7 h : ce qui est à décider, qui fait quoi, les problèmes signalés.')}
 <label>Adresse e-mail du patron (résumé du matin et « mot de passe oublié ») <input type="email" name="patron_email" value="${setting('patron_email') || ''}" placeholder="toi@carchon.com"></label>
-${toggle('auto_reminder_pose', '0', 'Rappel automatique au client deux jours avant une livraison', 'Un e-mail court part au client à J-2 (adresse, accès dégagé). Désactivé par défaut.')}
+<h3 class="h3 mt20">Suivi client (e-mails automatiques)</h3>
+<p class="mut t12">Seulement pour ce qui arrive après la mise en route : aucun envoi sur les anciens dossiers. Textes : <a href="/messages">Messages aux clients</a>.</p>
+${toggle('auto_reminder_pose', '1', 'Rappel deux jours avant une livraison ou une pose', 'Adresse, accès dégagé, comment nous joindre.')}
+${toggle('auto_relance_devis', '1', 'Relance des devis sans réponse', 'À J+7, puis une dernière fois à J+21, avec le même lien.')}
+${toggle('auto_relance_facture', '1', 'Rappel des factures impayées', 'Acompte et solde : un rappel le lendemain de l’échéance, avec le lien de paiement.')}
+${toggle('qonto_auto_balance', '1', 'Facture de solde à la signature du PV (Qonto)', 'Montant du devis moins l’acompte, envoyée par Qonto ; payée, l’étape Règlement se coche toute seule.')}
+${toggle('auto_avis', '1', 'Merci et demande d’avis, trois jours après la pose', 'Seulement si le PV est sans réserve.')}
+<label>Lien de ta fiche Google pour les avis <input name="google_review_url" type="url" value="${setting('google_review_url') || ''}" placeholder="https://g.page/r/…/review"></label>
+${toggle('auto_anniversaire', '1', 'Message « un an déjà » après la pose', 'Conseil d’entretien et porte ouverte pour un nouveau projet.')}
 <button class="btn">Enregistrer</button></form>
 
 <section class="card"><h2>Alertes ajoutées à « À décider »</h2>
@@ -53,7 +61,8 @@ ${mail.configured() ? '' : h`<p class="mut mt8">Résumé du matin, rappels J-2 e
 });
 
 r.post('/automatisations', (req, res) => {
-  for (const k of ['auto_plan', 'digest_email', 'auto_reminder_pose']) setSetting(k, req.body[k] ? '1' : '0');
+  for (const k of ['auto_plan', 'digest_email', 'auto_reminder_pose', 'auto_relance_devis', 'auto_relance_facture', 'qonto_auto_balance', 'auto_avis', 'auto_anniversaire']) setSetting(k, req.body[k] ? '1' : '0');
+  const gr = String(req.body.google_review_url || '').trim(); setSetting('google_review_url', /^https:\/\//.test(gr) ? gr : '');
   setSetting('patron_email', String(req.body.patron_email || '').trim());
   if (req.body.auto_plan) auto.autoPlan(); else q.run('DELETE FROM bars WHERE auto = 1');
   res.flashTo('/automatisations', 'Enregistré.');

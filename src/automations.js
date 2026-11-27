@@ -153,6 +153,9 @@ function alerts() {
   for (const p of q.all("SELECT * FROM projects WHERE status = 'en_cours' AND deposit_at IS NULL AND deposit_invoice_status IN ('error', 'created') AND COALESCE(deposit_invoice_error, '') != ''")) {
     out.push({ kind: 'ko', tag: 'Facture d’acompte', title: `${p.name} · facture d’acompte ${p.deposit_invoice_id ? 'créée mais pas envoyée' : 'pas émise'}`, text: p.deposit_invoice_error, href: `/projets/${p.id}#facture`, cta: 'Ouvrir', act: `/projets/${p.id}/facture-acompte`, actLabel: 'Réessayer' });
   }
+  for (const p of q.all("SELECT * FROM projects WHERE balance_invoice_status IN ('error', 'created') AND COALESCE(balance_invoice_error, '') != ''")) {
+    out.push({ kind: 'ko', tag: 'Facture de solde', title: `${p.name} · facture de solde ${p.balance_invoice_id ? 'créée mais pas envoyée' : 'pas émise'}`, text: p.balance_invoice_error, href: `/projets/${p.id}#08`, cta: 'Ouvrir', act: `/projets/${p.id}/facture-solde`, actLabel: 'Réessayer' });
+  }
   if (require('./qonto').on()) for (const p of q.all(`SELECT p.* FROM projects p JOIN quotes x ON x.project_id = p.id AND x.status = 'accepted' AND x.test = 0
       WHERE p.status = 'en_cours' AND p.deposit_at IS NULL AND p.deposit_invoice_id IS NULL AND COALESCE(p.deposit_invoice_status, '') = '' AND p.deposit_needed = 1 AND x.accepted_at <= datetime('now', '-10 minutes') GROUP BY p.id`)) {
     out.push({ kind: 'wa', tag: 'Facture d’acompte', title: `${p.name} · facture d’acompte pas encore émise`, text: 'Devis accepté sans montant HT ou sans adresse de facturation.', href: `/projets/${p.id}#facture`, cta: 'Compléter' });
@@ -184,7 +187,7 @@ async function sendDigest() {
 
 // --- Rappel au client deux jours avant la livraison / pose ---
 async function poseReminders() {
-  if (!on('auto_reminder_pose', '0') || !mail.configured()) return 0;
+  if (!on('auto_reminder_pose', '1') || !mail.configured()) return 0;
   let n = 0;
   const rows = q.all(`SELECT trips.*, projects.name pname, clients.email cemail, clients.name cname FROM trips JOIN projects ON projects.id = trips.project_id
     JOIN clients ON clients.id = projects.client_id WHERE trips.date = ? AND trips.reminder_sent_at IS NULL AND trips.done_at IS NULL`, addDays(today(), 2));
@@ -209,6 +212,7 @@ async function tick() {
     }
     await poseReminders();
     try { await require('./qonto').syncPaid(); } catch (e) { console.error('[qonto]', e.message); }
+    try { await require('./suivi-client').daily(); } catch (e) { console.error('[suivi client]', e.message); }
   } catch (e) { console.error('[automatisations]', e); }
 }
 let timer = null;

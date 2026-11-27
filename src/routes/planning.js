@@ -303,7 +303,10 @@ r.post('/poses/:id/pv', (req, res) => {
   // Le PV apparaît ensuite dans le projet et dans l'espace du client (rubrique Documents).
   logActivity(t.project_id, null, `PV de réception signé par ${str(req.body.name)}${reserves ? ` avec réserve : ${reserves}` : ', sans réserve'}`, 'Patron');
   q.run("UPDATE trips SET pv_signed_at = datetime('now'), done_at = COALESCE(done_at, datetime('now')), pv_name = ?, pv_reserves = ?, pv_signature = ? WHERE id = ?", str(req.body.name), reserves, sig, t.id);
-  res.flashTo('/poses', 'PV signé et rangé dans le projet. Pense à facturer le solde.');
+  const Qo = require('../qonto');
+  const auto = Qo.configured() && require('../db').setting('qonto_auto_balance', '1') === '1';
+  if (auto) Qo.afterPv(t.project_id);
+  res.flashTo('/poses', auto ? 'PV signé et rangé dans le projet. La facture de solde part toute seule par Qonto.' : 'PV signé et rangé dans le projet. Pense à facturer le solde.');
 });
 
 module.exports = r;

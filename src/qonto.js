@@ -154,6 +154,62 @@ async function createDeposit(projectId) {
   }
 }
 
+// Facture de solde : montant HT du devis moins l'acompte HT déjà facturé, à la signature du PV.
+async function createBalance(projectId) {
+  const p = q.get('SELECT * FROM projects WHERE id = ?', projectId);
+  if (!p) throw new QontoError('Projet introuvable');
+  if (p.balance_invoice_id) return { already: true };
+  const quote = q.get("SELECT * FROM quotes WHERE project_id = ? AND status = 'accepted' ORDER BY id DESC LIMIT 1", projectId);
+  if (quote?.test) throw new QontoError('Devis de test : aucune facture réelle n’est émise.');
+  const amount = quote?.amount_ht || p.amount_ht;
+  if (!(amount > 0)) throw new QontoError('Montant HT du projet inconnu : indique-le sur le projet, puis réessaie.');
+  const o = opts();
+  const depositHt = p.deposit_invoice_ttc ? Math.round(p.deposit_invoice_ttc / (1 + o.vat / 100) * 100) / 100 : p.deposit_at ? Math.round(amount * o.percent) / 100 : 0;
+  const ht = Math.round((amount - depositHt) * 100) / 100;
+  if (ht <= 0) throw new QontoError('Rien à facturer : l’acompte couvre déjà le montant.');
+  const ttc = Math.round(ht * (1 + o.vat / 100) * 100) / 100;
+  const bill = JSON.parse(quote?.billing_json || '{}');
+  const client = p.client_id ? q.get('SELECT * FROM clients WHERE id = ?', p.client_id) : null;
+  const email = quote?.signer_email || client?.email;
+  if (!email) throw new QontoError('E-mail du client manquant.');
+  if (!bill.city && !client?.address) throw new QontoError('Adresse de facturation du client manquante.');
+  const lock = q.run("UPDATE projects SET balance_invoice_status = 'creating', balance_invoice_error = '' WHERE id = ? AND COALESCE(balance_invoice_status, '') NOT IN ('creating', 'sent', 'created')", projectId);
+  if (!lock.changes) return { busy: true };
+  try {
+    const addr = bill.city ? bill : (() => { const m = /^(.*?),?\s*(\d{5})\s+(.+)$/.exec(client.address || ''); return m ? { street: m[1], zip: m[2], city: m[3] } : { street: client.address, zip: '00000', city: '-' }; })();
+    const clientId = await ensureClient({ name: quote?.accept_name || client?.name, email, company: bill.company, street: addr.street, zip: addr.zip, city: addr.city, country: 'FR' });
+    const due = addDays(today(), o.dueDays);
+    const number = quote?.number || p.ref;
+    const inv = await api('POST', '/v2/client_invoices', {
+      client_id: clientId, issue_date: today(), due_date: due, currency: 'EUR', status: 'unpaid', payment_methods: { iban: await iban() },
+      purchase_order: String(p.ref || '').slice(0, 40),
+      header: `Facture de solde du devis n° ${number}${p.deposit_invoice_number ? `, après la facture d’acompte n° ${p.deposit_invoice_number}` : ''}.`,
+      items: [{ title: `Solde · devis ${number}`.slice(0, 40), description: `${quote?.project_name || p.name}\nMontant du devis : ${eur(amount)} HT${depositHt ? ` · acompte déjà facturé : ${eur(depositHt)} HT` : ''}.`, quantity: '1', unit: 'unit',
+        unit_price: { value: money(ht), currency: 'EUR' }, vat_rate: String(o.vat / 100) }],
+    });
+    const ci = inv.client_invoice;
+    q.run("UPDATE projects SET balance_invoice_id = ?, balance_invoice_number = ?, balance_invoice_url = ?, balance_invoice_status = 'created', balance_invoice_ttc = ?, balance_invoice_due = ? WHERE id = ?", ci.id, ci.number || '', ci.invoice_url || '', ttc, due, projectId);
+    logActivity(projectId, null, `Facture de solde ${ci.number || ''} créée dans Qonto : ${eur(ttc)} TTC`, 'Qonto');
+    const M = require('./messages');
+    const v = { prenom: splitName(quote?.accept_name || client?.name).first_name, projet: quote?.project_name || p.name, devis: number, montant: eur(ttc), echeance: ddmmyyyy(due) };
+    await api('POST', `/v2/client_invoices/${ci.id}/send`, { send_to: [email], copy_to_self: true, email_title: M.t('mail_solde_objet', v), email_body: M.t('mail_solde_texte', v) });
+    q.run("UPDATE projects SET balance_invoice_status = 'sent', balance_invoice_sent_at = datetime('now') WHERE id = ?", projectId);
+    logActivity(projectId, null, `Facture de solde envoyée par Qonto à ${email}`, 'Qonto');
+    try { require('./sms').notify('maj', { projectId, quoi: 'facture de solde' }); } catch { /* facultatif */ }
+    return { id: ci.id, number: ci.number, ttc };
+  } catch (e) {
+    const created = q.get('SELECT balance_invoice_id FROM projects WHERE id = ?', projectId).balance_invoice_id;
+    q.run('UPDATE projects SET balance_invoice_status = ?, balance_invoice_error = ? WHERE id = ?', created ? 'created' : 'error', String(e.message).slice(0, 400), projectId);
+    logActivity(projectId, null, `Facture de solde : ${created ? 'créée mais pas envoyée' : 'échec'} (${String(e.message).slice(0, 160)})`, 'Qonto');
+    throw e;
+  }
+}
+// PV signé : facture de solde sans attendre (si Qonto est relié et l'automatisme activé).
+function afterPv(projectId) {
+  if (!configured() || setting('qonto_auto_balance', '1') !== '1') return;
+  setImmediate(() => createBalance(projectId).catch((e) => console.error('[qonto] facture de solde', e.message)));
+}
+
 // Facture créée mais l'envoi a échoué : on renvoie seulement l'e-mail.
 async function resend(projectId) {
   const p = q.get('SELECT * FROM projects WHERE id = ?', projectId);
@@ -197,6 +253,19 @@ async function syncPaid() {
       }
     } catch (e) { console.error('[qonto] suivi', e.message); }
   }
+  for (const p of q.all("SELECT * FROM projects WHERE balance_invoice_id IS NOT NULL AND COALESCE(balance_invoice_status, '') != 'paid'")) {
+    try {
+      const ci = (await api('GET', `/v2/client_invoices/${p.balance_invoice_id}`))?.client_invoice;
+      if (!ci) continue;
+      if (ci.invoice_url && ci.invoice_url !== p.balance_invoice_url) q.run('UPDATE projects SET balance_invoice_url = ? WHERE id = ?', ci.invoice_url, p.id);
+      if (ci.status === 'paid') {
+        q.run("UPDATE projects SET balance_invoice_status = 'paid' WHERE id = ?", p.id);
+        q.run("UPDATE trips SET balance_paid_at = COALESCE(balance_paid_at, datetime('now')) WHERE id = (SELECT id FROM trips WHERE project_id = ? AND pv_signed_at IS NOT NULL ORDER BY pv_signed_at DESC LIMIT 1)", p.id);
+        logActivity(p.id, null, `Solde payé (facture ${ci.number || ''} réglée dans Qonto)`, 'Qonto');
+        n++;
+      }
+    } catch (e) { console.error('[qonto] suivi solde', e.message); }
+  }
   return n;
 }
 
@@ -206,4 +275,4 @@ async function test() {
   return { name: o.legal_name || o.name || o.slug || '', iban: (o.bank_accounts || []).find((x) => x.main)?.iban || (o.bank_accounts || [])[0]?.iban || '' };
 }
 
-module.exports = { configured, on, opts, depositAmounts, createDeposit, resend, afterAccept, syncPaid, test, QontoError, eur, api };
+module.exports = { createBalance, afterPv, configured, on, opts, depositAmounts, createDeposit, resend, afterAccept, syncPaid, test, QontoError, eur, api };

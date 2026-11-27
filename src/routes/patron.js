@@ -824,6 +824,12 @@ r.post('/projets/:id/client-nom', loadProject, (req, res) => {
   res.flashTo(`/projets/${p.id}`, 'Enregistré : le portail s’adresse au client avec ces nom et prénom.');
 });
 
+r.post('/projets/:id/facture-solde', loadProject, async (req, res) => {
+  const back = String(req.body.back || '').startsWith('/') ? String(req.body.back) : `/projets/${req.project.id}#08`;
+  try { const o = await Q.createBalance(req.project.id); res.flashTo(back, o.already ? 'La facture de solde existe déjà.' : `Facture de solde ${o.number || ''} créée et envoyée par Qonto.`); }
+  catch (e) { res.flashTo(back, e.message, 'ko'); }
+});
+
 // Facture d'acompte Qonto : créer, ou renvoyer si elle existe déjà.
 r.post('/projets/:id/facture-acompte', loadProject, async (req, res) => {
   const p = req.project;

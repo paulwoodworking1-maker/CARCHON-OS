@@ -214,6 +214,13 @@ addColumn('quotes', 'source', "TEXT DEFAULT ''");
 addColumn('quotes', 'family', "TEXT DEFAULT ''");
 // Facture d'acompte émise dans Qonto à l'acceptation du devis.
 addColumn('quotes', 'billing_json', 'TEXT');
+// Facture de solde (Qonto) émise à la signature du PV ; suivi des relances et messages après la pose.
+for (const [c, d] of [['balance_invoice_id', 'TEXT'], ['balance_invoice_number', 'TEXT'], ['balance_invoice_url', 'TEXT'], ['balance_invoice_status', 'TEXT'], ['balance_invoice_error', "TEXT DEFAULT ''"],
+  ['balance_invoice_ttc', 'REAL'], ['balance_invoice_due', 'TEXT'], ['balance_invoice_sent_at', 'TEXT'], ['deposit_reminded_at', 'TEXT'], ['balance_reminded_at', 'TEXT']]) addColumn('projects', c, d);
+addColumn('quotes', 'relance1_at', 'TEXT');
+addColumn('quotes', 'relance2_at', 'TEXT');
+addColumn('trips', 'review_sent_at', 'TEXT');
+addColumn('trips', 'anniversary_sent_at', 'TEXT');
 for (const [c, d] of [['deposit_invoice_id', 'TEXT'], ['deposit_invoice_number', 'TEXT'], ['deposit_invoice_url', 'TEXT'], ['deposit_invoice_status', 'TEXT'], ['deposit_invoice_error', "TEXT DEFAULT ''"],
   ['deposit_invoice_ttc', 'REAL'], ['deposit_invoice_due', 'TEXT'], ['deposit_invoice_sent_at', 'TEXT']]) addColumn('projects', c, d);
 

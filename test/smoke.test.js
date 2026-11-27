@@ -700,3 +700,74 @@ test('carnet : geste, étape, temps et plan réglés tout seuls d’après les m
   assert.ok(s.plan_id);
   assert.strictEqual(JSON.parse(s.checks).length, 2);
 });
+
+test('suivi client automatique : relances devis J+7/J+21, rappel de facture, avis après la pose, rien sur l’historique', async () => {
+  const { q, setSetting } = require('../src/db'); const mail = require('../src/mail'); const SMS = require('../src/sms'); const SC = require('../src/suivi-client');
+  const sent = []; const realSend = mail.send, realConf = mail.configured;
+  mail.send = async (m) => { sent.push(m); return {}; }; mail.configured = () => true;
+  process.env.PUBLIC_URL = 'https://os.example.fr';
+  try {
+    setSetting('client_auto_since', '2000-01-01 00:00:00');
+    const old = Number(q.run("INSERT INTO quotes (number, pdf, pdf_sha256, signer_name, signer_email, valid_until, token_hash, status, test, link_at, token_enc) VALUES ('D-OLD', 'x', 'x', 'A B', 'old@example.com', date('now', '+20 days'), 'h-old', 'sent', 0, datetime('now', '-8 days'), ?)", SMS.seal('tok-old')).lastInsertRowid);
+    setSetting('client_auto_since', new Date(Date.now() - 30 * 864e5).toISOString().slice(0, 19).replace('T', ' '));
+    q.run("UPDATE quotes SET link_at = datetime('now', '-40 days') WHERE id = ?", old); // avant la mise en route : ignoré
+    const qid = Number(q.run("INSERT INTO quotes (number, pdf, pdf_sha256, signer_name, signer_email, project_name, valid_until, token_hash, status, test, link_at, token_enc) VALUES ('D-REL', 'x', 'x', 'STEPHANIE SCHIFANO', 's@example.com', 'Bibliothèque', date('now', '+20 days'), 'h-rel', 'sent', 0, datetime('now', '-8 days'), ?)", SMS.seal('tok-rel')).lastInsertRowid);
+    await SC.relancesDevis();
+    const toS = () => sent.filter((m) => m.to === 's@example.com');
+    assert.strictEqual(toS().length, 1);
+    assert.ok(!sent.some((m) => m.to === 'old@example.com'), 'rien sur l’historique');
+    assert.match(toS()[0].text, /Bonjour Madame Schifano/);
+    assert.match(toS()[0].text, /https:\/\/os\.example\.fr\/p\/devis\/tok-rel/);
+    await SC.relancesDevis();
+    assert.strictEqual(toS().length, 1); // pas deux fois
+    q.run("UPDATE quotes SET link_at = datetime('now', '-22 days') WHERE id = ?", qid);
+    await SC.relancesDevis();
+    assert.strictEqual(toS().length, 2);
+    // Facture d'acompte échue, impayée.
+    const cid = Number(q.run("INSERT INTO clients (name, email) VALUES ('Jean Facture', 'jf@example.com')").lastInsertRowid);
+    const pid = Number(q.run("INSERT INTO projects (name, client_id, deposit_needed, deposit_invoice_id, deposit_invoice_number, deposit_invoice_url, deposit_invoice_ttc, deposit_invoice_due, deposit_invoice_sent_at) VALUES ('Projet facture', ?, 1, 'inv', 'F-1', 'https://pay.example/1', 1200, date('now', '-1 day'), datetime('now', '-8 days'))", cid).lastInsertRowid);
+    assert.strictEqual(await SC.relancesFactures(), 1);
+    assert.match(sent[sent.length - 1].text, /https:\/\/pay\.example\/1/);
+    assert.strictEqual(await SC.relancesFactures(), 0);
+    // Avis trois jours après un PV sans réserve.
+    setSetting('google_review_url', 'https://g.page/r/test/review');
+    q.run("INSERT INTO trips (project_id, date, items, done_at, pv_signed_at, pv_name, pv_reserves) VALUES (?, date('now', '-4 days'), '[]', datetime('now', '-4 days'), datetime('now', '-4 days'), 'Jean', '')", pid);
+    await SC.apresPose();
+    const toJ = () => sent.filter((m) => m.to === 'jf@example.com' && /Merci/.test(m.subject));
+    assert.strictEqual(toJ().length, 1);
+    assert.match(toJ()[0].text, /g\.page\/r\/test\/review/);
+    await SC.apresPose();
+    assert.strictEqual(toJ().length, 1);
+  } finally { mail.send = realSend; mail.configured = realConf; delete process.env.PUBLIC_URL; }
+});
+
+test('facture de solde Qonto à la signature du PV, payée : Règlement coché', async () => {
+  const http = require('node:http'); const { q } = require('../src/db');
+  const calls = []; let status = 'unpaid';
+  const fake = http.createServer((req, res) => { let b = ''; req.on('data', (c) => { b += c; }); req.on('end', () => {
+    calls.push({ m: req.method, u: req.url, body: b ? JSON.parse(b) : null });
+    const send = (code, o) => { res.writeHead(code, { 'content-type': 'application/json' }); res.end(o ? JSON.stringify(o) : ''); };
+    if (req.url === '/v2/organization') return send(200, { organization: { bank_accounts: [{ iban: 'FR76X', main: true }] } });
+    if (req.url.startsWith('/v2/clients?')) return send(200, { clients: [{ id: 'c-9', currency: 'EUR', locale: 'fr', billing_address: { city: 'Dijon' } }] });
+    if (req.url === '/v2/client_invoices') return send(201, { client_invoice: { id: 'sol-1', number: 'F-2026-090', invoice_url: 'https://pay.example/sol' } });
+    if (req.url === '/v2/client_invoices/sol-1/send') return send(204);
+    if (req.url === '/v2/client_invoices/sol-1') return send(200, { client_invoice: { id: 'sol-1', number: 'F-2026-090', status } });
+    send(404, { errors: [] }); }); });
+  await new Promise((r) => fake.listen(0, r));
+  Object.assign(process.env, { QONTO_BASE_URL: `http://127.0.0.1:${fake.address().port}`, QONTO_LOGIN: 'l', QONTO_SECRET_KEY: 's' });
+  try {
+    const pid = Number(q.run("INSERT INTO projects (name, amount_ht, deposit_at, deposit_invoice_ttc, deposit_invoice_number) VALUES ('Solde test', 10000, date('now'), 4800, 'F-ACO')").lastInsertRowid);
+    q.run("INSERT INTO quotes (project_id, number, pdf, pdf_sha256, signer_name, signer_email, valid_until, token_hash, status, test, amount_ht, billing_json) VALUES (?, 'D-SOL', 'x', 'x', 'Jean Solde', 'js@example.com', '2099-01-01', 'h-sol', 'accepted', 0, 10000, ?)", pid, JSON.stringify({ street: '1 rue', zip: '21000', city: 'Dijon' }));
+    q.run("INSERT INTO trips (project_id, date, items, done_at, pv_signed_at, pv_name) VALUES (?, date('now'), '[]', datetime('now'), datetime('now'), 'Jean')", pid);
+    const o = await require('../src/qonto').createBalance(pid);
+    assert.strictEqual(o.number, 'F-2026-090');
+    const inv = calls.find((c) => c.m === 'POST' && c.u === '/v2/client_invoices').body;
+    assert.strictEqual(inv.items[0].unit_price.value, '6000.00'); // 10 000 − 4 000 HT d'acompte
+    assert.strictEqual(q.get('SELECT balance_invoice_ttc t FROM projects WHERE id = ?', pid).t, 7200);
+    status = 'paid';
+    await require('../src/qonto').syncPaid();
+    assert.ok(q.get('SELECT balance_paid_at b FROM trips WHERE project_id = ?', pid).b);
+    const fr = require('../src/logic').clientSteps(q.get('SELECT * FROM projects WHERE id = ?', pid));
+    assert.strictEqual(fr[7].state, 'd');
+  } finally { for (const k of ['QONTO_BASE_URL', 'QONTO_LOGIN', 'QONTO_SECRET_KEY']) delete process.env[k]; fake.close(); }
+});
