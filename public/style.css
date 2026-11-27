@@ -944,3 +944,39 @@ body.client .cl-foot{padding:16px 20px}
 .cnc-toolhead{padding:10px 8px;border-bottom:1px solid var(--line);font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase}
 .cnc-toolhead .nr{text-align:right}
 @media (max-width:1000px){.cnc-toolhead{display:none}}
+
+/* Portail client · finition haut de gamme : plus d'air, titres posés, en-tête et pied sobres. */
+body.client{background:#F6F4F0}
+body.client .phone{max-width:560px;background:#fff}
+body.client .cl-head{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:22px 28px;border-bottom:1px solid var(--filet)}
+body.client .cl-head img{height:28px;display:block}
+.cl-ref{font-size:10.5px;font-weight:600;letter-spacing:.18em;text-transform:uppercase;color:var(--mut);white-space:nowrap}
+body.client .cl{padding:34px 28px 16px}
+body.client .cl h1{font-size:23px;line-height:1.3;font-weight:500;letter-spacing:-.005em;margin:0;text-wrap:balance}
+body.client .cl-meta{margin:8px 0 0;font-size:13px;color:var(--mut)}
+body.client .cl-tabs{margin-top:28px;border-bottom:1px solid var(--filet)}
+body.client .cl-tabs a{font-size:11.5px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;padding:12px 0}
+body.client .next-box{margin-top:32px;padding:24px 24px 22px}
+body.client .next-box h2{font-size:18px;font-weight:500;line-height:1.35;margin:10px 0 0}
+body.client .next-box p{margin:8px 0 0;font-size:13.5px;line-height:1.6}
+body.client .next-box p:empty{display:none}
+body.client .next-box .btn{margin-top:18px}
+body.client .cl-step{margin-top:40px;padding:22px 0 6px;border-top:1px solid var(--filet)}
+body.client .cl-step h2{font-size:11px;letter-spacing:.18em;font-weight:600;color:var(--mut);margin:0 0 16px}
+body.client .cl-step h2 .n{background:transparent;color:var(--ink);border:1px solid var(--ink);font-weight:600}
+body.client .vsteps li{padding:9px 0}
+body.client .vsteps li b{font-weight:500}
+body.client .vsteps li.d b,body.client .vsteps li.c b{font-weight:600}
+body.client .hrow{padding:14px 0;border-top:1px solid #EEEAE4}
+body.client .hkind{font-size:10.5px;letter-spacing:.14em}
+body.client .hrow b{font-weight:500}
+body.client .cl-sum{margin-top:28px}
+body.client .cl-prog{margin-top:26px}
+body.client .howto{margin-top:24px}
+body.client .cl-foot{margin-top:48px;padding:28px 28px 34px;border-top:1px solid var(--filet);display:flex;flex-direction:column;gap:8px;align-items:flex-start;font-size:12px;line-height:1.6;color:var(--mut)}
+body.client .cl-foot p{margin:0;max-width:42ch}
+.cl-mail,.cl-site{font-size:11px;font-weight:600;letter-spacing:.16em;text-transform:uppercase;color:var(--ink);text-decoration:none}
+.cl-site{color:var(--mut)}
+.cl-mail:hover,.cl-site:hover{text-decoration:underline}
+@media (max-width:420px){body.client .cl-head{padding:18px 20px}body.client .cl{padding:28px 20px 12px}body.client .cl-foot{padding:24px 20px 30px}body.client .cl h1{font-size:21px}}
+body.client .hlink{display:block;margin-top:6px;font-size:12.5px}

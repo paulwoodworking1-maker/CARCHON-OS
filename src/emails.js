@@ -5,7 +5,8 @@ const { company, setting } = require('./db');
 const { ddmmyyyy, esc } = require('./html');
 
 const sign = (c = company()) => [c.name, c.address, c.phone, c.email, c.site].filter(Boolean).join('\n');
-const hello = (name) => (name ? `Bonjour ${name},` : 'Bonjour,');
+// « Bonjour Madame Schifano, » quand le prénom permet de choisir la civilité.
+const hello = (name) => require('./civilite').emailHello(null, name);
 
 const M = require('./messages');
 const para = (t) => esc(t).split(/\n{2,}/).map((x) => x.replace(/\n/g, '<br>')).join('<br><br>');

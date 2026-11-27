@@ -618,6 +618,9 @@ ${photos.length ? '' : h`<p class="mut">Pas encore de photo. L’atelier en ajou
 <aside class="side-col">
 ${p.client_id ? h`<section class="card"><div class="line"><h2>Portail client</h2>${pill(p.portal_state === 'open' ? 'ok' : 'no', p.portal_state === 'open' ? 'Ouvert' : p.portal_state === 'cut' ? 'Accès coupé' : 'Pas ouvert')}</div>
 <p class="mut">Ce que ${p.client.name} voit dans son espace. Tout part tout seul, dates de livraison comprises.</p>
+${(() => { const id = require('../civilite').identity(p.client); return h`<form method="post" action="/projets/${p.id}/client-nom" class="form mt8"><span class="mut t12">Le portail l’accueille ainsi : <b>« ${require('../civilite').salutation()} ${id.formal} »</b></span>
+<div class="line" style="gap:8px;flex-wrap:nowrap"><select name="civility" aria-label="Civilité" style="max-width:96px">${options([['', 'Auto'], ['Mme', 'Mme'], ['M.', 'M.'], ['none', 'Aucune']], p.client.civility || '')}</select>
+<input name="last_name" placeholder="Nom" aria-label="Nom" value="${p.client.last_name || id.last}"><input name="first_name" placeholder="Prénom" aria-label="Prénom" value="${p.client.first_name || id.first}"><button class="btn alt sm">OK</button></div></form>`; })()}
 <div class="who f"><span class="grow">Devis</span><b>${quote ? `Accepté le ${ddmm(quote.accepted_at)}` : '—'}</b></div>
 <div class="who"><span class="grow">Acompte</span><b>${p.deposit_at ? `Reçu le ${ddmm(p.deposit_at)}` : 'Attendu'}</b></div>
 ${p.deposit_invoice_id || Q.on() ? h`<div class="who" id="facture"><span class="grow">Facture d’acompte${p.deposit_invoice_number ? h` <span class="mut">${p.deposit_invoice_number}</span>` : ''}${p.deposit_invoice_error ? h`<span class="mut t12 red">${p.deposit_invoice_error}</span>` : ''}</span>
@@ -684,6 +687,14 @@ r.post('/projets/:id/infos', loadProject, (req, res) => {
     if (str(b.due_date) && str(b.due_date) !== (p.due_date || '')) logActivity(p.id, null, `Date de livraison : ${ddmm(str(b.due_date))}${p.due_date ? ` (au lieu du ${ddmm(p.due_date)})` : ''}`, 'Patron');
   });
   res.flashTo(`/projets/${p.id}`, depositAt && !p.deposit_at ? 'Acompte noté. Les achats bloqués sont débloqués.' : 'Enregistré.');
+});
+
+// Comment le portail s'adresse au client : civilité, nom, prénom.
+r.post('/projets/:id/client-nom', loadProject, (req, res) => {
+  const p = req.project; const b = req.body; const C = require('../civilite');
+  if (!p.client_id) return res.redirect(`/projets/${p.id}`);
+  q.run('UPDATE clients SET civility = ?, last_name = ?, first_name = ? WHERE id = ?', ['Mme', 'M.', 'none'].includes(b.civility) ? b.civility : '', C.tidy(str(b.last_name)).slice(0, 80), C.tidy(str(b.first_name)).slice(0, 80), p.client_id);
+  res.flashTo(`/projets/${p.id}`, 'Enregistré : le portail s’adresse au client avec ces nom et prénom.');
 });
 
 // Facture d'acompte Qonto : créer, ou renvoyer si elle existe déjà.
