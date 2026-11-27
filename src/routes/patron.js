@@ -172,19 +172,18 @@ ${p.cfrise.map((c) => h`<td><span class="c ${CELL[c.state]}">${c.label}</span></
 <td class="due"><b>${p.due_date ? ddmm(p.due_date) : 'à fixer'}</b><div style="color:${p.slack.color}" class="t12 b">${p.slack.text}</div></td></tr>`)}</tbody></table></div>
 <div class="legend"><span><i class="c d"></i>Fait</span><span><i class="c cc"></i>En cours</span><span><i class="c p"></i>Bloque · à traiter</span><span><i class="c w"></i>À venir</span><span><i class="c n"></i>Sans objet</span></div>`
   : h`<div class="tablebox mt12"><table class="tbl dense" id="oftable">
-<thead><tr>${done ? '' : h`<th class="ck"><input type="checkbox" data-lot-all aria-label="Tout sélectionner"></th>`}<th data-sort>Réf.</th><th data-sort>OF</th><th data-sort>Canal</th><th data-sort>Étape</th><th data-sort class="num">Avancement</th><th data-sort>Resp.</th><th data-sort>Échéance</th><th data-sort>Marge</th></tr></thead>
+<thead><tr>${done ? '' : h`<th class="ck"><input type="checkbox" data-lot-all aria-label="Tout sélectionner"></th>`}<th data-sort>Réf.</th><th data-sort>Projet</th><th data-sort>Où en est le projet</th><th data-sort class="num">Fiches</th><th data-sort>Livraison</th><th data-sort>Marge</th></tr></thead>
 <tbody>${rows.map((p) => { const g = prog[p.id] || { n: 0, d: 0 }; const pc = g.n ? Math.round(g.d / g.n * 100) : 0; const urgv = p.slack.text === 'en retard' ? -1000 : p.slack.text === 'tendu' ? -500 : parseInt(p.slack.text, 10) || 9999;
     return h`<tr data-q="${[p.ref, p.name, p.descr, p.client ? p.client.name : '', p.for_whom, p.canal, p.cur.phase].join(' ').toLowerCase()}">
 ${done ? '' : h`<td class="ck"><input type="checkbox" name="ids" value="${p.id}" form="lot" aria-label="Sélectionner ${p.name}"></td>`}
 <td class="ref" data-v="${p.ref}">${p.ref}</td>
 <td class="ofname" data-v="${p.name}"><a class="b" href="/projets/${p.id}">${p.name}</a> <span class="mut">${p.descr || (p.client ? '' : p.for_whom || '')}</span>${(g.unsent || 0) > 0 && !done ? h` <span class="dot-wa" title="Carnet à envoyer à l’atelier">à envoyer</span>` : ''}</td>
-<td data-v="${p.canal}">${p.canal}</td>
-<td data-v="${PHASES.indexOf(p.cur.phase)}">${pill(p.cur.state === 'p' ? 'ko' : 'no', p.cur.phase)}</td>
-<td class="num" data-v="${pc}"><span class="mini"><i style="width:${pc}%"></i></span> ${pc} %</td>
-<td data-v="${p.lead ? p.lead.name : ''}">${p.lead ? h`<span class="ini sm" title="${p.lead.role === 'patron' ? 'Toi' : p.lead.name}">${p.lead.ini}</span>` : '—'}</td>
+${(() => { const ci = p.cfrise.findIndex((x) => x.state !== 'd'); const c = p.cfrise[ci < 0 ? p.cfrise.length - 1 : ci];
+    return h`<td class="where" data-v="${ci < 0 ? 99 : ci}"><div class="line" style="gap:8px;flex-wrap:nowrap"><b class="${c.state === 'p' ? 'red' : ''}">${c.phase}</b><span class="mut t12">${c.label === 'À venir' || c.label === 'En cours' ? '' : c.label}</span></div>${friseBar(p.cfrise)}</td>`; })()}
+<td class="num" data-v="${pc}">${g.n ? `${g.d}/${g.n}` : '—'}</td>
 <td data-v="${p.due_date || '9999'}" class="b">${p.due_date ? ddmm(p.due_date) : 'à fixer'}</td>
 <td data-v="${done ? p.finished_at || '' : urgv}" class="t13 b" style="color:${p.slack.color}">${done ? (p.finished_at ? `terminé ${ddmm(p.finished_at)}` : '') : p.slack.text}</td></tr>`; })}
-${rows.length ? '' : h`<tr><td colspan="9" class="mut">Aucun OF dans ce filtre.</td></tr>`}</tbody></table></div>
+${rows.length ? '' : h`<tr><td colspan="7" class="mut">Aucun OF dans ce filtre.</td></tr>`}</tbody></table></div>
 <p class="mut mt8" data-filter-count>${rows.length} OF affiché${rows.length > 1 ? 's' : ''}. Clique sur un titre de colonne pour trier. Coche plusieurs OF pour agir sur tous d'un coup.</p>`}`;
   res.send(layout({ title: done ? 'OF terminés' : 'Ordres de fabrication', tab: 'projets', sub: done ? '/projets?vue=termines' : '/projets', body, flash: req.flash }));
 });

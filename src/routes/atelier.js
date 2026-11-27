@@ -4,7 +4,7 @@ const express = require('express');
 const { q, tx, PHASES, STOCK_CATS, logActivity } = require('../db');
 const { h, page, avatar, pill, options, longDate, today, rel, hoursLabel, flashBox, ddmm } = require('../html');
 const { requireAtelier, verify, throttle, fail } = require('../auth');
-const { upload, fileUrl } = require('../uploads');
+const { upload, isImage, fileUrl } = require('../uploads');
 const { setStockState } = require('./achats');
 const L = require('../logic');
 
@@ -135,20 +135,18 @@ r.get('/fiche/:id', loadStep, (req, res) => {
   const msgs = q.all('SELECT messages.*, people.name pname, people.role prole FROM messages LEFT JOIN people ON people.id = messages.person_id WHERE step_id = ? ORDER BY created_at', s.id);
   const who = s.who_id ? q.get('SELECT * FROM people WHERE id = ?', s.who_id) : null;
   const asking = req.query.fini === '1';
-  const body = h`<div class="mut">${s.pname}${s.piece ? ` · ${s.piece}` : ''}${plan ? ` · plan ${plan.version}` : ''}${who ? ` · ${who.role === 'patron' ? 'toi' : who.name}` : ''}</div>
-<h1>${s.title}</h1>
+  const isImg = plan?.file && isImage(plan.file);
+  const body = h`<div class="mut">${s.pname}${plan ? ` · plan ${plan.version}` : ''}${who ? ` · ${who.role === 'patron' ? 'toi' : who.name}` : ''}</div>
+<h1>${s.piece ? h`${s.piece} <span class="mut" style="font-weight:500">· ${s.title}</span>` : s.title}</h1>
 <div class="ip-grid mt12"><section class="stack12">
-${plan?.file ? h`<a class="ip-card plan-link" href="${fileUrl(plan.file)}" target="_blank"><b>Plan ${plan.version}</b><span class="mut">${plan.descr || 'Ouvrir le plan'}</span></a>` : ''}
+${plan?.file ? (isImg ? h`<a class="ip-card ip-plan" href="${fileUrl(plan.file)}" target="_blank"><img src="${fileUrl(plan.file)}" alt="Plan ${plan.version}"><span class="mut">Plan ${plan.version}${plan.descr ? ` · ${plan.descr}` : ''} · toucher pour agrandir</span></a>`
+    : h`<a class="ip-card plan-link ip-plan" href="${fileUrl(plan.file)}" target="_blank"><b>Ouvrir le plan ${plan.version}</b><span class="mut">${plan.descr || 'PDF du plan validé'}</span></a>`) : h`<div class="ip-card"><b>Pas de plan joint</b><span class="mut">Demande-le au patron avec « Écrire au patron ».</span></div>`}
 ${s.note ? h`<div class="note big"><b>Mot du patron :</b> ${s.note}</div>` : ''}
 ${s.audio ? h`<div class="ip-card"><b>Vocal du patron</b><audio controls src="${fileUrl(s.audio)}"></audio></div>` : ''}
-${s.geste === 'Usinage CNC' ? (() => { const progs = q.all('SELECT * FROM cnc_programs WHERE project_id = ? AND active = 1 ORDER BY job_id, sheet, name', s.project_id); return progs.length ? h`<div class="ip-card"><b>Programmes CNC</b>${progs.map((x) => h`<a class="row" href="${fileUrl(x.file)}" download="${x.name}"><span class="grow">${x.name}</span><span class="mut">V${x.version}${x.minutes ? ` · ${Math.round(x.minutes)} min` : ''}</span></a>`)}<p class="mut t12 mt8">Premier passage : lancer d’abord l’essai à vide depuis l’ordinateur.</p></div>` : ''; })() : ''}
-<div class="ip-card"><div class="line"><b>Échanges sur cette fiche</b></div>
-${msgs.map((m) => h`<div class="msg${m.person_id === req.person.id ? ' me' : ''}"><b>${m.prole === 'patron' ? 'Patron' : m.pname}</b> ${m.body} <span class="mut t12">· ${rel(m.created_at)}</span></div>`)}
-<form method="post" action="/atelier/fiche/${s.id}/message" class="line mt8"><label class="sr" for="m">Écrire au patron</label><input id="m" class="qin" name="body" placeholder="Écrire au patron" required><button class="btn alt">Envoyer</button></form></div>
 </section>
 <section class="stack12">
-${checks.length ? h`<div class="ip-card"><div class="line"><b>Repères facultatifs</b><span class="mut push">${checks.filter((c) => c.done).length} sur ${checks.length}</span></div>
-${checks.map((c, i) => h`<form method="post" action="/atelier/fiche/${s.id}/repere" class="inline wfull"><input type="hidden" name="i" value="${i}"><button class="ckline${c.done ? ' on' : ''}" aria-pressed="${!!c.done}"><span class="box">${c.done ? '✓' : ''}</span>${c.t}</button></form>`)}</div>` : ''}
+${checks.length ? h`<div class="ip-card"><div class="line"><b>Étapes</b><span class="mut push">${checks.filter((c) => c.done).length} sur ${checks.length}</span></div>
+<ol class="ip-steps">${checks.map((c, i) => h`<li><form method="post" action="/atelier/fiche/${s.id}/repere" class="inline wfull"><input type="hidden" name="i" value="${i}"><button class="ckline${c.done ? ' on' : ''}" aria-pressed="${!!c.done}"><span class="box">${c.done ? '✓' : i + 1}</span>${c.t}</button></form></li>`)}</ol></div>` : ''}
 ${s.status === 'done' ? h`<div class="ip-card ok-card"><b>Fini · ${s.declared_label || ''}</b><p class="mut">Le patron est prévenu.</p><a class="btn" href="/atelier">Ma prochaine tâche</a></div>`
     : asking ? h`<div class="ip-card"><h2>Ça t'a pris combien ?</h2><form method="post" action="/atelier/fiche/${s.id}/fini" class="durs">
 ${[['4', '½ journée'], ['8', '1 journée'], ['16', '2 jours'], ['2', '2 heures']].map(([v, l]) => h`<button name="hours" value="${v}" class="dur">${l}</button>`)}
@@ -156,7 +154,12 @@ ${[['4', '½ journée'], ['8', '1 journée'], ['16', '2 jours'], ['2', '2 heures
       : h`<div class="actions">
 <a class="act" href="/atelier/photo?fiche=${s.id}">${raw(ICON.cam)}Photo</a><a class="act danger" href="/atelier/signaler?fiche=${s.id}">${raw(ICON.warn)}Signaler</a>
 ${s.status === 'doing' ? h`<a class="act main" href="/atelier/fiche/${s.id}?fini=1">Fait</a>` : mineOrFree(req) ? h`<form method="post" action="/atelier/fiche/${s.id}/commencer" class="inline"><button class="act main">Commencer</button></form>` : ''}</div>`}
-</section></div>`;
+</section></div>
+${s.geste === 'Usinage CNC' ? (() => { const progs = q.all('SELECT * FROM cnc_programs WHERE project_id = ? AND active = 1 ORDER BY job_id, sheet, name', s.project_id); return progs.length ? h`<div class="ip-card"><b>Programmes CNC</b>${progs.map((x) => h`<a class="row" href="${fileUrl(x.file)}" download="${x.name}"><span class="grow">${x.name}</span><span class="mut">V${x.version}${x.minutes ? ` · ${Math.round(x.minutes)} min` : ''}</span></a>`)}<p class="mut t12 mt8">Premier passage : lancer d’abord l’essai à vide depuis l’ordinateur.</p></div>` : ''; })() : ''}
+<div class="ip-card"><div class="line"><b>Échanges sur cette fiche</b></div>
+${msgs.map((m) => h`<div class="msg${m.person_id === req.person.id ? ' me' : ''}"><b>${m.prole === 'patron' ? 'Patron' : m.pname}</b> ${m.body} <span class="mut t12">· ${rel(m.created_at)}</span></div>`)}
+<form method="post" action="/atelier/fiche/${s.id}/message" class="line mt8"><label class="sr" for="m">Écrire au patron</label><input id="m" class="qin" name="body" placeholder="Écrire au patron" required><button class="btn alt">Envoyer</button></form></div>
+`;
   res.send(shell(req, s.title, body, { back: '/atelier/carnet' }));
 });
 
