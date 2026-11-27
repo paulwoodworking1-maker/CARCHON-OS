@@ -771,3 +771,32 @@ test('facture de solde Qonto à la signature du PV, payée : Règlement coché',
     assert.strictEqual(fr[7].state, 'd');
   } finally { for (const k of ['QONTO_BASE_URL', 'QONTO_LOGIN', 'QONTO_SECRET_KEY']) delete process.env[k]; fake.close(); }
 });
+
+test('commandes de la semaine : un bon par fournisseur, au moins cher, commande passée en un clic', async () => {
+  const fs = require('node:fs'); const os = require('node:os'); const path = require('node:path');
+  const { q } = require('../src/db'); const P = require('../src/prix');
+  q.run("UPDATE needs SET status = 'arrived' WHERE status = 'todo'"); // on part d'une liste vide
+  const a = Number(q.run("INSERT INTO suppliers (name, email, lead_days) VALUES ('Droguerie A', 'a@example.com', 2)").lastInsertRowid);
+  const b = Number(q.run("INSERT INTO suppliers (name) VALUES ('Droguerie B')").lastInsertRowid);
+  const fa = path.join(os.tmpdir(), 'dr-a.csv'), fb = path.join(os.tmpdir(), 'dr-b.csv');
+  fs.writeFileSync(fa, 'Ref;Désignation;Prix\nVM5;Vernis mat 5 L;89\nHC1;Huile-cire 1 L;31\n');
+  fs.writeFileSync(fb, 'Ref;Désignation;Prix\nV-MAT5;Vernis mat 5 L;96\nHC-1;Huile-cire 1 L;27,5\n');
+  await P.importCatalog(a, fa, 'dr-a.csv'); await P.importCatalog(b, fb, 'dr-b.csv');
+  const p1 = Number(q.run("INSERT INTO projects (name, ref) VALUES ('Chantier 1', 'PX-1')").lastInsertRowid);
+  const p2 = Number(q.run("INSERT INTO projects (name, ref) VALUES ('Chantier 2', 'PX-2')").lastInsertRowid);
+  q.run("INSERT INTO needs (text, project_id, qty, source) VALUES ('Vernis mat 5 L', ?, 2, 'note'), ('Huile-cire 1 L', ?, 3, 'note'), ('Vernis mat 5 L', ?, 1, 'note')", p1, p1, p2);
+  q.run("INSERT INTO needs (text, project_id, qty, source, needs_deposit) VALUES ('Huile-cire 1 L', ?, 9, 'note', 1)", p2); // attend l'acompte : exclu
+  const W = P.weekly();
+  const ga = W.groups.find((g) => g.s.id === a), gb = W.groups.find((g) => g.s.id === b);
+  assert.strictEqual(ga.lines.length, 2); // les deux vernis, tous chantiers
+  assert.strictEqual(gb.lines.length, 1); // l'huile-cire, moins chère chez B
+  assert.strictEqual(Math.round(ga.total), 267);
+  assert.match(P.lineText(ga.lines[0]), /\[VM5\] Vernis mat 5 L × 2 \(projet PX-1\)/);
+  const page = await (await fetch(base + '/achats/semaine', { headers: { cookie } })).text();
+  assert.match(page, /Droguerie A/);
+  const r = await fetch(base + `/achats/semaine/${a}`, { method: 'POST', redirect: 'manual', headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' }, body: '' });
+  assert.strictEqual(r.status, 302);
+  assert.match(r.headers.get('location'), /\/mail\/nouveau\?to=a%40example\.com/);
+  assert.strictEqual(q.get("SELECT COUNT(*) n FROM needs WHERE supplier_id = ? AND status = 'ordered'", a).n, 2);
+  assert.ok(q.get('SELECT expected_at FROM orders WHERE supplier_id = ? ORDER BY id DESC', a).expected_at);
+});

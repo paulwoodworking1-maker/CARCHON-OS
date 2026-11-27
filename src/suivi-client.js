@@ -64,7 +64,7 @@ async function apresPose() {
     WHERE t.pv_signed_at IS NOT NULL AND t.pv_signed_at >= ?`, since());
   for (const r of rows) {
     const signed = String(r.pv_signed_at).slice(0, 10);
-    const v = { bonjour: hello(r.cname), projet: r.pname, avis: setting('google_review_url', '') };
+    const v = { bonjour: hello(r.cname), projet: r.pname, avis: setting('google_review_url', 'https://g.page/r/CRg9zwIzI__7EBM/review') };
     if (on('auto_avis') && !r.review_sent_at && addDays(signed, 3) <= today() && !r.pv_reserves) {
       if (await send(r.cemail, 'mail_avis', v, r.pid, 'Remerciement et demande d’avis')) { q.run("UPDATE trips SET review_sent_at = datetime('now') WHERE id = ?", r.id); n++; }
     }

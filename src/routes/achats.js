@@ -59,6 +59,57 @@ r.post('/stock/:id/modifier', (req, res) => {
 });
 
 // ---------- À commander ----------
+// ---------- Commandes de la semaine : un bon par fournisseur, tous chantiers, au meilleur prix ----------
+const eur2 = (v) => (v == null ? '—' : `${(Math.round(v * 100) / 100).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €`);
+function workdaysAfter(n) { let d = today(), k = 0; const A = require('../html'); while (k < n) { d = A.addDays(d, 1); const w = A.parseDate(d).getDay(); if (w && w !== 6) k++; } return d; }
+function orderMail(g) {
+  const co = require('../db').company();
+  return { subject: `Commande ${co.name} · semaine du ${ddmm(today())}`, body: `Bonjour,\n\nPouvez-vous nous livrer la commande suivante :\n\n${g.lines.map(require('../prix').lineText).join('\n')}\n\nMerci de nous confirmer le délai de livraison.\n\nBien cordialement,\n${co.name}${co.phone ? `\n${co.phone}` : ''}` };
+}
+// Passe la commande d'un fournisseur : lignes rattachées, commande créée, date d'arrivée prévue.
+function placeOrder(g) {
+  let oid;
+  tx(() => {
+    oid = q.run('INSERT INTO orders (supplier_id, what, expected_at) VALUES (?, ?, ?)', g.s.id, g.lines.map((l) => `${l.best?.ref ? `${l.best.ref} ` : ''}${l.text} × ${l.qty}`).join(', '), workdaysAfter(g.s.lead_days || 3)).lastInsertRowid;
+    for (const l of g.lines) q.run("UPDATE needs SET supplier_id = ?, status = 'ordered', order_id = ?, acknowledged = 1 WHERE id = ?", g.s.id, oid, l.id);
+  });
+  return oid;
+}
+r.get('/achats/semaine', (req, res) => {
+  const W = require('../prix').weekly();
+  const body = h`<div class="eb">Achats</div><h1>Commandes de la semaine</h1>
+<p class="mut mt8 mw680">Tous les besoins prêts de tous les chantiers, au fournisseur le moins cher de tes catalogues, regroupés en un bon par fournisseur. Les lignes qui attendent un acompte n’y sont pas : elles arrivent ici dès qu’il est reçu.</p>
+<div class="an-stats" style="border-top:0">${[['Fournisseurs', W.groups.length], ['Lignes', W.count], ['Total HT', eur2(W.total)], ['Économie vs le plus cher', eur2(W.saving)]].map(([l, v]) => h`<div><span class="mut t12">${l}</span><b>${v}</b></div>`)}</div>
+${W.groups.length > 1 ? h`<form method="post" action="/achats/semaine/tout" class="line mt12" data-confirm="Passer toutes les commandes et envoyer les e-mails aux fournisseurs qui ont une adresse ?"><button class="btn">Tout commander et envoyer (${W.groups.length} fournisseurs)</button><span class="mut t12">Les fournisseurs sans e-mail restent à appeler : leur bon est prêt.</span></form>` : ''}
+<div class="stack18 mt20">${W.groups.map((g) => h`<section class="card" id="s${g.s.id}"><div class="line"><h2>${g.s.name}</h2><span class="mut">${g.lines.length} ligne${g.lines.length > 1 ? 's' : ''} · ${g.projects.length} chantier${g.projects.length > 1 ? 's' : ''}${g.s.lead_days ? ` · livré en ${g.s.lead_days} j ouvrés` : ''}</span><b class="push">${eur2(g.total)} HT</b></div>
+<div class="tablebox mt8"><table class="tbl dense"><thead><tr><th>Référence</th><th>Article</th><th class="num">Qté</th><th class="num">PU HT</th><th class="num">Total</th><th>Chantier</th></tr></thead><tbody>
+${g.lines.map((l) => h`<tr><td class="mono">${l.best?.ref || '—'}</td><td>${l.best?.designation || l.text}${l.moved ? h`<div class="mut t12">moins cher ici que chez le fournisseur noté</div>` : ''}${l.best && l.best.designation !== l.text ? h`<div class="mut t12">demandé : ${l.text}</div>` : ''}</td>
+<td class="num">${String(l.qty).replace('.', ',')}${l.unit ? ` ${l.unit}` : ''}</td><td class="num">${l.best ? eur2(l.best.price) : '—'}</td><td class="num b">${l.total != null ? eur2(l.total) : '—'}</td><td class="t12">${l.pref || l.cat}</td></tr>`)}
+</tbody></table></div>
+<div class="line mt12"><form method="post" action="/achats/semaine/${g.s.id}" class="inline"><button class="btn sm">${g.s.email ? 'Commander et préparer l’e-mail' : 'Commander'}</button></form>
+${g.s.phone && !g.s.email ? h`<a class="btn alt sm" href="tel:${g.s.phone}">Appeler ${g.s.phone}</a>` : ''}<span class="mut t12">${g.s.email || 'pas d’e-mail : à appeler'}</span></div></section>`)}
+${W.none.length ? h`<section class="card"><h2>Sans fournisseur ni prix</h2><p class="mut">Choisis un fournisseur dans <a href="/achats">À commander</a>, ou ajoute l’article à un catalogue.</p>${W.none.map((l) => h`<div class="row"><span class="grow">${l.text}</span><span class="mut t12">${l.pref || l.cat}</span></div>`)}</section>` : ''}
+${W.groups.length || W.none.length ? '' : h`<section class="card"><p class="mut">Rien à commander cette semaine.</p></section>`}</div>`;
+  res.send(layout({ title: 'Commandes de la semaine', tab: 'achats', sub: '/achats/semaine', body, flash: req.flash, counts: counts() }));
+});
+r.post('/achats/semaine/tout', async (req, res, next) => {
+  try {
+    const mail = require('../mail'); const W = require('../prix').weekly(); let sent = 0, ordered = 0; const toCall = [];
+    for (const g of W.groups) {
+      const m = orderMail(g); placeOrder(g); ordered++;
+      if (g.s.email && mail.configured()) { await mail.send({ to: g.s.email, subject: m.subject, text: m.body }); sent++; } else toCall.push(g.s.name);
+    }
+    res.flashTo('/commandes', `${ordered} commande(s) passée(s), ${sent} e-mail(s) envoyé(s)${toCall.length ? `. À appeler : ${toCall.join(', ')}` : ''}.`);
+  } catch (e) { next(e); }
+});
+r.post('/achats/semaine/:sid', (req, res) => {
+  const g = require('../prix').weekly().groups.find((x) => String(x.s.id) === String(req.params.sid));
+  if (!g) return res.redirect('/achats/semaine');
+  const m = orderMail(g); const oid = placeOrder(g);
+  if (g.s.email) return res.redirect(`/mail/nouveau?${new URLSearchParams({ to: g.s.email, subject: m.subject, body: m.body, back: '/achats/semaine' }).toString()}`);
+  res.flashTo('/achats/semaine', '', 'ok', { html: `Commande notée chez ${g.s.name.replace(/[<>&"]/g, '')}. <a href="/commandes/${oid}/bon">Bon de commande</a>` });
+});
+
 r.get('/achats', (req, res) => {
   const needs = q.all(`SELECT needs.*, people.name pname, people.role prole, projects.name projname, projects.deposit_at FROM needs
     LEFT JOIN people ON people.id = needs.person_id LEFT JOIN projects ON projects.id = needs.project_id WHERE needs.status = 'todo' ORDER BY needs.created_at DESC`);

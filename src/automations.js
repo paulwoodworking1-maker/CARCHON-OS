@@ -160,6 +160,14 @@ function alerts() {
       WHERE p.status = 'en_cours' AND p.deposit_at IS NULL AND p.deposit_invoice_id IS NULL AND COALESCE(p.deposit_invoice_status, '') = '' AND p.deposit_needed = 1 AND x.accepted_at <= datetime('now', '-10 minutes') GROUP BY p.id`)) {
     out.push({ kind: 'wa', tag: 'Facture d’acompte', title: `${p.name} · facture d’acompte pas encore émise`, text: 'Devis accepté sans montant HT ou sans adresse de facturation.', href: `/projets/${p.id}#facture`, cta: 'Compléter' });
   }
+  // Le lundi : les commandes de la semaine sont prêtes, à vérifier et envoyer en un clic.
+  if (new Date().getDay() === 1) {
+    try {
+      const W = require('./prix').weekly();
+      if (W.groups.length) out.push({ kind: 'wa', tag: 'Commandes de la semaine', title: `${W.groups.length} bon${W.groups.length > 1 ? 's' : ''} de commande prêt${W.groups.length > 1 ? 's' : ''} · ${Math.round(W.total).toLocaleString('fr-FR')} € HT`,
+        text: `${W.count} ligne(s) de tous les chantiers, au meilleur prix des catalogues.`, href: '/achats/semaine', cta: 'Vérifier et envoyer', primary: true });
+    } catch (e) { console.error('[commandes semaine]', e.message); }
+  }
   out.push(...require('./machines').alerts());
   return out;
 }

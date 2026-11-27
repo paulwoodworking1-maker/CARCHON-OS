@@ -102,6 +102,29 @@ function projectNeeds(projectId) {
   return order.filter((c) => groups[c]).map((c) => ({ cat: c, items: groups[c], total: groups[c].reduce((a, x) => a + (x.total || 0), 0) }));
 }
 
+// Commandes de la semaine : tous les besoins prêts (acompte reçu ou sans objet), tous chantiers confondus,
+// au fournisseur le moins cher des catalogues (sinon celui noté sur la ligne), regroupés en un bon par fournisseur.
+function weekly() {
+  const rows = q.all(`SELECT n.*, p.name pname, p.ref pref FROM needs n LEFT JOIN projects p ON p.id = n.project_id
+    WHERE n.status = 'todo' AND (n.needs_deposit = 0 OR n.force = 1) ORDER BY n.created_at`);
+  const sups = Object.fromEntries(q.all('SELECT * FROM suppliers').map((x) => [x.id, x]));
+  const bySup = new Map(); const none = [];
+  for (const n of rows) {
+    const off = offers(n.text);
+    const best = off[0] || null;
+    const sid = best ? best.supplier_id : n.supplier_id;
+    const qty = n.qty || 1;
+    const line = { ...n, cat: categoryOf(n.text, n.category), best, qty, total: best ? best.price * qty : null, saving: off.length > 1 ? (off[off.length - 1].price - off[0].price) * qty : 0, moved: best && n.supplier_id && n.supplier_id !== best.supplier_id };
+    if (!sid || !sups[sid]) { none.push(line); continue; }
+    if (!bySup.has(sid)) bySup.set(sid, { s: sups[sid], lines: [] });
+    bySup.get(sid).lines.push(line);
+  }
+  const groups = [...bySup.values()].map((g) => ({ ...g, total: g.lines.reduce((a, l) => a + (l.total || 0), 0), saving: g.lines.reduce((a, l) => a + l.saving, 0), projects: [...new Set(g.lines.map((l) => l.pname).filter(Boolean))] }))
+    .sort((a, b) => b.total - a.total || b.lines.length - a.lines.length);
+  return { groups, none, total: groups.reduce((a, g) => a + g.total, 0), saving: groups.reduce((a, g) => a + g.saving, 0), count: rows.length };
+}
+const lineText = (l) => `- ${l.best?.ref ? `[${l.best.ref}] ` : ''}${l.best?.designation || l.text} × ${String(l.qty).replace('.', ',')}${l.unit ? ` ${l.unit}` : l.best?.unit ? ` ${l.best.unit}` : ''}${l.pref ? ` (projet ${l.pref})` : ''}`;
+
 const catalogs = () => q.all('SELECT s.id, s.name, COUNT(c.id) n, MAX(c.updated_at) at FROM suppliers s LEFT JOIN supplier_catalog c ON c.supplier_id = s.id GROUP BY s.id ORDER BY n DESC, s.name');
 
-module.exports = { importCatalog, readRows, offers, projectNeeds, categoryOf, catalogs, words };
+module.exports = { weekly, lineText, importCatalog, readRows, offers, projectNeeds, categoryOf, catalogs, words };

@@ -29,7 +29,7 @@ ${toggle('auto_relance_devis', '1', 'Relance des devis sans réponse', 'À J+7, 
 ${toggle('auto_relance_facture', '1', 'Rappel des factures impayées', 'Acompte et solde : un rappel le lendemain de l’échéance, avec le lien de paiement.')}
 ${toggle('qonto_auto_balance', '1', 'Facture de solde à la signature du PV (Qonto)', 'Montant du devis moins l’acompte, envoyée par Qonto ; payée, l’étape Règlement se coche toute seule.')}
 ${toggle('auto_avis', '1', 'Merci et demande d’avis, trois jours après la pose', 'Seulement si le PV est sans réserve.')}
-<label>Lien de ta fiche Google pour les avis <input name="google_review_url" type="url" value="${setting('google_review_url') || ''}" placeholder="https://g.page/r/…/review"></label>
+<label>Lien de ta fiche Google pour les avis <input name="google_review_url" type="url" value="${setting('google_review_url', 'https://g.page/r/CRg9zwIzI__7EBM/review')}" placeholder="https://g.page/r/…/review"></label>
 ${toggle('auto_anniversaire', '1', 'Message « un an déjà » après la pose', 'Conseil d’entretien et porte ouverte pour un nouveau projet.')}
 <button class="btn">Enregistrer</button></form>
 
