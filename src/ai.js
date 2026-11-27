@@ -326,4 +326,56 @@ async function productionChain(ctx) {
   return streamStructured({ system, content: [{ type: 'text', text: intro }, ...ctx.files], schema: ChainSchema });
 }
 
-module.exports = { enabled, carnetFromText, carnetFromPlans, planBlocks, readQuotePdf, clientUpdate, productionChain, chainPrompt, ChainSchema, AIError, MODEL };
+
+// --- 5. Pièces à usiner à la CNC, lues dans les plans ---
+// L'assistant décrit les pièces et leurs usinages ; il n'écrit jamais de G-code (le moteur de Carchon le calcule et le contrôle).
+const CncSchema = z.object({
+  pieces: z.array(z.object({
+    nom: z.string(),
+    longueur: z.number(),
+    largeur: z.number(),
+    epaisseur: z.number(),
+    quantite: z.number(),
+    matiere: z.string(),
+    sens_du_fil: z.boolean(),
+    usinages: z.array(z.object({
+      type: z.enum(['trou', 'rainure', 'poche']),
+      x: z.number(), y: z.number(), diametre: z.number(),
+      x2: z.number(), y2: z.number(), largeur: z.number(), longueur: z.number(),
+      profondeur: z.number(), traversant: z.boolean(),
+    })),
+  })),
+  questions: z.array(z.string()),
+});
+async function cncFromPlans({ project, plans, readFile, text, debit, materials }) {
+  const { blocks, skipped } = planBlocks(plans, readFile);
+  if (!blocks.length && !String(text || '').trim() && !(debit || []).length) throw new AIError(`Rien à lire : ${skipped.join(', ') || 'ajoute un plan ou une liste de débit.'}`);
+  const system = `Tu prépares les pièces à usiner sur une CNC à table à dépression, pour un atelier d'ébénisterie, à partir des plans fournis.
+Tu ne produis JAMAIS de G-code : seulement la description des pièces et de leurs usinages ; le logiciel calcule les parcours et les contrôle.
+
+Pour chaque pièce plate à détourer à la CNC (joues, tablettes, fonds, façades, traverses…) :
+- "longueur" (axe X de la pièce) et "largeur" (axe Y) en mm, finies, telles que cotées ; "epaisseur" en mm ; "quantite".
+- "matiere" : une des matières fournies si possible.
+- "sens_du_fil" : true si la pièce a un fil ou un décor à respecter (bois, placage, décor bois) le long de sa longueur ; false pour mélaminé uni, MDF.
+- "usinages", repérés depuis le coin bas-gauche de la pièce vue de dessus (face usinée), en mm :
+  - trou : x, y = centre ; diametre ; profondeur, ou traversant=true.
+  - rainure : de (x, y) à (x2, y2) sur l'axe de la rainure, parallèle à un bord ; largeur ; profondeur.
+  - poche : x, y = coin bas-gauche ; longueur (X) ; largeur (Y) ; profondeur.
+  - Mets 0 dans les champs inutiles pour le type.
+- Système 32 : rangées de trous Ø5 à 37 mm du chant, entraxe 32 mm, seulement s'ils sont dessinés ou dictés.
+- N'invente aucune cote ni aucun usinage : une cote absente va dans "questions" et l'usinage n'est pas ajouté.
+- Ignore les pièces qui ne passent pas à la CNC (massif tourné, quincaillerie, verre…).
+"questions" : cotes manquantes, face d'usinage à confirmer, incohérences (0 à 8).`;
+  const content = [
+    ...blocks,
+    { type: 'text', text: `Projet : ${project.name}${project.wood ? `\nMatière : ${project.wood}` : ''}
+Matières de la bibliothèque : ${materials.join(', ')}
+${(debit || []).length ? `Liste de débit déjà lue dans le dossier :\n${debit.map((d) => `- ${d.piece} · ${d.quantite} × ${d.longueur} × ${d.largeur} × ${d.epaisseur} · ${d.matiere}`).join('\n')}\n` : ''}
+Précisions du patron :
+"""${String(text || '').trim() || '(aucune)'}"""` },
+  ];
+  const out = await structured({ system, content, schema: CncSchema, effort: 'high', maxTokens: 32000, timeout: 10 * 60 * 1000 });
+  return { ...out, skipped };
+}
+
+module.exports = { enabled, carnetFromText, carnetFromPlans, cncFromPlans, planBlocks, readQuotePdf, clientUpdate, productionChain, chainPrompt, ChainSchema, AIError, MODEL };

@@ -69,6 +69,7 @@ ${hist.length ? '' : h`<p class="mut">Rien encore.</p>`}
 </section></div>`;
   }
   const body = h`
+<p class="line" style="margin:0 0 16px"><a class="btn alt sm" href="/cnc">CNC · outils, réglages et post-processeur</a></p>
 <section class="band" style="padding-top:0"><h2>À faire</h2><span class="count">${overdue + soon + down}</span><span class="count">les entretiens se déclenchent à la date ou à l'usage, calculé depuis les fiches terminées : personne ne pointe</span></section>
 <section class="kpis">
 <div class="kpi"><div class="kpi-h"><span class="kpi-l">En service</span>${pill(down ? 'ko' : 'ok', down ? `${down} en panne` : 'aucune panne')}</div><div class="big">${all.length - down}</div><div class="sub2">machines sur ${all.length}</div></div>

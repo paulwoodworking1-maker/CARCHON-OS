@@ -185,4 +185,12 @@
       rec.start(); btn.classList.add('rec'); btn.textContent = '■ Arrêter la dictée';
     });
   });
+
+  // CNC : curseur d'avancement du programme (les opérations s'affichent dans l'ordre d'usinage).
+  document.querySelectorAll('[data-cnc-slider]').forEach(function (inp) {
+    var svg = document.querySelector(inp.getAttribute('data-cnc-slider'));
+    if (!svg) return;
+    var ops = svg.querySelectorAll('.cnc-op');
+    inp.addEventListener('input', function () { var n = Number(inp.value); ops.forEach(function (g, i) { g.classList.toggle('off', i >= n); }); });
+  });
 })();
